@@ -19,7 +19,7 @@ function requireApiKey(): string {
   const k = process.env.TESTCHIMP_API_KEY?.trim();
   if (!k) {
     throw new Error(
-      "TESTCHIMP_API_KEY is required. Set it in the MCP server env (e.g. Cursor mcp.json)."
+      "TESTCHIMP_API_KEY is required. Set it in <project>/.cursor/mcp.json env (project-level MCP config), not IDE-wide config."
     );
   }
   return k;
@@ -68,11 +68,22 @@ const listExecutionInput = z.object({
   branchName: z.string().optional(),
 });
 
-const testAdviceInput = z.object({
-  branchName: z.string().optional(),
-  prUrl: z.string().optional(),
-  baseSha: z.string().optional(),
-  headSha: z.string().optional(),
+/** Platform path to the new markdown file, e.g. plans/stories/auth/login-flow.md */
+const createUserStoryInput = z.object({
+  platformFilePath: z.string().min(1),
+  title: z.string().min(1),
+});
+
+const createTestScenarioInput = z.object({
+  platformFilePath: z.string().min(1),
+  title: z.string().min(1),
+  /** Parent story ordinal (the number n in US-n). */
+  userStoryOrdinalId: z.coerce.number().int().positive(),
+});
+
+const updatePlanMarkdownInput = z.object({
+  /** Full markdown including YAML frontmatter and body (as written under the repo plans root). */
+  content: z.string().min(1),
 });
 
 function textResult(json: string) {
@@ -156,21 +167,66 @@ async function main() {
   );
 
   server.registerTool(
-    "get_test_advice",
+    "create_user_story",
     {
       description:
-        "Placeholder for PR-scoped test advice. Returns not_implemented until the backend provides analysis.",
-      inputSchema: testAdviceInput,
+        "Create a user story on the TestChimp project and its plan file stub. " +
+        "Always call this before writing a new story markdown file; use the returned ordinalId as US-<ordinalId> in frontmatter. " +
+        "platformFilePath must be under plans/stories/ and end with .md.",
+      inputSchema: createUserStoryInput,
     },
     async (args) => {
-      const body: Record<string, unknown> = {};
-      if (args.branchName != null && args.branchName.trim() !== "") {
-        body.branchName = args.branchName.trim();
-      }
-      if (args.prUrl != null) body.pr_url = args.prUrl;
-      if (args.baseSha != null) body.base_sha = args.baseSha;
-      if (args.headSha != null) body.head_sha = args.headSha;
-      const json = await postMcp("/api/mcp/get_test_advice", body);
+      const json = await postMcp("/api/mcp/create_user_story", {
+        platformFilePath: args.platformFilePath,
+        title: args.title,
+      });
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "create_test_scenario",
+    {
+      description:
+        "Create a test scenario linked to a user story. Call after the parent story exists. " +
+        "platformFilePath must be under plans/scenarios/ and end with .md. " +
+        "userStoryOrdinalId is the numeric part of the parent US-<n> id.",
+      inputSchema: createTestScenarioInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/create_test_scenario", {
+        platformFilePath: args.platformFilePath,
+        title: args.title,
+        userStoryOrdinalId: args.userStoryOrdinalId,
+      });
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "update_user_story",
+    {
+      description:
+        "Sync a user story markdown file to the platform after local edits. " +
+        "Parses frontmatter (id: US-..., title, priority, status) and updates the linked support file and entity.",
+      inputSchema: updatePlanMarkdownInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/update_user_story", { content: args.content });
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "update_test_scenario",
+    {
+      description:
+        "Sync a test scenario markdown file to the platform after local edits. " +
+        "Parses frontmatter (id: TS-..., story: US-..., title, priority, status) and updates linking if story changes.",
+      inputSchema: updatePlanMarkdownInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/update_test_scenario", { content: args.content });
       return textResult(json);
     }
   );
