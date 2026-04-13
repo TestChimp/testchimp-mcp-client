@@ -17,6 +17,10 @@ MCP (Model Context Protocol) server for [TestChimp](https://testchimp.io). Expos
 - **`create_test_scenario`** — POST `/api/mcp/create_test_scenario` (`platformFilePath` under `plans/scenarios/...`, `title`, `userStoryOrdinalId`).
 - **`update_user_story`** — POST `/api/mcp/update_user_story` (full markdown `content` with `id: US-...` in frontmatter).
 - **`update_test_scenario`** — POST `/api/mcp/update_test_scenario` (full markdown `content` with `id: TS-...` and `story: US-...` in frontmatter).
+- **`get_eaas_config`** — POST `/api/mcp/get_eaas_config` (BunnyShell YAML path and project name; token excluded; `{}` when unconfigured).
+- **`provision_ephemeral_environment`** — POST `/api/mcp/provision_ephemeral_environment` (optional `branchName`).
+- **`get_ephemeral_environment_status`** — POST `/api/mcp/get_ephemeral_environment_status` (`bnsEnvironmentId`).
+- **`destroy_ephemeral_environment`** — POST `/api/mcp/destroy_ephemeral_environment` (`bnsEnvironmentId`).
 
 ## Cursor
 

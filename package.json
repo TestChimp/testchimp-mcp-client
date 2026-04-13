@@ -1,6 +1,6 @@
 {
   "name": "testchimp-mcp-client",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "MCP server for TestChimp — coverage, execution history, and plan authoring",
   "type": "module",
   "main": "dist/index.js",

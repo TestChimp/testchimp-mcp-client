@@ -86,6 +86,18 @@ const updatePlanMarkdownInput = z.object({
   content: z.string().min(1),
 });
 
+const emptyInput = z.object({});
+
+const provisionEphemeralInput = z.object({
+  /** Git branch to deploy; omit to use the repo default branch. */
+  branchName: z.string().optional(),
+});
+
+const bnsEnvironmentIdInput = z.object({
+  /** BunnyShell environment id returned from provision_ephemeral_environment. */
+  bnsEnvironmentId: z.string().min(1),
+});
+
 function textResult(json: string) {
   return {
     content: [{ type: "text" as const, text: json }],
@@ -227,6 +239,67 @@ async function main() {
     },
     async (args) => {
       const json = await postMcp("/api/mcp/update_test_scenario", { content: args.content });
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_eaas_config",
+    {
+      description:
+        "Return the project's BunnyShell (Environment-as-a-Service) settings: ymlRepoPath and bunnyshellProjectName. " +
+        "Secrets (API token) are never returned. Response is {} when EaaS is not configured or has no public fields.",
+      inputSchema: emptyInput,
+    },
+    async () => {
+      const json = await postMcp("/api/mcp/get_eaas_config", {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "provision_ephemeral_environment",
+    {
+      description:
+        "Create a BunnyShell ephemeral environment for the TestChimp project from the configured Git repo + YAML path. " +
+        "Requires BunnyShell + GitHub integration in project settings. Poll with get_ephemeral_environment_status using bnsEnvironmentId.",
+      inputSchema: provisionEphemeralInput,
+    },
+    async (args) => {
+      const body: Record<string, unknown> = {};
+      if (args.branchName != null && args.branchName.trim() !== "") {
+        body.branchName = args.branchName.trim();
+      }
+      const json = await postMcp("/api/mcp/provision_ephemeral_environment", body);
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_ephemeral_environment_status",
+    {
+      description:
+        "Poll BunnyShell for environment status and definition. When deployed, environmentSpec may contain URLs/components JSON.",
+      inputSchema: bnsEnvironmentIdInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/get_ephemeral_environment_status", {
+        bnsEnvironmentId: args.bnsEnvironmentId,
+      });
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "destroy_ephemeral_environment",
+    {
+      description: "Delete a BunnyShell environment created for this project (bnsEnvironmentId from provision).",
+      inputSchema: bnsEnvironmentIdInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/destroy_ephemeral_environment", {
+        bnsEnvironmentId: args.bnsEnvironmentId,
+      });
       return textResult(json);
     }
   );
