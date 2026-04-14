@@ -2,6 +2,7 @@
 /**
  * TestChimp MCP server — calls TestChimp /api/mcp/* with TestChimp-Api-Key only.
  * Env: TESTCHIMP_BACKEND_URL (optional), TESTCHIMP_API_KEY (required).
+ * Includes SmartTests coverage, plan authoring, EaaS, and TrueCoverage analytics endpoints.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -88,6 +89,13 @@ const updatePlanMarkdownInput = z.object({
 
 const emptyInput = z.object({});
 
+/** Proto-shaped JSON for TrueCoverage (e.g. list_events: baseExecutionScope, comparisonExecutionScope). */
+const truecoverageJsonInput = z.record(z.string(), z.unknown());
+
+const eventMetadataKeysInput = z.object({
+  eventTitle: z.string().min(1),
+});
+
 const provisionEphemeralInput = z.object({
   /** Git branch to deploy; omit to use the repo default branch. */
   branchName: z.string().optional(),
@@ -125,7 +133,7 @@ function normalizeScope(scope: {
 
 async function main() {
   const server = new McpServer(
-    { name: "testchimp-mcp", version: "0.1.0" },
+    { name: "testchimp-mcp", version: "0.0.4" },
     { capabilities: { tools: {} } }
   );
 
@@ -299,6 +307,118 @@ async function main() {
     async (args) => {
       const json = await postMcp("/api/mcp/destroy_ephemeral_environment", {
         bnsEnvironmentId: args.bnsEnvironmentId,
+      });
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "list_rum_environments",
+    {
+      description:
+        "List distinct RUM environment tags seen for this project (for TrueCoverage scoping). " +
+        "Maps to POST /api/mcp/list_rum_environments.",
+      inputSchema: emptyInput,
+    },
+    async () => {
+      const json = await postMcp("/api/mcp/list_rum_environments", {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_truecoverage_events",
+    {
+      description:
+        "TrueCoverage event funnel summaries for the given execution scopes (same JSON body as platform list_events). " +
+        "Maps to POST /api/mcp/truecoverage_list_events.",
+      inputSchema: truecoverageJsonInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/truecoverage_list_events", args ?? {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_truecoverage_event_details",
+    {
+      description:
+        "TrueCoverage drill-down for one event title (GetEventDetailsRequest JSON). " +
+        "Maps to POST /api/mcp/truecoverage_event_details.",
+      inputSchema: truecoverageJsonInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/truecoverage_event_details", args ?? {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_truecoverage_child_event_tree",
+    {
+      description:
+        "TrueCoverage next-event tree for an event (ListChildEventTreeRequest JSON). " +
+        "Maps to POST /api/mcp/truecoverage_list_child_event_tree.",
+      inputSchema: truecoverageJsonInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/truecoverage_list_child_event_tree", args ?? {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_truecoverage_event_transition",
+    {
+      description:
+        "TrueCoverage detailed transition summary between events (GetDetailedEventTransitionSummaryRequest JSON). " +
+        "Maps to POST /api/mcp/truecoverage_detailed_event_transition.",
+      inputSchema: truecoverageJsonInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/truecoverage_detailed_event_transition", args ?? {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_truecoverage_event_time_series",
+    {
+      description:
+        "TrueCoverage time series for sessions or metrics (EventTimeSeriesRequest JSON). " +
+        "Maps to POST /api/mcp/truecoverage_event_time_series.",
+      inputSchema: truecoverageJsonInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/truecoverage_event_time_series", args ?? {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_truecoverage_session_metadata_keys",
+    {
+      description:
+        "List session-level metadata keys observed for TrueCoverage. Maps to POST /api/mcp/truecoverage_session_metadata_keys.",
+      inputSchema: emptyInput,
+    },
+    async () => {
+      const json = await postMcp("/api/mcp/truecoverage_session_metadata_keys", {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_truecoverage_event_metadata_keys",
+    {
+      description:
+        "List metadata keys for a given event title. Maps to POST /api/mcp/truecoverage_event_metadata_keys.",
+      inputSchema: eventMetadataKeysInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/truecoverage_event_metadata_keys", {
+        eventTitle: args.eventTitle,
       });
       return textResult(json);
     }
