@@ -89,6 +89,11 @@ const updatePlanMarkdownInput = z.object({
 
 const emptyInput = z.object({});
 
+const getBranchSpecificEndpointConfigInput = z.object({
+  /** Git branch name (e.g. PR head). Required to resolve template or per-branch override. */
+  branchName: z.string().optional(),
+});
+
 /** Proto-shaped JSON for TrueCoverage (e.g. list_events: baseExecutionScope, comparisonExecutionScope). */
 const truecoverageJsonInput = z.record(z.string(), z.unknown());
 
@@ -133,7 +138,7 @@ function normalizeScope(scope: {
 
 async function main() {
   const server = new McpServer(
-    { name: "testchimp-mcp", version: "0.0.4" },
+    { name: "testchimp-mcp", version: "0.0.5" },
     { capabilities: { tools: {} } }
   );
 
@@ -261,6 +266,25 @@ async function main() {
     },
     async () => {
       const json = await postMcp("/api/mcp/get_eaas_config", {});
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_branch_specific_endpoint_config",
+    {
+      description:
+        "Resolve BASE_URL for a Git branch from TestChimp Branch Management (URL template and per-branch overrides). " +
+        "Prefer this when BunnyShell EaaS is not configured and the project uses bespoke PR preview URLs. " +
+        "Pass branchName (e.g. the PR branch). Response includes baseUrl and resolution: override | template | none.",
+      inputSchema: getBranchSpecificEndpointConfigInput,
+    },
+    async (args) => {
+      const body: Record<string, unknown> = {};
+      if (args.branchName != null && args.branchName.trim() !== "") {
+        body.branchName = args.branchName.trim();
+      }
+      const json = await postMcp("/api/mcp/get_branch_specific_endpoint_config", body);
       return textResult(json);
     }
   );

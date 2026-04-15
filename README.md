@@ -18,6 +18,7 @@ MCP (Model Context Protocol) server for [TestChimp](https://testchimp.io). Expos
 - **`update_user_story`** — POST `/api/mcp/update_user_story` (full markdown `content` with `id: US-...` in frontmatter).
 - **`update_test_scenario`** — POST `/api/mcp/update_test_scenario` (full markdown `content` with `id: TS-...` and `story: US-...` in frontmatter).
 - **`get_eaas_config`** — POST `/api/mcp/get_eaas_config` (BunnyShell YAML path and project name; token excluded; `{}` when unconfigured).
+- **`get_branch_specific_endpoint_config`** — POST `/api/mcp/get_branch_specific_endpoint_config` (optional `branchName`). Resolves `BASE_URL` from Branch Management (template and per-branch overrides). Use when EaaS is not used and preview URLs are configured in TestChimp. Returns `baseUrl` and `resolution` (`override` \| `template` \| `none`).
 - **`provision_ephemeral_environment`** — POST `/api/mcp/provision_ephemeral_environment` (optional `branchName`).
 - **`get_ephemeral_environment_status`** — POST `/api/mcp/get_ephemeral_environment_status` (`bnsEnvironmentId`).
 - **`destroy_ephemeral_environment`** — POST `/api/mcp/destroy_ephemeral_environment` (`bnsEnvironmentId`).
