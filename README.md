@@ -19,9 +19,13 @@ MCP (Model Context Protocol) server for [TestChimp](https://testchimp.io). Expos
 - **`update_test_scenario`** — POST `/api/mcp/update_test_scenario` (full markdown `content` with `id: TS-...` and `story: US-...` in frontmatter).
 - **`get_eaas_config`** — POST `/api/mcp/get_eaas_config` (BunnyShell YAML path and project name; token excluded; `{}` when unconfigured).
 - **`get_branch_specific_endpoint_config`** — POST `/api/mcp/get_branch_specific_endpoint_config` (optional `branchName`). Resolves `BASE_URL` from Branch Management (template and per-branch overrides). Use when EaaS is not used and preview URLs are configured in TestChimp. Returns `baseUrl` and `resolution` (`override` \| `template` \| `none`).
-- **`provision_ephemeral_environment`** — POST `/api/mcp/provision_ephemeral_environment` (optional `branchName`).
+- **`provision_ephemeral_environment_and_wait`** — POST `/api/mcp/provision_ephemeral_environment` then poll `/api/mcp/get_ephemeral_environment_status` until deployed with component URLs, or return `failed` / `timeout` with `failure_phase` and `message` (optional `branchName`, `pollIntervalSeconds`, `maxWaitMinutes`). **Prefer this** for agents.
+- **`provision_ephemeral_environment`** — POST `/api/mcp/provision_ephemeral_environment` (optional `branchName`). Use when manually polling or as fallback if the wait tool is unavailable.
 - **`get_ephemeral_environment_status`** — POST `/api/mcp/get_ephemeral_environment_status` (`bnsEnvironmentId`).
 - **`destroy_ephemeral_environment`** — POST `/api/mcp/destroy_ephemeral_environment` (`bnsEnvironmentId`).
+- **`list_bunnyshell_environment_events`** — POST `/api/mcp/list_bunnyshell_environment_events` (proxies BunnyShell; response body is the API payload as returned).
+- **`list_bunnyshell_workflow_jobs`** — POST `/api/mcp/list_bunnyshell_workflow_jobs` (same: raw BunnyShell response body).
+- **`get_bunnyshell_workflow_job_logs`** — POST `/api/mcp/get_bunnyshell_workflow_job_logs` (raw logs response body from BunnyShell).
 
 ## Cursor
 

@@ -7,6 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { runProvisionEphemeralEnvironmentAndWait } from "./ephemeralProvisionWait.js";
 
 const DEFAULT_BACKEND = "https://featureservice.testchimp.io";
 
@@ -111,6 +112,34 @@ const bnsEnvironmentIdInput = z.object({
   bnsEnvironmentId: z.string().min(1),
 });
 
+const provisionEphemeralWaitInput = z.object({
+  /** Git branch to deploy; omit to use the repo default branch. */
+  branchName: z.string().optional(),
+  /** Seconds between status polls (clamped 30–120). Default 60. */
+  pollIntervalSeconds: z.number().optional(),
+  /** Max minutes to wait for deployed + URLs (clamped 5–45). Default 25. */
+  maxWaitMinutes: z.number().optional(),
+});
+
+const listBunnyshellEnvironmentEventsInput = z.object({
+  bnsEnvironmentId: z.string().min(1),
+  /** BunnyShell event type filter (e.g. env_deploy). */
+  eventType: z.string().optional(),
+  /** BunnyShell event status: new | in_progress | success | fail */
+  eventStatus: z.string().optional(),
+  page: z.number().int().positive().optional(),
+});
+
+const listBunnyshellWorkflowJobsInput = z.object({
+  bnsEnvironmentId: z.string().min(1),
+  page: z.number().int().positive().optional(),
+});
+
+const getBunnyshellWorkflowJobLogsInput = z.object({
+  bnsEnvironmentId: z.string().min(1),
+  workflowJobId: z.string().min(1),
+});
+
 function textResult(json: string) {
   return {
     content: [{ type: "text" as const, text: json }],
@@ -138,8 +167,8 @@ function normalizeScope(scope: {
 
 async function main() {
   const server = new McpServer(
-    { name: "testchimp-mcp", version: "0.0.5" },
-    { capabilities: { tools: {} } }
+    { name: "testchimp-mcp", version: "0.0.8" },
+    { capabilities: { tools: {}, logging: {} } }
   );
 
   server.registerTool(
@@ -290,11 +319,30 @@ async function main() {
   );
 
   server.registerTool(
+    "provision_ephemeral_environment_and_wait",
+    {
+      description:
+        "Preferred: provision a BunnyShell ephemeral environment for the current Git branch, then poll until the stack is deployed and component URLs are available (typically ~5–10 minutes). " +
+        "Returns one JSON with outcome success|failed|timeout, failure_phase (provision|deploy|wait), user-facing message, and component_urls_json on success. " +
+        "Requires BunnyShell + GitHub integration. If this tool is unavailable or the host aborts long calls, fall back to provision_ephemeral_environment + polling get_ephemeral_environment_status (~1/min, max ~25m).",
+      inputSchema: provisionEphemeralWaitInput,
+    },
+    async (args) => {
+      const json = await runProvisionEphemeralEnvironmentAndWait(postMcp, server, {
+        branchName: args.branchName,
+        pollIntervalSeconds: args.pollIntervalSeconds,
+        maxWaitMinutes: args.maxWaitMinutes,
+      });
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
     "provision_ephemeral_environment",
     {
       description:
-        "Create a BunnyShell ephemeral environment for the TestChimp project from the configured Git repo + YAML path. " +
-        "Requires BunnyShell + GitHub integration in project settings. Poll with get_ephemeral_environment_status using bnsEnvironmentId.",
+        "Create a BunnyShell ephemeral environment (create + deploy trigger only). Prefer provision_ephemeral_environment_and_wait unless you must poll manually. " +
+        "Requires BunnyShell + GitHub integration. Use get_ephemeral_environment_status with bnsEnvironmentId to poll until deployed.",
       inputSchema: provisionEphemeralInput,
     },
     async (args) => {
@@ -311,7 +359,7 @@ async function main() {
     "get_ephemeral_environment_status",
     {
       description:
-        "Poll BunnyShell for environment status and definition. When deployed, environmentSpec may contain URLs/components JSON.",
+        "Poll BunnyShell for environment status and component_urls_json. Used for manual fallback when provision_ephemeral_environment_and_wait is not available; prefer the wait tool for normal flows.",
       inputSchema: bnsEnvironmentIdInput,
     },
     async (args) => {
@@ -331,6 +379,58 @@ async function main() {
     async (args) => {
       const json = await postMcp("/api/mcp/destroy_ephemeral_environment", {
         bnsEnvironmentId: args.bnsEnvironmentId,
+      });
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "list_bunnyshell_environment_events",
+    {
+      description:
+        "Troubleshooting: list BunnyShell platform events for an environment (GET /v1/events). " +
+        "Use after a failed or stuck ephemeral deploy. The HTTP response body is the BunnyShell payload as returned by the API (no extra wrapping). " +
+        "Optional filters: eventType, eventStatus (new|in_progress|success|fail), page.",
+      inputSchema: listBunnyshellEnvironmentEventsInput,
+    },
+    async (args) => {
+      const body: Record<string, unknown> = { bnsEnvironmentId: args.bnsEnvironmentId };
+      if (args.eventType != null && args.eventType.trim() !== "") body.eventType = args.eventType.trim();
+      if (args.eventStatus != null && args.eventStatus.trim() !== "") body.eventStatus = args.eventStatus.trim();
+      if (args.page != null) body.page = args.page;
+      const json = await postMcp("/api/mcp/list_bunnyshell_environment_events", body);
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "list_bunnyshell_workflow_jobs",
+    {
+      description:
+        "Troubleshooting: list BunnyShell workflow jobs for an environment. Response body is the BunnyShell API payload as returned (no extra wrapping). " +
+        "Use to find workflowJobId for get_bunnyshell_workflow_job_logs.",
+      inputSchema: listBunnyshellWorkflowJobsInput,
+    },
+    async (args) => {
+      const body: Record<string, unknown> = { bnsEnvironmentId: args.bnsEnvironmentId };
+      if (args.page != null) body.page = args.page;
+      const json = await postMcp("/api/mcp/list_bunnyshell_workflow_jobs", body);
+      return textResult(json);
+    }
+  );
+
+  server.registerTool(
+    "get_bunnyshell_workflow_job_logs",
+    {
+      description:
+        "Troubleshooting: fetch logs for a BunnyShell workflow job (deploy/build pipeline). " +
+        "Response body is the BunnyShell /v1/workflow_jobs/{id}/logs payload as returned (no truncation or wrapping).",
+      inputSchema: getBunnyshellWorkflowJobLogsInput,
+    },
+    async (args) => {
+      const json = await postMcp("/api/mcp/get_bunnyshell_workflow_job_logs", {
+        bnsEnvironmentId: args.bnsEnvironmentId,
+        workflowJobId: args.workflowJobId,
       });
       return textResult(json);
     }
