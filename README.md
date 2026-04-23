@@ -33,8 +33,6 @@ Example `mcpServers.testchimp`:
 
 The config **file path** depends on the host (e.g. Cursor often uses `<repo>/.cursor/mcp.json`). Tool names use **kebab-case** (e.g. `get-requirement-coverage`, `create-user-story`).
 
-Legacy binary: **`testchimp-mcp`** runs the same MCP server as `testchimp mcp`.
-
 ## CLI
 
 ```bash

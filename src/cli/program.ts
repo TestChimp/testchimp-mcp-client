@@ -6,7 +6,7 @@ import { deepMerge } from "../core/merge.js";
 import { runTool } from "../core/tools.js";
 import { TOOL_DEFINITIONS } from "../core/tools.js";
 
-export const PACKAGE_VERSION = "0.1.0";
+export const PACKAGE_VERSION = "0.1.1";
 
 function parseJsonInput(raw: string | undefined): Record<string, unknown> {
   if (raw == null || raw.trim() === "") return {};

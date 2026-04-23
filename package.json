@@ -1,13 +1,12 @@
 {
   "name": "@testchimp/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TestChimp CLI and MCP server — coverage, plans, EaaS, TrueCoverage (calls /api/mcp/*)",
   "type": "module",
   "main": "dist/bin/testchimp.js",
   "types": "dist/bin/testchimp.d.ts",
   "bin": {
-    "testchimp": "dist/bin/testchimp.js",
-    "testchimp-mcp": "dist/bin/legacy-mcp.js"
+    "testchimp": "dist/bin/testchimp.js"
   },
   "files": [
     "dist/"
