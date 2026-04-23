@@ -1,12 +1,13 @@
 {
-  "name": "testchimp-mcp-client",
-  "version": "0.0.4",
-  "description": "MCP server for TestChimp — coverage, execution history, and plan authoring",
+  "name": "@testchimp/cli",
+  "version": "0.1.0",
+  "description": "TestChimp CLI and MCP server — coverage, plans, EaaS, TrueCoverage (calls /api/mcp/*)",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/bin/testchimp.js",
+  "types": "dist/bin/testchimp.d.ts",
   "bin": {
-    "testchimp-mcp": "dist/index.js"
+    "testchimp": "dist/bin/testchimp.js",
+    "testchimp-mcp": "dist/bin/legacy-mcp.js"
   },
   "files": [
     "dist/"
@@ -14,7 +15,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "start": "node dist/index.js",
+    "start": "node dist/bin/testchimp.js",
     "prepublishOnly": "npm run build"
   },
   "engines": {
@@ -22,6 +23,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "commander": "^12.1.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -31,7 +33,11 @@
   "keywords": [
     "testchimp",
     "mcp",
+    "cli",
     "model-context-protocol"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }

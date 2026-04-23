@@ -1,14 +1,14 @@
 /**
  * Poll TestChimp MCP EaaS endpoints until BunnyShell reports deployed + component URLs,
- * or a terminal failure / timeout. See plan: provision_ephemeral_environment_and_wait.
+ * or a terminal failure / timeout.
  */
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-
 export interface ProvisionWaitArgs {
   branchName?: string;
   pollIntervalSeconds?: number;
   maxWaitMinutes?: number;
 }
+
+export type ProgressLog = (message: string) => void | Promise<void>;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,7 +49,6 @@ function componentUrlsNonEmpty(componentUrlsJson: string): boolean {
   }
 }
 
-/** True if BNS / aggregate status indicates we should stop polling with failure (deploy phase). */
 function isTerminalDeployFailure(
   aggregateStatus: string,
   operationStatus: string,
@@ -81,20 +80,9 @@ function lastStatusSnapshot(obj: Record<string, unknown>): Record<string, unknow
   };
 }
 
-async function logInfo(server: McpServer, message: string): Promise<void> {
-  try {
-    await server.sendLoggingMessage({
-      level: "info",
-      data: message,
-    });
-  } catch {
-    // Client may not support logging; ignore.
-  }
-}
-
 export async function runProvisionEphemeralEnvironmentAndWait(
   postMcp: (path: string, body: unknown) => Promise<string>,
-  server: McpServer,
+  log: ProgressLog | undefined,
   args: ProvisionWaitArgs
 ): Promise<string> {
   const pollIntervalSec = clamp(Math.round(args.pollIntervalSeconds ?? 60), 30, 120);
@@ -143,9 +131,10 @@ export async function runProvisionEphemeralEnvironmentAndWait(
     });
   }
 
-  await logInfo(
-    server,
-    `Ephemeral env provision started (bns=${bnsEnvironmentId}, branch=${branch || "?"}). Polling up to ${maxWaitMin} min, every ${pollIntervalSec}s.`
+  await Promise.resolve(
+    log?.(
+      `Ephemeral env provision started (bns=${bnsEnvironmentId}, branch=${branch || "?"}). Polling up to ${maxWaitMin} min, every ${pollIntervalSec}s.`
+    )
   );
 
   let pollIndex = 0;
@@ -184,9 +173,10 @@ export async function runProvisionEphemeralEnvironmentAndWait(
     lastComponentUrlsJson = componentUrlsJson;
     lastDashboardUrl = dashboardUrl;
 
-    await logInfo(
-      server,
-      `Ephemeral env poll ${pollIndex}: status=${aggregateStatus} op=${operationStatus} cluster=${clusterStatus} bns=${bnsEnvironmentId}`
+    await Promise.resolve(
+      log?.(
+        `Still waiting for ephemeral environment (poll ${pollIndex}): status=${aggregateStatus} op=${operationStatus} cluster=${clusterStatus} bns=${bnsEnvironmentId}`
+      )
     );
 
     const deployed = aggregateStatus.toLowerCase() === "deployed";

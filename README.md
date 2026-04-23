@@ -1,81 +1,56 @@
-# testchimp-mcp-client
+# @testchimp/cli
 
-MCP (Model Context Protocol) server for [TestChimp](https://testchimp.io). Exposes tools that call TestChimp **featureservice** `/api/mcp/*` endpoints using **`TestChimp-Api-Key` only** (project is resolved server-side).
+**TestChimp CLI** and **MCP server** for calling TestChimp [`/api/mcp/*`](https://featureservice.testchimp.io) endpoints with `TESTCHIMP-API-KEY`.
 
-## Environment
+This repository folder may still be named `testchimp-mcp-client` locally; the **published npm package** is **`@testchimp/cli`**.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TESTCHIMP_API_KEY` | Yes | Project API key from TestChimp project settings. |
-| `TESTCHIMP_BACKEND_URL` | No | Featureservice base URL (default: `https://featureservice.testchimp.io`). Set for staging or local dev. |
+## Install
 
-## Tools
+```bash
+npm install -D @testchimp/cli@latest
+```
 
-- **`get_requirement_coverage`** — POST `/api/mcp/list_requirement_coverage` (scenario / requirement coverage scoped by platform-rooted `scope.folderPath` under **`tests/...`** or **`plans/...`**).
-- **`get_execution_history`** — POST `/api/mcp/list_execution_history`.
-- **`create_user_story`** — POST `/api/mcp/create_user_story` (`platformFilePath` under `plans/stories/...`, `title`).
-- **`create_test_scenario`** — POST `/api/mcp/create_test_scenario` (`platformFilePath` under `plans/scenarios/...`, `title`, `userStoryOrdinalId`).
-- **`update_user_story`** — POST `/api/mcp/update_user_story` (full markdown `content` with `id: US-...` in frontmatter).
-- **`update_test_scenario`** — POST `/api/mcp/update_test_scenario` (full markdown `content` with `id: TS-...` and `story: US-...` in frontmatter).
-- **`get_eaas_config`** — POST `/api/mcp/get_eaas_config` (BunnyShell YAML path and project name; token excluded; `{}` when unconfigured).
-- **`get_branch_specific_endpoint_config`** — POST `/api/mcp/get_branch_specific_endpoint_config` (optional `branchName`). Resolves `BASE_URL` from Branch Management (template and per-branch overrides). Use when EaaS is not used and preview URLs are configured in TestChimp. Returns `baseUrl` and `resolution` (`override` \| `template` \| `none`).
-- **`provision_ephemeral_environment_and_wait`** — POST `/api/mcp/provision_ephemeral_environment` then poll `/api/mcp/get_ephemeral_environment_status` until deployed with component URLs, or return `failed` / `timeout` with `failure_phase` and `message` (optional `branchName`, `pollIntervalSeconds`, `maxWaitMinutes`). **Prefer this** for agents.
-- **`provision_ephemeral_environment`** — POST `/api/mcp/provision_ephemeral_environment` (optional `branchName`). Use when manually polling or as fallback if the wait tool is unavailable.
-- **`get_ephemeral_environment_status`** — POST `/api/mcp/get_ephemeral_environment_status` (`bnsEnvironmentId`).
-- **`destroy_ephemeral_environment`** — POST `/api/mcp/destroy_ephemeral_environment` (`bnsEnvironmentId`).
-- **`list_bunnyshell_environment_events`** — POST `/api/mcp/list_bunnyshell_environment_events` (proxies BunnyShell; response body is the API payload as returned).
-- **`list_bunnyshell_workflow_jobs`** — POST `/api/mcp/list_bunnyshell_workflow_jobs` (same: raw BunnyShell response body).
-- **`get_bunnyshell_workflow_job_logs`** — POST `/api/mcp/get_bunnyshell_workflow_job_logs` (raw logs response body from BunnyShell).
+## MCP (agents in Cursor, Claude Code, VS Code, etc.)
 
-## Cursor
+Register the server so the host runs:
 
-**Install only at project level.** TestChimp API keys are **scoped to a TestChimp project**; the MCP server must use the key for **the repo you have open**. Do **not** add this server to **IDE-wide** MCP config (`~/.cursor/mcp.json` or global Cursor MCP settings): you risk using the wrong key when switching workspaces, and agents may target the wrong backend project.
+```bash
+npx -y @testchimp/cli@latest mcp
+```
 
-**For humans and AI agents:** create or edit **`<project-root>/.cursor/mcp.json`** in the repository you are working in (the folder Cursor has open as the workspace root). That path is **`.cursor/mcp.json` relative to the project root**, not under your home directory.
-
-The MCP server reads **`TESTCHIMP_API_KEY`** and **`TESTCHIMP_BACKEND_URL`** from **`process.env`** — it does not read `mcp.json` directly. Cursor starts the server as a **child process**; variables must be present in **that** process’s environment.
-
-**Why `mcp.json` uses an `env` block:** If you open Cursor from the Dock, Spotlight, or similar, it usually does **not** load your shell profile (`.zshrc`, etc.), so values you only `export` in a terminal may **not** reach the MCP server. The `env` object next to `command` / `args` is the reliable way Cursor injects variables into the MCP process. (Cursor’s `mcp.json` does **not** expand `$VAR` / `${VAR}` from your shell; use literal values in `env`, or a wrapper that loads a `.env` file before starting the server.)
-
-### Project `mcp.json` example
-
-`<project-root>/.cursor/mcp.json`:
+Example `mcpServers.testchimp`:
 
 ```json
 {
-  "mcpServers": {
-    "testchimp": {
-      "command": "npx",
-      "args": ["-y", "testchimp-mcp-client"],
-      "env": {
-        "TESTCHIMP_API_KEY": "your-api-key",
-        "TESTCHIMP_BACKEND_URL": "https://featureservice.testchimp.io"
-      }
-    }
+  "command": "npx",
+  "args": ["-y", "@testchimp/cli@latest", "mcp"],
+  "env": {
+    "TESTCHIMP_API_KEY": "your-project-key",
+    "TESTCHIMP_BACKEND_URL": ""
   }
 }
 ```
 
-- **Do not commit secrets:** Add `.cursor/mcp.json` to **`.gitignore`** if it contains real keys, or keep only a committed `.cursor/mcp.json.example` with placeholders and document that each developer maintains a local ignored file.
-- **After changing env or config:** Restart the MCP server or reload MCP / restart Cursor so the new environment is picked up.
+The config **file path** depends on the host (e.g. Cursor often uses `<repo>/.cursor/mcp.json`). Tool names use **kebab-case** (e.g. `get-requirement-coverage`, `create-user-story`).
 
-For a published npm package name, adjust `args` to your scope (e.g. `@testchimp/mcp-client`) after publish.
+Legacy binary: **`testchimp-mcp`** runs the same MCP server as `testchimp mcp`.
 
-## Scope path format
-
-- Send `scope.folderPath` as platform path segments rooted at `tests` or `plans`.
-  - Example: `["tests","checkout"]`
-  - Example: `["plans","checkout"]`
-- These platform roots map to whatever repo folders are configured in TestChimp integrations (for example, platform `tests/...` may map to repo `ui_tests/...`).
-
-## Build
+## CLI
 
 ```bash
-npm install
-npm run build
+export TESTCHIMP_API_KEY=...   # required (often read from project MCP env; never commit keys)
+testchimp --help
+testchimp get-requirement-coverage --branch-name main --help
+testchimp create-user-story --platform-file-path plans/stories/foo.md --title "Checkout"
 ```
 
-Run locally: `node dist/index.js` (stdio MCP; typically launched by the IDE).
+- **stdout:** API response JSON.
+- **stderr:** progress for `provision-ephemeral-environment-and-wait` (“still waiting…” polls).
+- **Flags:** default for each subcommand; **`--json-input '<json>'`** or **`--json-input @file.json`** merges over flags (JSON wins on conflicts). Use JSON for nested bodies (e.g. TrueCoverage scopes).
+
+## Migration from `testchimp-mcp-client`
+
+The npm package **`testchimp-mcp-client`** is superseded by **`@testchimp/cli`**. Update MCP `args` to `["-y", "@testchimp/cli@latest", "mcp"]` and rename tool references to **kebab-case**. See [MIGRATION.md](./MIGRATION.md).
 
 ## License
 
