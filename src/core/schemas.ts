@@ -23,6 +23,22 @@ export const listExecutionInput = z.object({
   branchName: z.string().optional(),
 });
 
+export const fetchExecutionReportInput = z
+  .object({
+    batchInvocationId: z.string().optional(),
+    jobId: z.string().optional(),
+  })
+  .superRefine((v, ctx) => {
+    const batch = (v.batchInvocationId ?? "").trim();
+    const job = (v.jobId ?? "").trim();
+    if ((batch === "" && job === "") || (batch !== "" && job !== "")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide exactly one of batchInvocationId or jobId",
+      });
+    }
+  });
+
 export const createUserStoryInput = z.object({
   platformFilePath: z.string().min(1),
   title: z.string().min(1),

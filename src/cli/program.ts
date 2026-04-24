@@ -92,6 +92,21 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("fetch-execution-report")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "fetch-execution-report")!.description)
+    .addOption(jsonInputOption())
+    .option("--batch-invocation-id <id>")
+    .option("--job-id <id>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.batchInvocationId) body.batchInvocationId = String(opts.batchInvocationId);
+      if (opts.jobId) body.jobId = String(opts.jobId);
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("fetch-execution-report", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("create-user-story")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-user-story")!.description)
     .addOption(jsonInputOption())

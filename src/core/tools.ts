@@ -62,6 +62,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "fetch-execution-report",
+    description:
+      "Fetch a detailed execution report for failing SmartTests, given a batchInvocationId (batch run) or jobId (single run). " +
+      "Returns only failing tests and includes error details and a trace viewer URL when available.",
+    inputSchema: S.fetchExecutionReportInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.fetchExecutionReportInput>;
+      const body: Record<string, unknown> = {};
+      if (a.batchInvocationId != null && a.batchInvocationId.trim() !== "") body.batchInvocationId = a.batchInvocationId.trim();
+      if (a.jobId != null && a.jobId.trim() !== "") body.jobId = a.jobId.trim();
+      return postMcp("/api/mcp/fetch_execution_report", body);
+    },
+  },
+  {
     kebab: "create-user-story",
     description:
       "Create a user story on the TestChimp project and its plan file stub. " +
