@@ -6,7 +6,7 @@ import { deepMerge } from "../core/merge.js";
 import { runTool } from "../core/tools.js";
 import { TOOL_DEFINITIONS } from "../core/tools.js";
 
-export const PACKAGE_VERSION = "0.1.1";
+export const PACKAGE_VERSION = "0.1.4";
 
 function parseJsonInput(raw: string | undefined): Record<string, unknown> {
   if (raw == null || raw.trim() === "") return {};
@@ -376,6 +376,29 @@ export function buildCliProgram(): Command {
       const body = { eventTitle: opts.eventTitle };
       const merged = mergeBodies(body, opts.jsonInput);
       const out = await runTool("get-truecoverage-event-metadata-keys", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("list-screen-states")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-screen-states")!.description)
+    .addOption(jsonInputOption())
+    .option("--environment <s>", "optional environment tag (forward compatibility)")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.environment) body.environment = String(opts.environment);
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("list-screen-states", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("upsert-screen-states")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-screen-states")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("upsert-screen-states", merged, { postMcp });
       console.log(out);
     });
 

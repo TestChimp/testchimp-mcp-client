@@ -281,6 +281,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       return postMcp("/api/mcp/truecoverage_event_metadata_keys", { eventTitle: a.eventTitle });
     },
   },
+  {
+    kebab: "list-screen-states",
+    description:
+      "Fetch the project's screen/state vocabulary (relational atlas) for SmartTests and traces. " +
+      "Optional environment field is accepted for forward compatibility; v1 may be project-global.",
+    inputSchema: S.listScreenStatesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listScreenStatesInput>;
+      const body: Record<string, unknown> = {};
+      if (a.environment != null && a.environment.trim() !== "") body.environment = a.environment.trim();
+      return postMcp("/api/mcp/list_screen_states", body);
+    },
+  },
+  {
+    kebab: "upsert-screen-states",
+    description:
+      "Merge screen names and state strings into the project's relational atlas (idempotent upsert). " +
+      "Body uses camelCase screenStates: [{ screen, states: string[] }, ...] per UpsertScreenStatesRequest.",
+    inputSchema: S.upsertScreenStatesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.upsertScreenStatesInput>;
+      return postMcp("/api/mcp/upsert_screen_states", { screenStates: a.screenStates });
+    },
+  },
 ];
 
 const TOOL_BY_KEBAB = new Map(TOOL_DEFINITIONS.map((t) => [t.kebab, t]));

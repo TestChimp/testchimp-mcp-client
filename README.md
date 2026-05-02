@@ -40,6 +40,8 @@ export TESTCHIMP_API_KEY=...   # required (often read from project MCP env; neve
 testchimp --help
 testchimp get-requirement-coverage --branch-name main --help
 testchimp create-user-story --platform-file-path plans/stories/foo.md --title "Checkout"
+testchimp list-screen-states --json-input '{}'
+testchimp upsert-screen-states --json-input '{"screenStates":[{"screen":"Checkout","states":["empty","filled"]}]}'
 ```
 
 - **stdout:** API response JSON.

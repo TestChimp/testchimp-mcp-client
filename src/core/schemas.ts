@@ -96,3 +96,18 @@ export const getBunnyshellWorkflowJobLogsInput = z.object({
   bnsEnvironmentId: z.string().min(1),
   workflowJobId: z.string().min(1),
 });
+
+/** ListScreenStatesRequest JSON (proto camelCase). */
+export const listScreenStatesInput = z.object({
+  environment: z.string().optional(),
+});
+
+const screenStatesEntrySchema = z.object({
+  screen: z.string().optional(),
+  states: z.array(z.string()),
+});
+
+/** UpsertScreenStatesRequest JSON (proto camelCase). */
+export const upsertScreenStatesInput = z.object({
+  screenStates: z.array(screenStatesEntrySchema).min(1),
+});
