@@ -54,6 +54,11 @@ export const updatePlanMarkdownInput = z.object({
   content: z.string().min(1),
 });
 
+export const markPlanItemsImplementationDoneInput = z.object({
+  scenarioOrdinalIds: z.array(z.coerce.number().int().positive()).optional(),
+  userStoryOrdinalIds: z.array(z.coerce.number().int().positive()).optional(),
+});
+
 export const emptyInput = z.object({});
 
 export const getBranchSpecificEndpointConfigInput = z.object({

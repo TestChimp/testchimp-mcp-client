@@ -43,7 +43,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "get-requirement-coverage",
     description:
       "Fetch requirement (scenario) coverage under an optional platform-rooted folder scope (tests/... or plans/...). " +
-      "Use branchName (Git branch) and scope.filePaths (paths under platform tests root) rather than internal ids.",
+      "Use scope.filePaths or scope.folderPath (platform tests/plans roots). Omit branchName for cross-branch coverage " +
+      "(aggregates branch copies; execution jobs deduped by stable hash of tests-root-relative path + test name). " +
+      "Pass branchName only when results must be limited to one Git branch.",
     inputSchema: S.listCoverageInput,
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_requirement_coverage", listCoverageBody(args as z.infer<typeof S.listCoverageInput>));
@@ -109,7 +111,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "update-user-story",
     description:
       "Sync a user story markdown file to the platform after local edits. " +
-      "Parses frontmatter (id: US-..., title, priority, status) and updates the linked support file and entity.",
+      "Parses frontmatter (id: US-..., title, priority) and updates the linked support file and entity. " +
+      "Implementation status is not stored in markdown; use mark-plan-items-implementation-done.",
     inputSchema: S.updatePlanMarkdownInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updatePlanMarkdownInput>;
@@ -120,11 +123,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "update-test-scenario",
     description:
       "Sync a test scenario markdown file to the platform after local edits. " +
-      "Parses frontmatter (id: TS-..., story: US-..., title, priority, status) and updates linking if story changes.",
+      "Parses frontmatter (id: TS-..., story: US-..., title, priority) and updates linking if story changes. " +
+      "Implementation status is not stored in markdown; use mark-plan-items-implementation-done.",
     inputSchema: S.updatePlanMarkdownInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updatePlanMarkdownInput>;
       return postMcp("/api/mcp/update_test_scenario", { content: a.content });
+    },
+  },
+  {
+    kebab: "mark-plan-items-implementation-done",
+    description:
+      "Mark user stories and/or test scenarios implementation-complete in platform lifecycle (DB only; does not rewrite plan markdown). " +
+      "Use scenarioOrdinalIds / userStoryOrdinalIds (numeric parts of TS-<n> / US-<n>).",
+    inputSchema: S.markPlanItemsImplementationDoneInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.markPlanItemsImplementationDoneInput>;
+      const body: Record<string, unknown> = {};
+      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds;
+      if (a.userStoryOrdinalIds?.length) body.userStoryOrdinalIds = a.userStoryOrdinalIds;
+      return postMcp("/api/mcp/mark_plan_items_implementation_done", body);
     },
   },
   {
