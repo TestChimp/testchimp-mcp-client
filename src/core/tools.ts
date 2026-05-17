@@ -16,6 +16,17 @@ export interface ToolDefinition {
   execute: (args: unknown, ctx: ToolContext) => Promise<string>;
 }
 
+function platformToProtoEnum(platform: "web" | "ios" | "android"): string {
+  switch (platform) {
+    case "ios":
+      return "IOS_EXECUTION_PLATFORM";
+    case "android":
+      return "ANDROID_EXECUTION_PLATFORM";
+    default:
+      return "WEB_EXECUTION_PLATFORM";
+  }
+}
+
 function listCoverageBody(args: z.infer<typeof S.listCoverageInput>): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   if (args.release != null) body.release = args.release;
@@ -26,6 +37,7 @@ function listCoverageBody(args: z.infer<typeof S.listCoverageInput>): Record<str
     body.includeNonCoveredTestScenarios = args.includeNonCoveredTestScenarios;
   }
   if (args.branchName != null && args.branchName.trim() !== "") body.branchName = args.branchName.trim();
+  if (args.platform != null) body.platform = platformToProtoEnum(args.platform);
   return body;
 }
 
@@ -35,6 +47,22 @@ function listExecutionBody(args: z.infer<typeof S.listExecutionInput>): Record<s
   if (args.environment != null) body.environment = args.environment;
   if (args.scope != null) body.scope = normalizeScope(args.scope);
   if (args.branchName != null && args.branchName.trim() !== "") body.branchName = args.branchName.trim();
+  if (args.scenarioId != null && args.scenarioId.trim() !== "") body.scenarioId = args.scenarioId.trim();
+  const dimensionFilters = [...(args.dimensionFilters ?? [])];
+  if (args.platform != null) {
+    const hasPlatformFilter = dimensionFilters.some(
+      (f) => f.dimension === "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION",
+    );
+    if (!hasPlatformFilter) {
+      dimensionFilters.push({
+        dimension: "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION",
+        values: [args.platform.toUpperCase()],
+      });
+    }
+  }
+  if (dimensionFilters.length > 0) body.dimensionFilters = dimensionFilters;
+  if (args.limit != null) body.limit = args.limit;
+  if (args.offset != null) body.offset = args.offset;
   return body;
 }
 
@@ -45,7 +73,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Fetch requirement (scenario) coverage under an optional platform-rooted folder scope (tests/... or plans/...). " +
       "Use scope.filePaths or scope.folderPath (platform tests/plans roots). Omit branchName for cross-branch coverage " +
       "(aggregates branch copies; execution jobs deduped by stable hash of tests-root-relative path + test name). " +
-      "Pass branchName only when results must be limited to one Git branch.",
+      "Pass branchName only when results must be limited to one Git branch. Optional platform (web|ios|android) filters rollup.",
     inputSchema: S.listCoverageInput,
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_requirement_coverage", listCoverageBody(args as z.infer<typeof S.listCoverageInput>));
@@ -55,8 +83,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-execution-history",
     description:
-      "Fetch SmartTest execution history for an optional platform-rooted folder scope. " +
-      "Use branchName and scope.filePaths as for coverage.",
+      "Fetch SmartTest execution history for an optional platform-rooted folder scope, or for a scenario when scenarioId is set. " +
+      "Use branchName and scope.filePaths as for coverage. Optional platform (web|ios|android) and dimensionFilters narrow results.",
     inputSchema: S.listExecutionInput,
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_execution_history", listExecutionBody(args as z.infer<typeof S.listExecutionInput>));

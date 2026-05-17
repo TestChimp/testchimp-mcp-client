@@ -7,6 +7,13 @@ export const scopeSchema = z
   })
   .optional();
 
+const executionPlatformSchema = z.enum(["web", "ios", "android"]);
+
+export const executionJobDimensionFilterSchema = z.object({
+  dimension: z.string().min(1),
+  values: z.array(z.string()).min(1),
+});
+
 export const listCoverageInput = z.object({
   release: z.string().optional(),
   environment: z.string().optional(),
@@ -14,6 +21,7 @@ export const listCoverageInput = z.object({
   includeNonCoveredUserStories: z.boolean().optional(),
   includeNonCoveredTestScenarios: z.boolean().optional(),
   branchName: z.string().optional(),
+  platform: executionPlatformSchema.optional(),
 });
 
 export const listExecutionInput = z.object({
@@ -21,6 +29,11 @@ export const listExecutionInput = z.object({
   environment: z.string().optional(),
   scope: scopeSchema,
   branchName: z.string().optional(),
+  scenarioId: z.string().optional(),
+  platform: executionPlatformSchema.optional(),
+  dimensionFilters: z.array(executionJobDimensionFilterSchema).optional(),
+  limit: z.number().int().positive().max(500).optional(),
+  offset: z.number().int().nonnegative().optional(),
 });
 
 export const fetchExecutionReportInput = z

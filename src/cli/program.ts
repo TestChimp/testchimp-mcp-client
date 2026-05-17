@@ -52,6 +52,7 @@ export function buildCliProgram(): Command {
     .option("--release <s>")
     .option("--environment <s>")
     .option("--branch-name <s>")
+    .option("--platform <web|ios|android>")
     .option("--file-paths <csv>", "comma-separated paths under platform tests root")
     .option("--folder-path <path>", "folder under tests root, slash-separated")
     .action(async (opts) => {
@@ -59,6 +60,7 @@ export function buildCliProgram(): Command {
       if (opts.release) body.release = opts.release;
       if (opts.environment) body.environment = opts.environment;
       if (opts.branchName) body.branchName = opts.branchName;
+      if (opts.platform) body.platform = opts.platform;
       const scope: { filePaths?: string[]; folderPath?: string } = {};
       if (opts.filePaths) scope.filePaths = String(opts.filePaths).split(",").map((s: string) => s.trim()).filter(Boolean);
       if (opts.folderPath) scope.folderPath = opts.folderPath;
@@ -75,6 +77,8 @@ export function buildCliProgram(): Command {
     .option("--release <s>")
     .option("--environment <s>")
     .option("--branch-name <s>")
+    .option("--scenario-id <id>")
+    .option("--platform <web|ios|android>")
     .option("--file-paths <csv>")
     .option("--folder-path <path>")
     .action(async (opts) => {
@@ -82,6 +86,8 @@ export function buildCliProgram(): Command {
       if (opts.release) body.release = opts.release;
       if (opts.environment) body.environment = opts.environment;
       if (opts.branchName) body.branchName = opts.branchName;
+      if (opts.scenarioId) body.scenarioId = opts.scenarioId;
+      if (opts.platform) body.platform = opts.platform;
       const scope: { filePaths?: string[]; folderPath?: string } = {};
       if (opts.filePaths) scope.filePaths = String(opts.filePaths).split(",").map((s: string) => s.trim()).filter(Boolean);
       if (opts.folderPath) scope.folderPath = opts.folderPath;
