@@ -337,8 +337,7 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  const truecoverageHelp =
-    "Prefer --json-input with full request JSON (proto-shaped). Flags are optional shortcuts where listed.";
+  const truecoverageHelp = "Use --json-input with full request JSON (proto-shaped; set platform inside each ExecutionScope).";
 
   program
     .command("get-truecoverage-events")
