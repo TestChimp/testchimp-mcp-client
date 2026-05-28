@@ -9,6 +9,8 @@ export const scopeSchema = z
 
 const executionPlatformSchema = z.enum(["web", "ios", "android"]);
 
+const requirementCoverageRecordTypeSchema = z.enum(["smart_test", "manual", "SMART_TEST", "MANUAL"]);
+
 export const executionJobDimensionFilterSchema = z.object({
   dimension: z.string().min(1),
   values: z.array(z.string()).min(1),
@@ -22,6 +24,13 @@ export const listCoverageInput = z.object({
   includeNonCoveredTestScenarios: z.boolean().optional(),
   branchName: z.string().optional(),
   platform: executionPlatformSchema.optional(),
+  /**
+   * Which coverage sources to include.
+   *
+   * Omit for legacy default: SMART_TEST only.
+   * When provided, send proto enum names ("SMART_TEST", "MANUAL") or CLI-friendly aliases ("smart_test", "manual").
+   */
+  recordTypes: z.array(requirementCoverageRecordTypeSchema).optional(),
 });
 
 export const listExecutionInput = z.object({

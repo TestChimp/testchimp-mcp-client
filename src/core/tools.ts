@@ -38,6 +38,15 @@ function listCoverageBody(args: z.infer<typeof S.listCoverageInput>): Record<str
   }
   if (args.branchName != null && args.branchName.trim() !== "") body.branchName = args.branchName.trim();
   if (args.platform != null) body.platform = platformToProtoEnum(args.platform);
+  if (args.recordTypes != null && args.recordTypes.length > 0) {
+    const normalized = args.recordTypes.map((t) => {
+      const raw = String(t).trim();
+      if (raw === "manual") return "MANUAL";
+      if (raw === "smart_test") return "SMART_TEST";
+      return raw;
+    });
+    body.recordTypes = normalized;
+  }
   return body;
 }
 

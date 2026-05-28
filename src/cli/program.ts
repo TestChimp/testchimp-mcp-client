@@ -6,7 +6,23 @@ import { deepMerge } from "../core/merge.js";
 import { runTool } from "../core/tools.js";
 import { TOOL_DEFINITIONS } from "../core/tools.js";
 
-export const PACKAGE_VERSION = "0.1.4";
+export const PACKAGE_VERSION = "0.1.7";
+
+function parseRecordTypesCsv(raw: string): ("smart_test" | "manual")[] {
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => s.toLowerCase())
+    .map((s) => {
+      if (s === "automated") return "smart_test";
+      if (s === "smarttest") return "smart_test";
+      if (s === "smart_test") return "smart_test";
+      if (s === "manual") return "manual";
+      return s as "smart_test" | "manual";
+    })
+    .filter((v): v is "smart_test" | "manual" => v === "smart_test" || v === "manual");
+}
 
 function parseJsonInput(raw: string | undefined): Record<string, unknown> {
   if (raw == null || raw.trim() === "") return {};
@@ -53,6 +69,9 @@ export function buildCliProgram(): Command {
     .option("--environment <s>")
     .option("--branch-name <s>")
     .option("--platform <web|ios|android>")
+    .option("--record-types <csv>", "coverage sources: smart_test,manual (aliases: automated,smarttest)")
+    .option("--include-manual", "include manual sessions in addition to automated (default)")
+    .option("--manual-only", "manual-only coverage (no automated)")
     .option("--file-paths <csv>", "comma-separated paths under platform tests root")
     .option("--folder-path <path>", "folder under tests root, slash-separated")
     .action(async (opts) => {
@@ -61,6 +80,11 @@ export function buildCliProgram(): Command {
       if (opts.environment) body.environment = opts.environment;
       if (opts.branchName) body.branchName = opts.branchName;
       if (opts.platform) body.platform = opts.platform;
+      let recordTypes: ("smart_test" | "manual")[] | undefined;
+      if (opts.recordTypes) recordTypes = parseRecordTypesCsv(String(opts.recordTypes));
+      if (opts.includeManual) recordTypes = Array.from(new Set([...(recordTypes ?? ["smart_test"]), "manual"]));
+      if (opts.manualOnly) recordTypes = ["manual"];
+      if (recordTypes && recordTypes.length > 0) body.recordTypes = recordTypes;
       const scope: { filePaths?: string[]; folderPath?: string } = {};
       if (opts.filePaths) scope.filePaths = String(opts.filePaths).split(",").map((s: string) => s.trim()).filter(Boolean);
       if (opts.folderPath) scope.folderPath = opts.folderPath;

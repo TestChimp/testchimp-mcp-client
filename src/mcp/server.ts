@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { postMcp } from "../core/client.js";
 import { TOOL_DEFINITIONS, runTool } from "../core/tools.js";
 
-const PACKAGE_VERSION = "0.1.4";
+const PACKAGE_VERSION = "0.1.7";
 
 function textResult(json: string) {
   return {
