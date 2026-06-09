@@ -81,6 +81,20 @@ export const markPlanItemsImplementationDoneInput = z.object({
   userStoryOrdinalIds: z.array(z.coerce.number().int().positive()).optional(),
 });
 
+export const getUserStoriesInput = z
+  .object({
+    userStoryOrdinalIds: z.array(z.coerce.number().int().positive()).min(1),
+  });
+
+export const getTestScenariosInput = z
+  .object({
+    scenarioOrdinalIds: z.array(z.coerce.number().int().positive()).min(1),
+  });
+
+export const getManualSessionDetailsInput = z.object({
+  manualSessionId: z.string().min(1),
+});
+
 export const emptyInput = z.object({});
 
 export const getBranchSpecificEndpointConfigInput = z.object({

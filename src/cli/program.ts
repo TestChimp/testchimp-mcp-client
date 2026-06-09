@@ -184,6 +184,57 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-user-stories")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-user-stories")!.description)
+    .addOption(jsonInputOption())
+    .option("--user-story-ordinal-ids <csv>", "comma-separated US-<n> numeric ids")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.userStoryOrdinalIds) {
+        body.userStoryOrdinalIds = String(opts.userStoryOrdinalIds)
+          .split(",")
+          .map((s: string) => Number(s.trim()))
+          .filter((n: number) => Number.isFinite(n) && n > 0);
+      }
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("get-user-stories", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("get-test-scenarios")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-test-scenarios")!.description)
+    .addOption(jsonInputOption())
+    .option("--scenario-ordinal-ids <csv>", "comma-separated TS-<n> numeric ids")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.scenarioOrdinalIds) {
+        body.scenarioOrdinalIds = String(opts.scenarioOrdinalIds)
+          .split(",")
+          .map((s: string) => Number(s.trim()))
+          .filter((n: number) => Number.isFinite(n) && n > 0);
+      }
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("get-test-scenarios", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("get-manual-session-details")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-manual-session-details")!.description)
+    .addOption(jsonInputOption())
+    .option("--manual-session-id <id>", "manual test session id (same as job id in the viewer URL)")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.manualSessionId) {
+        body.manualSessionId = String(opts.manualSessionId).trim();
+      }
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("get-manual-session-details", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("mark-plan-items-implementation-done")
     .description(
       TOOL_DEFINITIONS.find((t) => t.kebab === "mark-plan-items-implementation-done")!.description

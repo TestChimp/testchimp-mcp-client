@@ -169,6 +169,48 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-user-stories",
+    description:
+      "Fetch user stories from the TestChimp platform by ordinal id (numeric part of US-<n>). " +
+      "Returns full plan markdown content, title, and platform file path for each found story. " +
+      "Use when plan files are not yet synced to the repo.",
+    inputSchema: S.getUserStoriesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getUserStoriesInput>;
+      return postMcp("/api/mcp/get_user_stories", {
+        userStoryOrdinalIds: a.userStoryOrdinalIds,
+      });
+    },
+  },
+  {
+    kebab: "get-test-scenarios",
+    description:
+      "Fetch test scenarios from the TestChimp platform by ordinal id (numeric part of TS-<n>). " +
+      "Returns full plan markdown content, title, platform file path, and linked user story ordinal ids. " +
+      "Use when plan files are not yet synced to the repo.",
+    inputSchema: S.getTestScenariosInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getTestScenariosInput>;
+      return postMcp("/api/mcp/get_test_scenarios", {
+        scenarioOrdinalIds: a.scenarioOrdinalIds,
+      });
+    },
+  },
+  {
+    kebab: "get-manual-session-details",
+    description:
+      "Fetch a manual test session by id. Returns project id, title, environment, steps " +
+      "(playwright commands, signed screenshot URLs, notes), and linked scenario ordinal ids. " +
+      "Use when authoring a SmartTest from a recorded manual session.",
+    inputSchema: S.getManualSessionDetailsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getManualSessionDetailsInput>;
+      return postMcp("/api/mcp/get_manual_session_details", {
+        manualSessionId: a.manualSessionId,
+      });
+    },
+  },
+  {
     kebab: "mark-plan-items-implementation-done",
     description:
       "Mark user stories and/or test scenarios implementation-complete in platform lifecycle (DB only; does not rewrite plan markdown). " +
