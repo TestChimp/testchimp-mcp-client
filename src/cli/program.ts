@@ -509,6 +509,31 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
+  program
+    .command("list-semantic-similar-tests")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-semantic-similar-tests")!.description)
+    .addOption(jsonInputOption())
+    .option("--folder-path <path>", "folder under tests root, slash-separated")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      const scope: { folderPath?: string } = {};
+      if (opts.folderPath) scope.folderPath = opts.folderPath;
+      if (Object.keys(scope).length) body.scope = scope;
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("list-semantic-similar-tests", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("mark-semantic-tests-distinct")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "mark-semantic-tests-distinct")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("mark-semantic-tests-distinct", merged, { postMcp });
+      console.log(out);
+    });
+
   program.on("--help", () => {
     /* default */
   });

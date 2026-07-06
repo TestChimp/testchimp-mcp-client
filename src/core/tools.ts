@@ -416,6 +416,33 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       return postMcp("/api/mcp/upsert_screen_states", { screenStates: a.screenStates });
     },
   },
+  {
+    kebab: "list-semantic-similar-tests",
+    description:
+      "List semantically similar SmartTest pairs in scope using TestLocators (no test_id). " +
+      "Pairs are deduped (A→B only when A.testId < B.testId). Distinct-marked pairs are excluded.",
+    inputSchema: S.listSemanticSimilarTestsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listSemanticSimilarTestsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.scope != null) body.scope = normalizeScope(a.scope);
+      return postMcp("/api/mcp/list_semantic_similar_tests", body);
+    },
+  },
+  {
+    kebab: "mark-semantic-tests-distinct",
+    description:
+      "Mark two SmartTests as legitimately distinct (symmetric) using TestLocators. " +
+      "Agent/API calls use marked_by_user_id = 0.",
+    inputSchema: S.markSemanticTestsDistinctInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.markSemanticTestsDistinctInput>;
+      return postMcp("/api/mcp/mark_semantic_tests_distinct", {
+        focusTest: a.focusTest,
+        distinctTest: a.distinctTest,
+      });
+    },
+  },
 ];
 
 const TOOL_BY_KEBAB = new Map(TOOL_DEFINITIONS.map((t) => [t.kebab, t]));

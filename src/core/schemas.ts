@@ -152,3 +152,19 @@ const screenStatesEntrySchema = z.object({
 export const upsertScreenStatesInput = z.object({
   screenStates: z.array(screenStatesEntrySchema).min(1),
 });
+
+export const testLocatorSchema = z.object({
+  folderPath: z.array(z.string()).optional(),
+  fileName: z.string().min(1),
+  testSuite: z.array(z.string()).optional(),
+  testName: z.string().min(1),
+});
+
+export const listSemanticSimilarTestsInput = z.object({
+  scope: scopeSchema,
+});
+
+export const markSemanticTestsDistinctInput = z.object({
+  focusTest: testLocatorSchema,
+  distinctTest: testLocatorSchema,
+});
