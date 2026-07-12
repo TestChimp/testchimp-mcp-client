@@ -27,6 +27,22 @@ function platformToProtoEnum(platform: "web" | "ios" | "android"): string {
   }
 }
 
+/** Build ExecutionScope JSON after Zod parse (platform aliases already normalized). */
+function executionScopeBody(scope: z.infer<typeof S.executionScopeSchema>): Record<string, unknown> {
+  return {
+    environment: scope.environment,
+    timeWindow: scope.timeWindow,
+    ...(scope.release != null ? { release: scope.release } : {}),
+    ...(scope.branchName != null ? { branchName: scope.branchName } : {}),
+    ...(scope.platform != null ? { platform: scope.platform } : {}),
+    ...(scope.automationEmitsOnly != null ? { automationEmitsOnly: scope.automationEmitsOnly } : {}),
+    ...(scope.metadataFilters != null && scope.metadataFilters.length > 0
+      ? { metadataFilters: scope.metadataFilters }
+      : {}),
+  };
+}
+
+
 function listCoverageBody(args: z.infer<typeof S.listCoverageInput>): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   if (args.release != null) body.release = args.release;
@@ -326,66 +342,118 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     kebab: "list-rum-environments",
-    description: "List distinct RUM environment tags for TrueCoverage scoping.",
+    description:
+      "List distinct RUM environment tags for this project. Call this first to choose environment values " +
+      "for TrueCoverage ExecutionScope.environment (e.g. QA, production).",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_rum_environments", {}),
   },
   {
     kebab: "get-truecoverage-events",
     description:
-      "TrueCoverage event funnel summaries (ListEventsRequest JSON: baseExecutionScope, comparisonExecutionScope). " +
-      "Optional ExecutionScope.platform: WEB_EXECUTION_PLATFORM | IOS_EXECUTION_PLATFORM | ANDROID_EXECUTION_PLATFORM " +
-      "(filters RUM rows stamped via testchimp-rum-platform header: web=1, ios=2, android=3). " +
-      "Use automationEmitsOnly on comparisonExecutionScope for test-tagged emits only.",
-    inputSchema: S.truecoverageJsonInput,
-    execute: async (args, { postMcp }) =>
-      postMcp("/api/mcp/truecoverage_list_events", (args as Record<string, unknown>) ?? {}),
+      "TrueCoverage event funnel summaries (ListEventsRequest). " +
+      "baseExecutionScope is the real-user / primary environment; optional comparisonExecutionScope for coverage " +
+      "(set automationEmitsOnly:true on comparison for test-tagged emits only). " +
+      "Each scope needs environment + timeWindow: { relativeWindow: \"604800s\" } or { fixedWindow: { startTime, endTime } } (RFC 3339). " +
+      "Optional platform: web|ios|android or WEB_/IOS_/ANDROID_EXECUTION_PLATFORM. " +
+      "Prefer list-rum-environments first.",
+    inputSchema: S.listTruecoverageEventsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listTruecoverageEventsInput>;
+      const body: Record<string, unknown> = {
+        baseExecutionScope: executionScopeBody(a.baseExecutionScope),
+      };
+      if (a.comparisonExecutionScope != null) {
+        body.comparisonExecutionScope = executionScopeBody(a.comparisonExecutionScope);
+      }
+      return postMcp("/api/mcp/truecoverage_list_events", body);
+    },
   },
   {
     kebab: "get-truecoverage-event-details",
     description:
-      "TrueCoverage drill-down for one event title (GetEventDetailsRequest JSON). " +
-      "Optional platform on baseExecutionScope / comparisonExecutionScope (WEB_EXECUTION_PLATFORM, IOS_EXECUTION_PLATFORM, ANDROID_EXECUTION_PLATFORM).",
-    inputSchema: S.truecoverageJsonInput,
-    execute: async (args, { postMcp }) =>
-      postMcp("/api/mcp/truecoverage_event_details", (args as Record<string, unknown>) ?? {}),
+      "TrueCoverage drill-down for one event (GetEventDetailsRequest). " +
+      "Requires eventTitle plus baseExecutionScope (environment + timeWindow). " +
+      "Optional comparisonExecutionScope for coverage columns (automationEmitsOnly on comparison). " +
+      "Same timeWindow / platform rules as get-truecoverage-events.",
+    inputSchema: S.getTruecoverageEventDetailsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getTruecoverageEventDetailsInput>;
+      const body: Record<string, unknown> = {
+        eventTitle: a.eventTitle,
+        baseExecutionScope: executionScopeBody(a.baseExecutionScope),
+      };
+      if (a.comparisonExecutionScope != null) {
+        body.comparisonExecutionScope = executionScopeBody(a.comparisonExecutionScope);
+      }
+      return postMcp("/api/mcp/truecoverage_event_details", body);
+    },
   },
   {
     kebab: "get-truecoverage-child-event-tree",
     description:
-      "TrueCoverage next-event tree for an event (ListChildEventTreeRequest JSON). " +
-      "Optional platform on baseScope / coverageScope (inside each ExecutionScope).",
-    inputSchema: S.truecoverageJsonInput,
-    execute: async (args, { postMcp }) =>
-      postMcp("/api/mcp/truecoverage_list_child_event_tree", (args as Record<string, unknown>) ?? {}),
+      "TrueCoverage next-event tree after an event (ListChildEventTreeRequest). " +
+      "Requires eventTitle, baseScope (environment + timeWindow); optional coverageScope for PRESENT/ABSENT. " +
+      "Note: metadataFilters on scopes are ignored for transition stats. Field names are baseScope/coverageScope " +
+      "(not baseExecutionScope).",
+    inputSchema: S.listTruecoverageChildEventTreeInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listTruecoverageChildEventTreeInput>;
+      const body: Record<string, unknown> = {
+        eventTitle: a.eventTitle,
+        baseScope: executionScopeBody(a.baseScope),
+      };
+      if (a.coverageScope != null) body.coverageScope = executionScopeBody(a.coverageScope);
+      return postMcp("/api/mcp/truecoverage_list_child_event_tree", body);
+    },
   },
   {
     kebab: "get-truecoverage-event-transition",
     description:
-      "TrueCoverage detailed transition summary between events (GetDetailedEventTransitionSummaryRequest JSON). " +
-      "Optional platform on baseScope / coverageScope (inside each ExecutionScope).",
-    inputSchema: S.truecoverageJsonInput,
-    execute: async (args, { postMcp }) =>
-      postMcp("/api/mcp/truecoverage_detailed_event_transition", (args as Record<string, unknown>) ?? {}),
+      "TrueCoverage detailed transition stats between two events (GetDetailedEventTransitionSummaryRequest). " +
+      "Requires eventTitle, nextEventTitle, baseScope (environment + timeWindow); optional coverageScope. " +
+      "metadataFilters on scopes are ignored. Uses baseScope/coverageScope field names.",
+    inputSchema: S.getTruecoverageEventTransitionInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getTruecoverageEventTransitionInput>;
+      const body: Record<string, unknown> = {
+        eventTitle: a.eventTitle,
+        nextEventTitle: a.nextEventTitle,
+        baseScope: executionScopeBody(a.baseScope),
+      };
+      if (a.coverageScope != null) body.coverageScope = executionScopeBody(a.coverageScope);
+      return postMcp("/api/mcp/truecoverage_detailed_event_transition", body);
+    },
   },
   {
     kebab: "get-truecoverage-event-time-series",
     description:
-      "TrueCoverage time series for sessions or metrics (EventTimeSeriesRequest JSON). " +
-      "Optional platform on baseExecutionScope.",
-    inputSchema: S.truecoverageJsonInput,
-    execute: async (args, { postMcp }) =>
-      postMcp("/api/mcp/truecoverage_event_time_series", (args as Record<string, unknown>) ?? {}),
+      "TrueCoverage daily time series for one metric (EventTimeSeriesRequest). " +
+      "Requires baseExecutionScope (environment + timeWindow). Optional eventTitle and metricType: " +
+      "SESSION_COUNT | RELATIVE_FREQUENCY | PERCENTAGE_TERMINAL_EVENT | SESSION_POSITION | " +
+      "TIME_TO_NEXT_EVENT | REVERSE_INDEX | TIME_FROM_START | TIME_TO_END | TIME_SINCE_PREVIOUS_EVENT.",
+    inputSchema: S.getTruecoverageEventTimeSeriesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getTruecoverageEventTimeSeriesInput>;
+      const body: Record<string, unknown> = {
+        baseExecutionScope: executionScopeBody(a.baseExecutionScope),
+      };
+      if (a.eventTitle != null) body.eventTitle = a.eventTitle;
+      if (a.metricType != null) body.metricType = a.metricType;
+      return postMcp("/api/mcp/truecoverage_event_time_series", body);
+    },
   },
   {
     kebab: "get-truecoverage-session-metadata-keys",
-    description: "List session-level metadata keys observed for TrueCoverage.",
+    description: "List session-level metadata keys observed in RUM for TrueCoverage filters.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/truecoverage_session_metadata_keys", {}),
   },
   {
     kebab: "get-truecoverage-event-metadata-keys",
-    description: "List metadata keys for a given event title.",
+    description:
+      "List metadata keys for a given event title (ListEventMetadataKeysRequest). " +
+      "Pass eventTitle (CLI: --event-title or json-input).",
     inputSchema: S.eventMetadataKeysInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.eventMetadataKeysInput>;

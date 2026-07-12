@@ -2,8 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { postMcp } from "../core/client.js";
 import { TOOL_DEFINITIONS, runTool } from "../core/tools.js";
-
-const PACKAGE_VERSION = "0.1.7";
+import { PACKAGE_VERSION } from "../core/version.js";
 
 function textResult(json: string) {
   return {

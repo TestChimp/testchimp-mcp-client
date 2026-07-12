@@ -101,7 +101,137 @@ export const getBranchSpecificEndpointConfigInput = z.object({
   branchName: z.string().optional(),
 });
 
-export const truecoverageJsonInput = z.record(z.string(), z.unknown());
+/** Protobuf JSON Duration — must end in `s`, e.g. "604800s", "1.5s". */
+const protobufDurationSchema = z
+  .string()
+  .regex(/^-?\d+(\.\d+)?s$/, 'Duration must be protobuf JSON ending in "s", e.g. "604800s"');
+
+const fixedWindowSchema = z
+  .object({
+    startTime: z.string().min(1).describe("RFC 3339 timestamp"),
+    endTime: z.string().min(1).describe("RFC 3339 timestamp"),
+  })
+  .describe("Fixed calendar window (both bounds required)");
+
+/** TimeWindow oneof — exactly one branch (union exposes clearly to MCP agents). */
+export const timeWindowSchema = z.union([
+  z.object({ relativeWindow: protobufDurationSchema }).strict(),
+  z.object({ fixedWindow: fixedWindowSchema }).strict(),
+]);
+
+/** Accept CLI aliases (web|ios|android) or proto enum names; normalize to proto. */
+const executionScopePlatformSchema = z
+  .enum([
+    "web",
+    "ios",
+    "android",
+    "UNKNOWN_EXECUTION_PLATFORM",
+    "WEB_EXECUTION_PLATFORM",
+    "IOS_EXECUTION_PLATFORM",
+    "ANDROID_EXECUTION_PLATFORM",
+  ])
+  .transform((p): "UNKNOWN_EXECUTION_PLATFORM" | "WEB_EXECUTION_PLATFORM" | "IOS_EXECUTION_PLATFORM" | "ANDROID_EXECUTION_PLATFORM" => {
+    switch (p) {
+      case "web":
+        return "WEB_EXECUTION_PLATFORM";
+      case "ios":
+        return "IOS_EXECUTION_PLATFORM";
+      case "android":
+        return "ANDROID_EXECUTION_PLATFORM";
+      default:
+        return p;
+    }
+  });
+
+const typedValueSchema = z
+  .object({
+    stringValue: z.string().optional(),
+    /** Protobuf JSON often encodes int64 as string. */
+    intValue: z.union([z.string(), z.number()]).optional(),
+    floatValue: z.number().optional(),
+    boolValue: z.boolean().optional(),
+  })
+  .superRefine((v, ctx) => {
+    const set = [v.stringValue, v.intValue, v.floatValue, v.boolValue].filter((x) => x !== undefined);
+    if (set.length !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "TypedValue requires exactly one of stringValue, intValue, floatValue, boolValue",
+      });
+    }
+  });
+
+const metadataFilterSchema = z.object({
+  key: z.string().min(1),
+  value: typedValueSchema,
+  operator: z
+    .enum(["UNKNOWN_OPERATOR", "EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"])
+    .optional(),
+});
+
+/**
+ * ExecutionScope (rum_service.proto) — wire shape for Protobuf JsonFormat.
+ * Window must be nested under timeWindow (canonical). Flat relativeWindow on the scope is not accepted here.
+ */
+export const executionScopeSchema = z.object({
+  environment: z
+    .string()
+    .min(1)
+    .describe("RUM environment tag from list-rum-environments (e.g. QA, production)"),
+  timeWindow: timeWindowSchema,
+  release: z.string().optional(),
+  branchName: z.string().optional(),
+  platform: executionScopePlatformSchema.optional(),
+  automationEmitsOnly: z
+    .boolean()
+    .optional()
+    .describe("On comparison/coverage scopes only: restrict to emits with test_id"),
+  metadataFilters: z.array(metadataFilterSchema).optional(),
+});
+
+export const listTruecoverageEventsInput = z.object({
+  baseExecutionScope: executionScopeSchema,
+  comparisonExecutionScope: executionScopeSchema.optional(),
+});
+
+export const getTruecoverageEventDetailsInput = z.object({
+  eventTitle: z.string().min(1),
+  baseExecutionScope: executionScopeSchema,
+  comparisonExecutionScope: executionScopeSchema.optional(),
+});
+
+export const listTruecoverageChildEventTreeInput = z.object({
+  eventTitle: z.string().min(1),
+  baseScope: executionScopeSchema,
+  coverageScope: executionScopeSchema.optional(),
+});
+
+export const getTruecoverageEventTransitionInput = z.object({
+  eventTitle: z.string().min(1),
+  nextEventTitle: z.string().min(1),
+  baseScope: executionScopeSchema,
+  coverageScope: executionScopeSchema.optional(),
+});
+
+/** EventTimeSeriesMetricType — must match rum_service.proto enum names. */
+export const eventTimeSeriesMetricSchema = z.enum([
+  "EVENT_TIME_SERIES_METRIC_UNSPECIFIED",
+  "SESSION_COUNT",
+  "RELATIVE_FREQUENCY",
+  "PERCENTAGE_TERMINAL_EVENT",
+  "SESSION_POSITION",
+  "TIME_TO_NEXT_EVENT",
+  "REVERSE_INDEX",
+  "TIME_FROM_START",
+  "TIME_TO_END",
+  "TIME_SINCE_PREVIOUS_EVENT",
+]);
+
+export const getTruecoverageEventTimeSeriesInput = z.object({
+  baseExecutionScope: executionScopeSchema,
+  eventTitle: z.string().optional(),
+  metricType: eventTimeSeriesMetricSchema.optional(),
+});
 
 export const eventMetadataKeysInput = z.object({
   eventTitle: z.string().min(1),

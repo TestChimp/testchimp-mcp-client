@@ -5,8 +5,9 @@ import { DEFAULT_BACKEND, postMcp } from "../core/client.js";
 import { deepMerge } from "../core/merge.js";
 import { runTool } from "../core/tools.js";
 import { TOOL_DEFINITIONS } from "../core/tools.js";
+import { PACKAGE_VERSION } from "../core/version.js";
 
-export const PACKAGE_VERSION = "0.1.7";
+export { PACKAGE_VERSION };
 
 function parseRecordTypesCsv(raw: string): ("smart_test" | "manual")[] {
   return String(raw)
@@ -59,6 +60,32 @@ export function buildCliProgram(): Command {
 
   function jsonInputOption(): Option {
     return new Option("--json-input <json>", "Advanced: JSON object or @path; merged over flags (JSON wins on conflicts)");
+  }
+
+  /** Seed a minimal ExecutionScope from common flags (JSON can override / extend). */
+  function scopeFromFlags(opts: {
+    environment?: string;
+    relativeWindow?: string;
+    platform?: string;
+    release?: string;
+    branchName?: string;
+  }): Record<string, unknown> | undefined {
+    const scope: Record<string, unknown> = {};
+    if (opts.environment) scope.environment = String(opts.environment);
+    if (opts.relativeWindow) scope.timeWindow = { relativeWindow: String(opts.relativeWindow) };
+    if (opts.platform) scope.platform = String(opts.platform);
+    if (opts.release) scope.release = String(opts.release);
+    if (opts.branchName) scope.branchName = String(opts.branchName);
+    return Object.keys(scope).length > 0 ? scope : undefined;
+  }
+
+  function addTruecoverageScopeFlags(cmd: Command): Command {
+    return cmd
+      .option("--environment <s>", "RUM environment tag (seeds base scope)")
+      .option("--relative-window <duration>", 'Duration string ending in s, e.g. 604800s (seeds base scope timeWindow)')
+      .option("--platform <web|ios|android>", "Platform filter on base scope (aliases or WEB_/IOS_/ANDROID_EXECUTION_PLATFORM)")
+      .option("--release <s>", "Optional release filter on base scope")
+      .option("--branch-name <s>", "Optional branchName on base scope");
   }
 
   program
@@ -412,57 +439,90 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  const truecoverageHelp = "Use --json-input with full request JSON (proto-shaped; set platform inside each ExecutionScope).";
+  addTruecoverageScopeFlags(
+    program
+      .command("get-truecoverage-events")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-events")!.description)
+      .addOption(jsonInputOption())
+  ).action(async (opts) => {
+    const body: Record<string, unknown> = {};
+    const base = scopeFromFlags(opts);
+    if (base) body.baseExecutionScope = base;
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("get-truecoverage-events", merged, { postMcp });
+    console.log(out);
+  });
 
-  program
-    .command("get-truecoverage-events")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-events")!.description + " " + truecoverageHelp)
-    .addOption(jsonInputOption())
-    .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      const out = await runTool("get-truecoverage-events", merged, { postMcp });
-      console.log(out);
-    });
+  addTruecoverageScopeFlags(
+    program
+      .command("get-truecoverage-event-details")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-event-details")!.description)
+      .addOption(jsonInputOption())
+      .option("--event-title <title>", "Event title (or set eventTitle in --json-input)")
+  ).action(async (opts) => {
+    const body: Record<string, unknown> = {};
+    if (opts.eventTitle) body.eventTitle = String(opts.eventTitle);
+    const base = scopeFromFlags(opts);
+    if (base) body.baseExecutionScope = base;
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("get-truecoverage-event-details", merged, { postMcp });
+    console.log(out);
+  });
 
-  program
-    .command("get-truecoverage-event-details")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-event-details")!.description + " " + truecoverageHelp)
-    .addOption(jsonInputOption())
-    .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      const out = await runTool("get-truecoverage-event-details", merged, { postMcp });
-      console.log(out);
-    });
+  addTruecoverageScopeFlags(
+    program
+      .command("get-truecoverage-child-event-tree")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-child-event-tree")!.description)
+      .addOption(jsonInputOption())
+      .option("--event-title <title>", "Parent event title (or set eventTitle in --json-input)")
+  ).action(async (opts) => {
+    const body: Record<string, unknown> = {};
+    if (opts.eventTitle) body.eventTitle = String(opts.eventTitle);
+    const base = scopeFromFlags(opts);
+    if (base) body.baseScope = base;
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("get-truecoverage-child-event-tree", merged, { postMcp });
+    console.log(out);
+  });
 
-  program
-    .command("get-truecoverage-child-event-tree")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-child-event-tree")!.description + " " + truecoverageHelp)
-    .addOption(jsonInputOption())
-    .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      const out = await runTool("get-truecoverage-child-event-tree", merged, { postMcp });
-      console.log(out);
-    });
+  addTruecoverageScopeFlags(
+    program
+      .command("get-truecoverage-event-transition")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-event-transition")!.description)
+      .addOption(jsonInputOption())
+      .option("--event-title <title>", "From event (or eventTitle in --json-input)")
+      .option("--next-event-title <title>", "To event (or nextEventTitle in --json-input)")
+  ).action(async (opts) => {
+    const body: Record<string, unknown> = {};
+    if (opts.eventTitle) body.eventTitle = String(opts.eventTitle);
+    if (opts.nextEventTitle) body.nextEventTitle = String(opts.nextEventTitle);
+    const base = scopeFromFlags(opts);
+    if (base) body.baseScope = base;
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("get-truecoverage-event-transition", merged, { postMcp });
+    console.log(out);
+  });
 
-  program
-    .command("get-truecoverage-event-transition")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-event-transition")!.description + " " + truecoverageHelp)
-    .addOption(jsonInputOption())
-    .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      const out = await runTool("get-truecoverage-event-transition", merged, { postMcp });
-      console.log(out);
-    });
-
-  program
-    .command("get-truecoverage-event-time-series")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-event-time-series")!.description + " " + truecoverageHelp)
-    .addOption(jsonInputOption())
-    .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      const out = await runTool("get-truecoverage-event-time-series", merged, { postMcp });
-      console.log(out);
-    });
+  addTruecoverageScopeFlags(
+    program
+      .command("get-truecoverage-event-time-series")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-event-time-series")!.description)
+      .addOption(jsonInputOption())
+      .option("--event-title <title>", "Optional event title")
+      .option(
+        "--metric-type <name>",
+        "SESSION_COUNT | RELATIVE_FREQUENCY | PERCENTAGE_TERMINAL_EVENT | SESSION_POSITION | …"
+      )
+  ).action(async (opts) => {
+    const body: Record<string, unknown> = {};
+    if (opts.eventTitle) body.eventTitle = String(opts.eventTitle);
+    if (opts.metricType) body.metricType = String(opts.metricType);
+    const base = scopeFromFlags(opts);
+    if (base) body.baseExecutionScope = base;
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("get-truecoverage-event-time-series", merged, { postMcp });
+    console.log(out);
+  });
 
   program
     .command("get-truecoverage-session-metadata-keys")
@@ -478,9 +538,10 @@ export function buildCliProgram(): Command {
     .command("get-truecoverage-event-metadata-keys")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-truecoverage-event-metadata-keys")!.description)
     .addOption(jsonInputOption())
-    .requiredOption("--event-title <title>")
+    .option("--event-title <title>", "Event title (or set eventTitle in --json-input)")
     .action(async (opts) => {
-      const body = { eventTitle: opts.eventTitle };
+      const body: Record<string, unknown> = {};
+      if (opts.eventTitle) body.eventTitle = String(opts.eventTitle);
       const merged = mergeBodies(body, opts.jsonInput);
       const out = await runTool("get-truecoverage-event-metadata-keys", merged, { postMcp });
       console.log(out);
