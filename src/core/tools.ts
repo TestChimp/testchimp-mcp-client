@@ -133,9 +133,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "create-user-story",
     description:
-      "Create a user story on the TestChimp project and its plan file stub. " +
-      "Always call this before writing a new story markdown file; use the returned ordinalId as US-<ordinalId> in frontmatter. " +
-      "platformFilePath must be under plans/stories/ and end with .md.",
+      "Create a user story on the TestChimp project and allocate a real US-<ordinalId>. " +
+      "Response includes content: canonical stub markdown already containing id: US-<ordinalId>. " +
+      "BLOCKING workflow: call this FIRST → Write the returned content to the repo plans/stories path " +
+      "(edit body as needed but keep id:) → call update-user-story with the full markdown. " +
+      "Never write story markdown that omits id. platformFilePath must be under plans/stories/ and end with .md.",
     inputSchema: S.createUserStoryInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.createUserStoryInput>;
@@ -148,7 +150,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "create-test-scenario",
     description:
-      "Create a test scenario linked to a user story. platformFilePath must be under plans/scenarios/ and end with .md. " +
+      "Create a test scenario linked to a user story and allocate a real TS-<ordinalId>. " +
+      "Response includes content: canonical stub markdown already containing id: TS-<ordinalId> and story: US-<n>. " +
+      "BLOCKING workflow: call this FIRST → Write the returned content to the repo plans/scenarios path " +
+      "(edit body as needed but keep id: and story:) → call update-test-scenario with the full markdown. " +
+      "Never write scenario markdown that omits id. update-test-scenario rejects missing id/story with a clear error. " +
+      "platformFilePath must be under plans/scenarios/ and end with .md. " +
       "userStoryOrdinalId is the numeric part of the parent US-<n> id.",
     inputSchema: S.createTestScenarioInput,
     execute: async (args, { postMcp }) => {
@@ -164,8 +171,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "update-user-story",
     description:
       "Sync a user story markdown file to the platform after local edits. " +
-      "Parses frontmatter (id: US-..., title, priority) and updates the linked support file and entity. " +
-      "Implementation status is not stored in markdown; use mark-plan-items-implementation-done.",
+      "Requires frontmatter id: US-<n> (platform-issued). Missing id returns an error telling you to call create-user-story first. " +
+      "Parses frontmatter (id, title, priority) and updates the linked support file and entity.",
     inputSchema: S.updatePlanMarkdownInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updatePlanMarkdownInput>;
@@ -176,8 +183,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "update-test-scenario",
     description:
       "Sync a test scenario markdown file to the platform after local edits. " +
-      "Parses frontmatter (id: TS-..., story: US-..., title, priority) and updates linking if story changes. " +
-      "Implementation status is not stored in markdown; use mark-plan-items-implementation-done.",
+      "Requires frontmatter id: TS-<n> and story: US-<n>. Missing either returns an error telling you to call create-test-scenario first. " +
+      "Parses frontmatter and updates linking if story changes.",
     inputSchema: S.updatePlanMarkdownInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updatePlanMarkdownInput>;

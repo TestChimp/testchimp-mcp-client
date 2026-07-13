@@ -1,6 +1,6 @@
 {
   "name": "@testchimp/cli",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "TestChimp CLI and MCP server — coverage, plans, EaaS, TrueCoverage (calls /api/mcp/*)",
   "type": "module",
   "main": "dist/bin/testchimp.js",
