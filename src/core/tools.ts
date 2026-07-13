@@ -497,8 +497,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-security-scan-config",
     description:
-      "Fetch security scan config by scan id (categories, environment, release label, status). " +
-      "Pass id (CLI: --id). Used by /testchimp run security scan.",
+      "Fetch security scan config by scan id (categories, environment, release label, status, " +
+      "allowActiveScan, and detail proto). Pass id (CLI: --id). Used by /testchimp run security scan. " +
+      "Honour allowActiveScan: true → run ZAP active after passive; false/absent → passive-only.",
     inputSchema: S.getSecurityScanConfigInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getSecurityScanConfigInput>;
