@@ -495,6 +495,66 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-security-scan-config",
+    description:
+      "Fetch security scan config by scan id (categories, environment, release label, status). " +
+      "Pass id (CLI: --id). Used by /testchimp run security scan.",
+    inputSchema: S.getSecurityScanConfigInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getSecurityScanConfigInput>;
+      return postMcp("/api/mcp/get_security_scan_config", { scanId: a.id.trim() });
+    },
+  },
+  {
+    kebab: "update-scan-progress",
+    description:
+      "Update a scan's status. status must be one of: QUEUED, IN_PROGRESS, COMPLETED, EXCEPTION. " +
+      "Call IN_PROGRESS when starting; COMPLETED when all selected categories finish; EXCEPTION on hard failure.",
+    inputSchema: S.updateScanProgressInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.updateScanProgressInput>;
+      return postMcp("/api/mcp/update_scan_progress", {
+        scanId: a.id.trim(),
+        status: a.status,
+      });
+    },
+  },
+  {
+    kebab: "report-dast-findings",
+    description:
+      "Upload a ZAP Traditional JSON report for a security scan. Pass --id and --report-file <path>. " +
+      "Backend parses alerts, dedupes by bug hash, and inserts new SECURITY bugs linked to the scan. " +
+      "Does not mark the scan COMPLETED.",
+    inputSchema: S.reportDastFindingsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.reportDastFindingsInput>;
+      const { readFile } = await import("node:fs/promises");
+      const reportJson = await readFile(a.reportFile, "utf8");
+      return postMcp("/api/mcp/report_dast_findings", {
+        scanId: a.id.trim(),
+        reportJson,
+      });
+    },
+  },
+  {
+    kebab: "run-sast-scan",
+    description: "Stub: Semgrep SAST scan is not implemented yet.",
+    inputSchema: S.stubSecurityScanInput,
+    execute: async () => JSON.stringify({ status: "not_implemented", tool: "run-sast-scan" }),
+  },
+  {
+    kebab: "run-deps-scan",
+    description: "Stub: Trivy dependency scan is not implemented yet.",
+    inputSchema: S.stubSecurityScanInput,
+    execute: async () => JSON.stringify({ status: "not_implemented", tool: "run-deps-scan" }),
+  },
+  {
+    kebab: "run-secrets-scan",
+    description: "Stub: Gitleaks secrets scan is not implemented yet.",
+    inputSchema: S.stubSecurityScanInput,
+    execute: async () => JSON.stringify({ status: "not_implemented", tool: "run-secrets-scan" }),
+  },
+  {
     kebab: "upsert-screen-states",
     description:
       "Merge screen names and state strings into the project's relational atlas (idempotent upsert). " +

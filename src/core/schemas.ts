@@ -278,6 +278,26 @@ export const getReleaseInput = z.object({
   version: z.string().min(1),
 });
 
+export const getSecurityScanConfigInput = z.object({
+  id: z.string().min(1),
+});
+
+export const updateScanProgressInput = z.object({
+  id: z.string().min(1),
+  /** ScanStatus enum name: QUEUED | IN_PROGRESS | COMPLETED | EXCEPTION */
+  status: z.enum(["QUEUED", "IN_PROGRESS", "COMPLETED", "EXCEPTION"]),
+});
+
+export const reportDastFindingsInput = z.object({
+  id: z.string().min(1),
+  /** Path to ZAP Traditional JSON report file */
+  reportFile: z.string().min(1),
+});
+
+export const stubSecurityScanInput = z.object({
+  id: z.string().min(1).optional(),
+});
+
 const screenStatesEntrySchema = z.object({
   screen: z.string().optional(),
   states: z.array(z.string()),

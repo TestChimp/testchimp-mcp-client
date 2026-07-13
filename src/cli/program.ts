@@ -577,6 +577,108 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-security-scan-config")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-security-scan-config")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <scanId>", "Security scan id")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.id) body.id = String(opts.id);
+      const merged = mergeBodies(body, opts.jsonInput) as { id?: string };
+      if (!merged.id || String(merged.id).trim() === "") {
+        throw new Error("id is required (--id or --json-input {\"id\":\"...\"})");
+      }
+      const out = await runTool("get-security-scan-config", { id: String(merged.id).trim() }, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("update-scan-progress")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-scan-progress")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <scanId>", "Security scan id")
+    .option("--status <status>", "QUEUED | IN_PROGRESS | COMPLETED | EXCEPTION")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.id) body.id = String(opts.id);
+      if (opts.status) body.status = String(opts.status);
+      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; status?: string };
+      if (!merged.id || String(merged.id).trim() === "") {
+        throw new Error("id is required");
+      }
+      if (!merged.status || String(merged.status).trim() === "") {
+        throw new Error("status is required (QUEUED | IN_PROGRESS | COMPLETED | EXCEPTION)");
+      }
+      const out = await runTool(
+        "update-scan-progress",
+        { id: String(merged.id).trim(), status: String(merged.status).trim() },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
+    .command("report-dast-findings")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-dast-findings")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <scanId>", "Security scan id")
+    .option("--report-file <path>", "Path to ZAP Traditional JSON report")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.id) body.id = String(opts.id);
+      if (opts.reportFile) body.reportFile = String(opts.reportFile);
+      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; reportFile?: string };
+      if (!merged.id || String(merged.id).trim() === "") {
+        throw new Error("id is required");
+      }
+      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
+        throw new Error("reportFile is required (--report-file)");
+      }
+      const out = await runTool(
+        "report-dast-findings",
+        { id: String(merged.id).trim(), reportFile: String(merged.reportFile).trim() },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
+    .command("run-sast-scan")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "run-sast-scan")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <scanId>")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.id) body.id = String(opts.id);
+      const out = await runTool("run-sast-scan", mergeBodies(body, opts.jsonInput), { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("run-deps-scan")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "run-deps-scan")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <scanId>")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.id) body.id = String(opts.id);
+      const out = await runTool("run-deps-scan", mergeBodies(body, opts.jsonInput), { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("run-secrets-scan")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "run-secrets-scan")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <scanId>")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.id) body.id = String(opts.id);
+      const out = await runTool("run-secrets-scan", mergeBodies(body, opts.jsonInput), { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("upsert-screen-states")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-screen-states")!.description)
     .addOption(jsonInputOption())
