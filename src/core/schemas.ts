@@ -273,6 +273,11 @@ export const listScreenStatesInput = z.object({
   environment: z.string().optional(),
 });
 
+export const getReleaseInput = z.object({
+  /** Release catalog version / label — maps to McpGetReleaseRequest.version */
+  version: z.string().min(1),
+});
+
 const screenStatesEntrySchema = z.object({
   screen: z.string().optional(),
   states: z.array(z.string()),

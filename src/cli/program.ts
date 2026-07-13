@@ -561,6 +561,22 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-release")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-release")!.description)
+    .addOption(jsonInputOption())
+    .option("--version <version>", "Release version / label (McpGetReleaseRequest.version)")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.version) body.version = String(opts.version);
+      const merged = mergeBodies(body, opts.jsonInput) as { version?: string };
+      if (!merged.version || String(merged.version).trim() === "") {
+        throw new Error("version is required (--version or --json-input {\"version\":\"...\"})");
+      }
+      const out = await runTool("get-release", { version: String(merged.version).trim() }, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("upsert-screen-states")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-screen-states")!.description)
     .addOption(jsonInputOption())

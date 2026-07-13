@@ -481,6 +481,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-release",
+    description:
+      "Fetch release catalog details for a version/label in the current project " +
+      "(McpGetReleaseRequest/Response: cut git SHA, prior release + SHA, focus areas, payload). " +
+      "Pass version (CLI: --version). Authenticated via project API key.",
+    inputSchema: S.getReleaseInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getReleaseInput>;
+      // McpGetReleaseRequest — camelCase JSON field names per JsonFormat
+      const body: { version: string } = { version: a.version.trim() };
+      return postMcp("/api/mcp/get_release", body);
+    },
+  },
+  {
     kebab: "upsert-screen-states",
     description:
       "Merge screen names and state strings into the project's relational atlas (idempotent upsert). " +
