@@ -643,38 +643,77 @@ export function buildCliProgram(): Command {
     });
 
   program
-    .command("run-sast-scan")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "run-sast-scan")!.description)
+    .command("report-sast-findings")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-sast-findings")!.description)
     .addOption(jsonInputOption())
-    .option("--id <scanId>")
+    .option("--id <scanId>", "Security scan id")
+    .option("--report-file <path>", "Path to full Semgrep CLI JSON report")
     .action(async (opts) => {
       const body: Record<string, string> = {};
       if (opts.id) body.id = String(opts.id);
-      const out = await runTool("run-sast-scan", mergeBodies(body, opts.jsonInput), { postMcp });
+      if (opts.reportFile) body.reportFile = String(opts.reportFile);
+      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; reportFile?: string };
+      if (!merged.id || String(merged.id).trim() === "") {
+        throw new Error("id is required");
+      }
+      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
+        throw new Error("reportFile is required (--report-file)");
+      }
+      const out = await runTool(
+        "report-sast-findings",
+        { id: String(merged.id).trim(), reportFile: String(merged.reportFile).trim() },
+        { postMcp },
+      );
       console.log(out);
     });
 
   program
-    .command("run-deps-scan")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "run-deps-scan")!.description)
+    .command("report-secrets-findings")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-secrets-findings")!.description)
     .addOption(jsonInputOption())
-    .option("--id <scanId>")
+    .option("--id <scanId>", "Security scan id")
+    .option("--report-file <path>", "Path to full Gitleaks JSON report")
     .action(async (opts) => {
       const body: Record<string, string> = {};
       if (opts.id) body.id = String(opts.id);
-      const out = await runTool("run-deps-scan", mergeBodies(body, opts.jsonInput), { postMcp });
+      if (opts.reportFile) body.reportFile = String(opts.reportFile);
+      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; reportFile?: string };
+      if (!merged.id || String(merged.id).trim() === "") {
+        throw new Error("id is required");
+      }
+      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
+        throw new Error("reportFile is required (--report-file)");
+      }
+      const out = await runTool(
+        "report-secrets-findings",
+        { id: String(merged.id).trim(), reportFile: String(merged.reportFile).trim() },
+        { postMcp },
+      );
       console.log(out);
     });
 
   program
-    .command("run-secrets-scan")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "run-secrets-scan")!.description)
+    .command("report-deps-findings")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-deps-findings")!.description)
     .addOption(jsonInputOption())
-    .option("--id <scanId>")
+    .option("--id <scanId>", "Security scan id")
+    .option("--report-file <path>", "Path to full Trivy JSON report")
     .action(async (opts) => {
       const body: Record<string, string> = {};
       if (opts.id) body.id = String(opts.id);
-      const out = await runTool("run-secrets-scan", mergeBodies(body, opts.jsonInput), { postMcp });
+      if (opts.reportFile) body.reportFile = String(opts.reportFile);
+      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; reportFile?: string };
+      if (!merged.id || String(merged.id).trim() === "") {
+        throw new Error("id is required");
+      }
+      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
+        throw new Error("reportFile is required (--report-file)");
+      }
+      const out = await runTool(
+        "report-deps-findings",
+        { id: String(merged.id).trim(), reportFile: String(merged.reportFile).trim() },
+        { postMcp },
+      );
       console.log(out);
     });
 

@@ -497,9 +497,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-security-scan-config",
     description:
-      "Fetch security scan config by scan id (categories, environment, release label, status, " +
-      "allowActiveScan, and detail proto). Pass id (CLI: --id). Used by /testchimp run security scan. " +
-      "Honour allowActiveScan: true → run ZAP active after passive; false/absent → passive-only.",
+      "Fetch security scan config by scan id (detail.dastCheckConfig / detail.sastCheckConfig / " +
+      "detail.depsCheckConfig / detail.leaksCheckConfig, release label, status). Pass id (CLI: --id). " +
+      "Used by /testchimp run security scan. For DAST honour allowActiveScan / useEphemeralSandbox / scope " +
+      "on dastCheckConfig.",
     inputSchema: S.getSecurityScanConfigInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getSecurityScanConfigInput>;
@@ -510,7 +511,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "update-scan-progress",
     description:
       "Update a scan's status. status must be one of: QUEUED, IN_PROGRESS, COMPLETED, EXCEPTION. " +
-      "Call IN_PROGRESS when starting; COMPLETED when all selected categories finish; EXCEPTION on hard failure.",
+      "Call IN_PROGRESS when starting. Each scan is a single checker type: the category playbook " +
+      "sets COMPLETED after a successful report-*-findings (or EXCEPTION on hard failure).",
     inputSchema: S.updateScanProgressInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updateScanProgressInput>;
@@ -525,7 +527,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Upload a ZAP Traditional JSON report for a security scan. Pass --id and --report-file <path>. " +
       "Backend parses alerts, dedupes by bug hash, and inserts new SECURITY bugs linked to the scan. " +
-      "Does not mark the scan COMPLETED.",
+      "Does not mark the scan COMPLETED — the DAST playbook calls update-scan-progress COMPLETED after this.",
     inputSchema: S.reportDastFindingsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.reportDastFindingsInput>;
@@ -538,22 +540,55 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    kebab: "run-sast-scan",
-    description: "Stub: Semgrep SAST scan is not implemented yet.",
-    inputSchema: S.stubSecurityScanInput,
-    execute: async () => JSON.stringify({ status: "not_implemented", tool: "run-sast-scan" }),
+    kebab: "report-sast-findings",
+    description:
+      "Upload a full Semgrep CLI JSON report for a SAST security scan. Pass --id and --report-file <path>. " +
+      "Backend stores the raw report, parses results, dedupes by bug hash, and inserts new SECURITY bugs. " +
+      "Does not mark the scan COMPLETED — the SAST playbook calls update-scan-progress COMPLETED after this.",
+    inputSchema: S.reportSastFindingsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.reportSastFindingsInput>;
+      const { readFile } = await import("node:fs/promises");
+      const reportJson = await readFile(a.reportFile, "utf8");
+      return postMcp("/api/mcp/report_sast_findings", {
+        scanId: a.id.trim(),
+        reportJson,
+      });
+    },
   },
   {
-    kebab: "run-deps-scan",
-    description: "Stub: Trivy dependency scan is not implemented yet.",
-    inputSchema: S.stubSecurityScanInput,
-    execute: async () => JSON.stringify({ status: "not_implemented", tool: "run-deps-scan" }),
+    kebab: "report-secrets-findings",
+    description:
+      "Upload a full Gitleaks JSON report for a secrets security scan. Pass --id and --report-file <path>. " +
+      "Backend redacts secret payloads, stores the report, dedupes by bug hash, and inserts SECURITY bugs. " +
+      "Does not mark the scan COMPLETED — the secrets playbook calls update-scan-progress COMPLETED after this.",
+    inputSchema: S.reportSecretsFindingsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.reportSecretsFindingsInput>;
+      const { readFile } = await import("node:fs/promises");
+      const reportJson = await readFile(a.reportFile, "utf8");
+      return postMcp("/api/mcp/report_secrets_findings", {
+        scanId: a.id.trim(),
+        reportJson,
+      });
+    },
   },
   {
-    kebab: "run-secrets-scan",
-    description: "Stub: Gitleaks secrets scan is not implemented yet.",
-    inputSchema: S.stubSecurityScanInput,
-    execute: async () => JSON.stringify({ status: "not_implemented", tool: "run-secrets-scan" }),
+    kebab: "report-deps-findings",
+    description:
+      "Upload a full Trivy JSON report for a dependency security scan. Pass --id and --report-file <path>. " +
+      "Backend stores the report, filters by security profile / ignore-unfixed, dedupes, and inserts SECURITY bugs. " +
+      "Does not mark the scan COMPLETED — the deps playbook calls update-scan-progress COMPLETED after this.",
+    inputSchema: S.reportDepsFindingsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.reportDepsFindingsInput>;
+      const { readFile } = await import("node:fs/promises");
+      const reportJson = await readFile(a.reportFile, "utf8");
+      return postMcp("/api/mcp/report_deps_findings", {
+        scanId: a.id.trim(),
+        reportJson,
+      });
+    },
   },
   {
     kebab: "upsert-screen-states",

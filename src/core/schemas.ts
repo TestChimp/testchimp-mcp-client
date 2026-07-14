@@ -294,8 +294,22 @@ export const reportDastFindingsInput = z.object({
   reportFile: z.string().min(1),
 });
 
-export const stubSecurityScanInput = z.object({
-  id: z.string().min(1).optional(),
+export const reportSastFindingsInput = z.object({
+  id: z.string().min(1),
+  /** Path to full Semgrep CLI JSON report file */
+  reportFile: z.string().min(1),
+});
+
+export const reportSecretsFindingsInput = z.object({
+  id: z.string().min(1),
+  /** Path to full Gitleaks JSON report file */
+  reportFile: z.string().min(1),
+});
+
+export const reportDepsFindingsInput = z.object({
+  id: z.string().min(1),
+  /** Path to full Trivy JSON report file */
+  reportFile: z.string().min(1),
 });
 
 const screenStatesEntrySchema = z.object({
