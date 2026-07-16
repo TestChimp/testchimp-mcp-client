@@ -262,6 +262,71 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-issue-details")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-issue-details")!.description)
+    .addOption(jsonInputOption())
+    .option("--issue-id <id>", "Issue ordinal id (#B-123, B-123, B123, or 123)")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.issueId) body.issueId = String(opts.issueId).trim();
+      const merged = mergeBodies(body, opts.jsonInput) as { issueId?: string };
+      if (!merged.issueId || String(merged.issueId).trim() === "") {
+        throw new Error("issueId is required (--issue-id)");
+      }
+      const out = await runTool(
+        "get-issue-details",
+        { issueId: String(merged.issueId).trim() },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
+    .command("update-issue-status")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-issue-status")!.description)
+    .addOption(jsonInputOption())
+    .option("--issue-id <id>", "Issue ordinal id (#B-123, B-123, B123, or 123)")
+    .option(
+      "--status <status>",
+      "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED",
+    )
+    .option(
+      "--ignore-reason <reason>",
+      "When status=IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT",
+    )
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.issueId) body.issueId = String(opts.issueId).trim();
+      if (opts.status) body.status = String(opts.status).trim();
+      if (opts.ignoreReason) body.ignoreReason = String(opts.ignoreReason).trim();
+      const merged = mergeBodies(body, opts.jsonInput) as {
+        issueId?: string;
+        status?: string;
+        ignoreReason?: string;
+      };
+      if (!merged.issueId || String(merged.issueId).trim() === "") {
+        throw new Error("issueId is required (--issue-id)");
+      }
+      if (!merged.status || String(merged.status).trim() === "") {
+        throw new Error(
+          "status is required (ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED)",
+        );
+      }
+      const out = await runTool(
+        "update-issue-status",
+        {
+          issueId: String(merged.issueId).trim(),
+          status: String(merged.status).trim(),
+          ...(merged.ignoreReason
+            ? { ignoreReason: String(merged.ignoreReason).trim() }
+            : {}),
+        },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
     .command("mark-plan-items-implementation-done")
     .description(
       TOOL_DEFINITIONS.find((t) => t.kebab === "mark-plan-items-implementation-done")!.description

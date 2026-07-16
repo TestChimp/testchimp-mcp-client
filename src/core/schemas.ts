@@ -95,6 +95,27 @@ export const getManualSessionDetailsInput = z.object({
   manualSessionId: z.string().min(1),
 });
 
+export const getIssueDetailsInput = z.object({
+  /** Accepts #B-123, B-123, #B123, B123, or plain 123 */
+  issueId: z.string().min(1),
+});
+
+export const updateIssueStatusInput = z.object({
+  issueId: z.string().min(1),
+  status: z.enum([
+    "ACTIVE",
+    "IGNORED",
+    "FIXED",
+    "DUPLICATE",
+    "IN_PROGRESS_BUG",
+    "ARCHIVED_BUG",
+    "BLOCKED",
+  ]),
+  ignoreReason: z
+    .enum(["INTENDED_BEHAVIOUR", "INACCURATE_ASSESSMENT", "NOT_IMPORTANT"])
+    .optional(),
+});
+
 export const emptyInput = z.object({});
 
 export const getBranchSpecificEndpointConfigInput = z.object({

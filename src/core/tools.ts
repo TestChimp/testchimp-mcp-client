@@ -234,6 +234,38 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-issue-details",
+    description:
+      "Fetch a TestChimp issue (bug) by ordinal id. Accepts flexible issueId formats: " +
+      "#B-123, B-123, #B123, B123, or plain 123. Returns title, description, status, linked entities, " +
+      "artifact references, and short-lived signed URLs for GCS attachments/screenshots.",
+    inputSchema: S.getIssueDetailsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getIssueDetailsInput>;
+      return postMcp("/api/mcp/get_issue_details", {
+        issueId: a.issueId.trim(),
+      });
+    },
+  },
+  {
+    kebab: "update-issue-status",
+    description:
+      "Update a TestChimp issue status by ordinal id (same flexible issueId formats as get-issue-details). " +
+      "status must be one of: ACTIVE, IGNORED, FIXED, DUPLICATE, IN_PROGRESS_BUG, ARCHIVED_BUG, BLOCKED. " +
+      "For /testchimp fix issue: set IN_PROGRESS_BUG after applying a code fix; set FIXED only after user confirmation / commits pushed. " +
+      "Optional ignoreReason when status is IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT.",
+    inputSchema: S.updateIssueStatusInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.updateIssueStatusInput>;
+      const body: Record<string, unknown> = {
+        issueId: a.issueId.trim(),
+        status: a.status,
+      };
+      if (a.ignoreReason) body.ignoreReason = a.ignoreReason;
+      return postMcp("/api/mcp/update_issue_status", body);
+    },
+  },
+  {
     kebab: "mark-plan-items-implementation-done",
     description:
       "Mark user stories and/or test scenarios implementation-complete in platform lifecycle (DB only; does not rewrite plan markdown). " +
