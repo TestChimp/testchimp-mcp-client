@@ -697,6 +697,26 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-release-details")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-release-details")!.description)
+    .addOption(jsonInputOption())
+    .option("--version <version>", "Release version / label (McpGetReleaseDetailsRequest.version)")
+    .action(async (opts) => {
+      const body: Record<string, string> = {};
+      if (opts.version) body.version = String(opts.version);
+      const merged = mergeBodies(body, opts.jsonInput) as { version?: string };
+      if (!merged.version || String(merged.version).trim() === "") {
+        throw new Error("version is required (--version or --json-input {\"version\":\"...\"})");
+      }
+      const out = await runTool(
+        "get-release-details",
+        { version: String(merged.version).trim() },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
     .command("get-security-scan-config")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-security-scan-config")!.description)
     .addOption(jsonInputOption())

@@ -368,6 +368,11 @@ export const getReleaseInput = z.object({
   version: z.string().min(1),
 });
 
+export const getReleaseDetailsInput = z.object({
+  /** Release catalog version / label — maps to McpGetReleaseDetailsRequest.version */
+  version: z.string().min(1),
+});
+
 export const getSecurityScanConfigInput = z.object({
   id: z.string().min(1),
 });

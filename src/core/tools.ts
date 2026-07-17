@@ -556,6 +556,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-release-details",
+    description:
+      "Fetch gate-oriented release details for a version/label: scope, per-environment " +
+      "priority×status test stats, open issue stats, scan summaries, and detailed in-scope " +
+      "scenario/issue records (McpGetReleaseDetailsRequest/Response). Pass version (CLI: --version). " +
+      "Use for CI/agent release gating. Authenticated via project API key.",
+    inputSchema: S.getReleaseDetailsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getReleaseDetailsInput>;
+      const body: { version: string } = { version: a.version.trim() };
+      return postMcp("/api/mcp/get_release_details", body);
+    },
+  },
+  {
     kebab: "get-security-scan-config",
     description:
       "Fetch security scan config by scan id (detail.dastCheckConfig / detail.sastCheckConfig / " +
