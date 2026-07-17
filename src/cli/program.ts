@@ -327,6 +327,61 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("create-issue")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-issue")!.description)
+    .addOption(jsonInputOption())
+    .option("--title <title>", "Issue title (required unless provided via --json-input)")
+    .option("--description <text>", "Issue description (markdown supported)")
+    .option(
+      "--issue-type <type>",
+      "BUG_ISSUE | SUGGESTION_ISSUE | OBSERVATION_ISSUE | TASK_ISSUE",
+    )
+    .option(
+      "--category <category>",
+      "FUNCTIONAL | SECURITY | ACCESSIBILITY | PERFORMANCE | VISUAL | …",
+    )
+    .option(
+      "--severity <severity>",
+      "LOW_SEVERITY | MEDIUM_SEVERITY | HIGH_SEVERITY | CRITICAL_SEVERITY",
+    )
+    .option(
+      "--status <status>",
+      "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED",
+    )
+    .option("--reported-release-id <id>", "Release label/id to attach to the issue")
+    .option("--due-date-millis <ms>", "Due date as UTC epoch millis")
+    .option("--assignee <userId>", "Assignee user id")
+    .option("--labels <csv>", "Comma-separated labels")
+    .option("--source <name>", "External ingest source identifier (stored as label source:<name>)")
+    .option("--environment <name>", "Environment tag (defaults to QA when omitted)")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.title) body.title = String(opts.title).trim();
+      if (opts.description) body.description = String(opts.description);
+      if (opts.issueType) body.issueType = String(opts.issueType).trim();
+      if (opts.category) body.category = String(opts.category).trim();
+      if (opts.severity) body.severity = String(opts.severity).trim();
+      if (opts.status) body.status = String(opts.status).trim();
+      if (opts.reportedReleaseId) body.reportedReleaseId = String(opts.reportedReleaseId).trim();
+      if (opts.dueDateMillis != null) body.dueDateMillis = Number(opts.dueDateMillis);
+      if (opts.assignee) body.assignee = String(opts.assignee).trim();
+      if (opts.labels) {
+        body.labels = String(opts.labels)
+          .split(",")
+          .map((s: string) => s.trim())
+          .filter(Boolean);
+      }
+      if (opts.source) body.source = String(opts.source).trim();
+      if (opts.environment) body.environment = String(opts.environment).trim();
+      const merged = mergeBodies(body, opts.jsonInput) as { title?: string };
+      if (!merged.title || String(merged.title).trim() === "") {
+        throw new Error("title is required (--title or --json-input {\"title\":\"...\"})");
+      }
+      const out = await runTool("create-issue", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("mark-plan-items-implementation-done")
     .description(
       TOOL_DEFINITIONS.find((t) => t.kebab === "mark-plan-items-implementation-done")!.description

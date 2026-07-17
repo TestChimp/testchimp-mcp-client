@@ -266,6 +266,35 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "create-issue",
+    description:
+      "Create a TestChimp issue in the current project. title is required. " +
+      "Use simple fields for common creates, or pass the full curated contract via --json-input " +
+      "(description, issueType, category, severity, status, reportedReleaseId, dueDateMillis, assignee, " +
+      "linkTargets, labels, source, environment, attachments, artifactReference). " +
+      "Authenticated via project API key; project is resolved from the key.",
+    inputSchema: S.createIssueInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.createIssueInput>;
+      const body: Record<string, unknown> = { title: a.title.trim() };
+      if (a.description != null) body.description = a.description;
+      if (a.issueType) body.issueType = a.issueType;
+      if (a.category) body.category = a.category;
+      if (a.severity) body.severity = a.severity;
+      if (a.status) body.status = a.status;
+      if (a.reportedReleaseId != null) body.reportedReleaseId = a.reportedReleaseId;
+      if (a.dueDateMillis != null) body.dueDateMillis = a.dueDateMillis;
+      if (a.assignee != null) body.assignee = a.assignee;
+      if (a.linkTargets?.length) body.linkTargets = a.linkTargets;
+      if (a.labels?.length) body.labels = a.labels;
+      if (a.source != null) body.source = a.source;
+      if (a.environment != null) body.environment = a.environment;
+      if (a.attachments?.length) body.attachments = a.attachments;
+      if (a.artifactReference != null) body.artifactReference = a.artifactReference;
+      return postMcp("/api/mcp/create_issue", body);
+    },
+  },
+  {
     kebab: "mark-plan-items-implementation-done",
     description:
       "Mark user stories and/or test scenarios implementation-complete in platform lifecycle (DB only; does not rewrite plan markdown). " +

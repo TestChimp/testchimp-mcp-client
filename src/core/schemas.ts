@@ -116,6 +116,75 @@ export const updateIssueStatusInput = z.object({
     .optional(),
 });
 
+const linkedEntityTypeSchema = z.enum([
+  "STORY",
+  "SCENARIO",
+  "TEST",
+  "ISSUE",
+  "EXTERNAL",
+  "TEST_EXECUTION",
+  "BATCH_INVOCATION",
+]);
+
+const createIssueLinkTargetSchema = z.object({
+  toEntityType: linkedEntityTypeSchema,
+  toEntityId: z.string().min(1),
+});
+
+export const createIssueInput = z.object({
+  title: z.string().min(1),
+  description: z.string().optional(),
+  issueType: z
+    .enum(["BUG_ISSUE", "SUGGESTION_ISSUE", "OBSERVATION_ISSUE", "TASK_ISSUE"])
+    .optional(),
+  category: z
+    .enum([
+      "ACCESSIBILITY",
+      "SECURITY",
+      "VISUAL",
+      "PERFORMANCE",
+      "FUNCTIONAL",
+      "NETWORK",
+      "USABILITY",
+      "COMPATIBILITY",
+      "DATA_INTEGRITY",
+      "INTERACTION",
+      "LOCALIZATION",
+      "RESPONSIVENESS",
+      "LAYOUT",
+      "VISUAL_REGRESSION",
+      "MEMORY",
+      "PERFORMANCE_REGRESSION",
+      "MEMORY_REGRESSION",
+      "FORM_VALIDATION_BUG",
+      "OTHER",
+    ])
+    .optional(),
+  severity: z
+    .enum(["LOW_SEVERITY", "MEDIUM_SEVERITY", "HIGH_SEVERITY", "CRITICAL_SEVERITY"])
+    .optional(),
+  status: z
+    .enum([
+      "ACTIVE",
+      "IGNORED",
+      "FIXED",
+      "DUPLICATE",
+      "IN_PROGRESS_BUG",
+      "ARCHIVED_BUG",
+      "BLOCKED",
+    ])
+    .optional(),
+  reportedReleaseId: z.string().optional(),
+  dueDateMillis: z.coerce.number().optional(),
+  assignee: z.string().optional(),
+  linkTargets: z.array(createIssueLinkTargetSchema).optional(),
+  labels: z.array(z.string()).optional(),
+  source: z.string().optional(),
+  environment: z.string().optional(),
+  attachments: z.array(z.record(z.string(), z.unknown())).optional(),
+  artifactReference: z.record(z.string(), z.unknown()).optional(),
+});
+
 export const emptyInput = z.object({});
 
 export const getBranchSpecificEndpointConfigInput = z.object({
