@@ -892,6 +892,57 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
+  program
+    .command("get-requirement-quality-report")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-requirement-quality-report")!.description)
+    .addOption(jsonInputOption())
+    .option("--subject-type <STORY|SCENARIO>", "STORY for US-<n>, SCENARIO for TS-<n>")
+    .option("--subject-entity-id <id>", "Platform subject entity id")
+    .option("--ordinal-id <n>", "Numeric part of US-<n> or TS-<n>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.subjectType) body.subjectType = String(opts.subjectType).trim();
+      if (opts.subjectEntityId) body.subjectEntityId = String(opts.subjectEntityId).trim();
+      if (opts.ordinalId != null) body.ordinalId = Number(opts.ordinalId);
+      const merged = mergeBodies(body, opts.jsonInput) as {
+        subjectType?: string;
+        subjectEntityId?: string;
+        ordinalId?: number;
+      };
+      if (!merged.subjectType || String(merged.subjectType).trim() === "") {
+        throw new Error("subjectType is required (STORY | SCENARIO)");
+      }
+      const out = await runTool(
+        "get-requirement-quality-report",
+        {
+          subjectType: String(merged.subjectType).trim(),
+          ...(merged.subjectEntityId ? { subjectEntityId: String(merged.subjectEntityId).trim() } : {}),
+          ...(merged.ordinalId != null ? { ordinalId: Number(merged.ordinalId) } : {}),
+        },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
+    .command("report-requirement-quality-findings")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-requirement-quality-findings")!.description)
+    .addOption(jsonInputOption())
+    .option("--report-file <path>", "Path to RequirementQualityReport JSON (camelCase)")
+    .option("--subject-type <STORY|SCENARIO>", "Merge into report.subject when resolving entity id")
+    .option("--subject-entity-id <id>", "Platform subject entity id (story DB id or scenario UUID)")
+    .option("--ordinal-id <n>", "US-<n> or TS-<n> numeric id; resolves subjectEntityId via get-report")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.reportFile) body.reportFile = String(opts.reportFile);
+      if (opts.subjectType) body.subjectType = String(opts.subjectType).trim();
+      if (opts.subjectEntityId) body.subjectEntityId = String(opts.subjectEntityId).trim();
+      if (opts.ordinalId != null) body.ordinalId = Number(opts.ordinalId);
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("report-requirement-quality-findings", merged, { postMcp });
+      console.log(out);
+    });
+
   program.on("--help", () => {
     /* default */
   });

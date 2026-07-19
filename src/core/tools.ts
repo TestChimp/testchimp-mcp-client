@@ -91,6 +91,58 @@ function listExecutionBody(args: z.infer<typeof S.listExecutionInput>): Record<s
   return body;
 }
 
+type RequirementSubjectType = z.infer<typeof S.requirementSubjectTypeSchema>;
+
+function requirementQualitySubjectBody(
+  subjectType: RequirementSubjectType,
+  opts: { subjectEntityId?: string; ordinalId?: number },
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { subjectType };
+  const entityId = (opts.subjectEntityId ?? "").trim();
+  if (entityId !== "") body.subjectEntityId = entityId;
+  if (opts.ordinalId != null && opts.ordinalId > 0) body.ordinalId = opts.ordinalId;
+  return body;
+}
+
+/** Resolve platform subjectEntityId from explicit id or get-requirement-quality-report via ordinal. */
+async function resolveRequirementSubjectEntityId(
+  postMcp: PostMcpFn,
+  subjectType: RequirementSubjectType,
+  opts: { subjectEntityId?: string; ordinalId?: number },
+): Promise<string> {
+  const explicit = (opts.subjectEntityId ?? "").trim();
+  if (explicit !== "") return explicit;
+  if (opts.ordinalId == null || opts.ordinalId <= 0) {
+    throw new Error("Provide subjectEntityId or ordinalId");
+  }
+  const json = await postMcp(
+    "/api/mcp/get_requirement_quality_report",
+    requirementQualitySubjectBody(subjectType, { ordinalId: opts.ordinalId }),
+  );
+  const parsed = JSON.parse(json) as { report?: { subject?: { subjectEntityId?: string } } };
+  const resolved = (parsed.report?.subject?.subjectEntityId ?? "").trim();
+  if (resolved !== "") return resolved;
+  throw new Error(
+    `Cannot resolve subjectEntityId for ${subjectType} ordinal ${opts.ordinalId}. ` +
+      "Provide --subject-entity-id, or confirm the story/scenario ordinal exists in this project " +
+      "(get-requirement-quality-report resolves entity id by ordinal even when no prior report exists).",
+  );
+}
+
+async function loadRequirementQualityReportJson(
+  args: z.infer<typeof S.reportRequirementQualityFindingsInput>,
+): Promise<Record<string, unknown>> {
+  if (args.report != null && Object.keys(args.report).length > 0) {
+    return { ...args.report };
+  }
+  if (args.reportFile != null && args.reportFile.trim() !== "") {
+    const { readFile } = await import("node:fs/promises");
+    const raw = await readFile(args.reportFile.trim(), "utf8");
+    return JSON.parse(raw) as Record<string, unknown>;
+  }
+  return {};
+}
+
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-requirement-coverage",
@@ -701,6 +753,67 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         focusTest: a.focusTest,
         distinctTest: a.distinctTest,
       });
+    },
+  },
+  {
+    kebab: "get-requirement-quality-report",
+    description:
+      "Fetch the stored requirement quality report (metrics + findings with user states) for a user story or test scenario. " +
+      "Use before local DeFOSPAM to dedupe: do not re-report findings already IGNORED or APPLIED (match by fingerprint). " +
+      "Pass subjectType STORY|SCENARIO plus subjectEntityId or ordinalId (numeric part of US-<n> / TS-<n>). " +
+      "When no prior report exists, response still includes report.subject with resolved subjectEntityId.",
+    inputSchema: S.getRequirementQualityReportInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getRequirementQualityReportInput>;
+      return postMcp(
+        "/api/mcp/get_requirement_quality_report",
+        requirementQualitySubjectBody(a.subjectType, {
+          subjectEntityId: a.subjectEntityId,
+          ordinalId: a.ordinalId,
+        }),
+      );
+    },
+  },
+  {
+    kebab: "report-requirement-quality-findings",
+    description:
+      "Upload a DeFOSPAM / requirement quality analysis report for a user story or test scenario (local-agent path). " +
+      "Pass full RequirementQualityReport JSON via --report-file or --json-input {\"report\":{...}}. " +
+      "report.subject.subjectEntityId is required; use --subject-type + --ordinal-id to resolve via get-requirement-quality-report, " +
+      "or set subjectEntityId explicitly. Backend merges IGNORED/APPLIED findings carry-forward on re-report.",
+    inputSchema: S.reportRequirementQualityFindingsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.reportRequirementQualityFindingsInput>;
+      const report = await loadRequirementQualityReportJson(a);
+      const subjectRaw = (report.subject ?? {}) as Record<string, unknown>;
+      const subjectType = (a.subjectType ?? subjectRaw.subjectType) as RequirementSubjectType | undefined;
+      const ordinalId =
+        a.ordinalId ??
+        (typeof subjectRaw.ordinalId === "number" ? subjectRaw.ordinalId : undefined);
+      let subjectEntityId =
+        (a.subjectEntityId ?? (typeof subjectRaw.subjectEntityId === "string" ? subjectRaw.subjectEntityId : "")).trim();
+
+      if (subjectEntityId === "" && subjectType != null) {
+        subjectEntityId = await resolveRequirementSubjectEntityId(postMcp, subjectType, {
+          ordinalId,
+        });
+      }
+
+      if (subjectEntityId === "") {
+        throw new Error(
+          "report.subject.subjectEntityId is required (set in report JSON, --subject-entity-id, or resolvable via --ordinal-id)",
+        );
+      }
+
+      const mergedSubject: Record<string, unknown> = {
+        ...subjectRaw,
+        ...(subjectType != null ? { subjectType } : {}),
+        subjectEntityId,
+        ...(ordinalId != null ? { ordinalId } : {}),
+      };
+      report.subject = mergedSubject;
+
+      return postMcp("/api/mcp/report_requirement_quality_findings", { report });
     },
   },
 ];

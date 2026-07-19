@@ -432,3 +432,143 @@ export const markSemanticTestsDistinctInput = z.object({
   focusTest: testLocatorSchema,
   distinctTest: testLocatorSchema,
 });
+
+/** RequirementSubjectType — proto enum names (JsonFormat camelCase on wire). */
+export const requirementSubjectTypeSchema = z.enum(["STORY", "SCENARIO"]);
+
+/** RequirementFindingSeverity — proto enum names. */
+export const requirementFindingSeveritySchema = z.enum(["CRITICAL", "MAJOR", "MINOR"]);
+
+/** RequirementFindingUserState — proto enum names. */
+export const requirementFindingUserStateSchema = z.enum(["ACTIVE", "IGNORED", "APPLIED"]);
+
+/** RequirementQualityReportSource — proto enum names. */
+export const requirementQualityReportSourceSchema = z.enum(["CLOUD", "LOCAL_AGENT"]);
+
+/** SuggestedFixKind — proto enum names. */
+export const suggestedFixKindSchema = z.enum([
+  "REWORD_EXCERPT",
+  "REWRITE_SECTION",
+  "ADD_CONTENT",
+  "CREATE_SCENARIO",
+  "CREATE_STORY",
+  "DELETE_SCENARIO",
+  "DELETE_STORY",
+  "LINK_OR_UNLINK",
+  "OTHER",
+]);
+
+/** TextReplacement (requirement_quality.proto) — camelCase wire shape. */
+export const textReplacementSchema = z.object({
+  originalExcerpt: z.string().optional(),
+  suggestedText: z.string().optional(),
+  contextBefore: z.string().optional(),
+  contextAfter: z.string().optional(),
+});
+
+/** SuggestedFix (requirement_quality.proto). isDestructive is derived server-side from kind. */
+export const suggestedFixSchema = z.object({
+  kind: suggestedFixKindSchema.optional(),
+  isDestructive: z.boolean().optional(),
+  /** "STORY" | "SCENARIO" — target of the fix (may differ from the finding's own subject). */
+  targetEntityType: z.string().optional(),
+  targetOrdinalId: z.coerce.number().int().optional(),
+  summary: z.string().optional(),
+  agentPrompt: z.string().optional(),
+  replacements: z.array(textReplacementSchema).optional(),
+  rationale: z.string().optional(),
+});
+
+/** RequirementQualityFinding (requirement_quality.proto). */
+export const requirementQualityFindingSchema = z.object({
+  id: z.string().optional(),
+  fingerprint: z.string().optional(),
+  analyst: z.string().optional(),
+  severity: requirementFindingSeveritySchema.optional(),
+  confidence: z.coerce.number().int().optional(),
+  title: z.string().optional(),
+  detail: z.string().optional(),
+  suggestedFix: suggestedFixSchema.optional(),
+  /** Omit (defaults ACTIVE server-side) for new findings; set explicitly to carry forward IGNORED/APPLIED. */
+  userState: requirementFindingUserStateSchema.optional(),
+});
+
+/** RequirementQualityMetrics (requirement_quality.proto) — scores 0-100, counts among ACTIVE findings. */
+export const requirementQualityMetricsSchema = z.object({
+  overall: z.coerce.number().int().optional(),
+  clarity: z.coerce.number().int().optional(),
+  completeness: z.coerce.number().int().optional(),
+  testability: z.coerce.number().int().optional(),
+  consistency: z.coerce.number().int().optional(),
+  ambiguityRisk: z.coerce.number().int().optional(),
+  scenarioCoverage: z.coerce.number().int().optional(),
+  criticalCount: z.coerce.number().int().optional(),
+  majorCount: z.coerce.number().int().optional(),
+  minorCount: z.coerce.number().int().optional(),
+});
+
+/** RequirementQualitySubject (requirement_quality.proto). subjectEntityId is the platform-internal id. */
+export const requirementQualitySubjectSchema = z.object({
+  subjectType: requirementSubjectTypeSchema.optional(),
+  subjectEntityId: z.string().optional(),
+  ordinalId: z.coerce.number().int().optional(),
+  title: z.string().optional(),
+});
+
+/** RequirementQualityReport (requirement_quality.proto) — full upload body shape. */
+export const requirementQualityReportSchema = z.object({
+  id: z.string().optional(),
+  projectId: z.string().optional(),
+  subject: requirementQualitySubjectSchema.optional(),
+  source: requirementQualityReportSourceSchema.optional(),
+  metrics: requirementQualityMetricsSchema.optional(),
+  findings: z.array(requirementQualityFindingSchema).optional(),
+  createdAtMillis: z.coerce.number().optional(),
+  jobId: z.string().optional(),
+  contentFingerprint: z.string().optional(),
+  scoresUpdatedAtMillis: z.coerce.number().optional(),
+});
+
+const requirementSubjectRefinement = (
+  v: { subjectEntityId?: string; ordinalId?: number },
+  ctx: z.RefinementCtx,
+): void => {
+  const entityId = (v.subjectEntityId ?? "").trim();
+  const ordinal = v.ordinalId;
+  if (entityId === "" && (ordinal == null || ordinal <= 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide subjectEntityId or ordinalId",
+    });
+  }
+};
+
+export const getRequirementQualityReportInput = z
+  .object({
+    subjectType: requirementSubjectTypeSchema,
+    subjectEntityId: z.string().optional(),
+    ordinalId: z.coerce.number().int().positive().optional(),
+  })
+  .superRefine(requirementSubjectRefinement);
+
+export const reportRequirementQualityFindingsInput = z
+  .object({
+    /** Full RequirementQualityReport JSON object (camelCase, requirement_quality.proto). */
+    report: requirementQualityReportSchema.optional(),
+    /** Path to RequirementQualityReport JSON file. */
+    reportFile: z.string().optional(),
+    /** Convenience: merged into report.subject when report lacks subjectEntityId. */
+    subjectType: requirementSubjectTypeSchema.optional(),
+    subjectEntityId: z.string().optional(),
+    ordinalId: z.coerce.number().int().positive().optional(),
+  })
+  .superRefine((v, ctx) => {
+    const hasReport = v.report != null && Object.keys(v.report).length > 0;
+    const hasFile = (v.reportFile ?? "").trim() !== "";
+    if (!hasReport && !hasFile) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide report object, reportFile path, or full body via --json-input",
+      });
+    }
+  });
