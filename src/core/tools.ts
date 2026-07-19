@@ -816,6 +816,118 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       return postMcp("/api/mcp/report_requirement_quality_findings", { report });
     },
   },
+  {
+    kebab: "report-agent-action",
+    description:
+      "Report a mutating agent action under a stable workflow-execution-id (ULID). " +
+      "First call for an id creates the workflow_executions row; later calls append agent_actions. " +
+      "Identity: pass `test` (TestLocator: folderPath/fileName/testSuite/testName) for SmartTests, " +
+      "or `entityIdentity` as a project-scoped ordinal id for stories/scenarios/issues " +
+      "(or an execution/batch id only when the prompt explicitly provided it). Do not use platform UUIDs.",
+    inputSchema: S.reportAgentActionInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.reportAgentActionInput>;
+      const actorRaw = (a.actorType ?? "local-agent").toString();
+      const actorType =
+        actorRaw.toUpperCase().replace(/-/g, "_") === "CLOUD_AGENT" ? "CLOUD_AGENT" : "LOCAL_AGENT";
+      const actionNorm = a.actionType.toString().toUpperCase().replace(/-/g, "_");
+      let actionType = actionNorm;
+      if (actionNorm === "COMPLETED" || actionNorm === "ACTION_COMPLETED") {
+        actionType = "ACTION_COMPLETED";
+      } else if (actionNorm === "FAILED" || actionNorm === "ACTION_FAILED") {
+        actionType = "ACTION_FAILED";
+      }
+      const body: Record<string, unknown> = {
+        workflowId: a.workflowId,
+        workflowExecutionId: a.workflowExecutionId,
+        actionType,
+        actorType,
+      };
+      if (a.policyFile) body.policyFile = a.policyFile;
+      if (a.policyVersion) body.policyVersion = a.policyVersion;
+      if (a.gitSha) body.gitSha = a.gitSha;
+      if (a.userId) body.userId = a.userId;
+      else if (process.env.TESTCHIMP_USER_ID) body.userId = process.env.TESTCHIMP_USER_ID;
+      if (a.branchName) body.branchName = a.branchName;
+      if (a.entityType) body.entityType = a.entityType;
+      if (a.test) {
+        body.test = a.test;
+      } else if (a.entityIdentity) {
+        body.entityIdentity = a.entityIdentity;
+      }
+      if (a.detailJson) body.detailJson = a.detailJson;
+      return postMcp("/api/mcp/report_agent_action", body);
+    },
+  },
+  {
+    kebab: "get-last-run-workflow-detail",
+    description:
+      "Fetch the last workflow execution for a workflow-id on a branch (optional userId for per-user last run). " +
+      "Used for since-last-run scoping.",
+    inputSchema: S.getLastRunWorkflowDetailInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getLastRunWorkflowDetailInput>;
+      const body: Record<string, unknown> = {
+        workflowId: a.workflowId,
+        branchName: a.branchName,
+      };
+      if (a.userId) body.userId = a.userId;
+      return postMcp("/api/mcp/get_last_run_workflow_detail", body);
+    },
+  },
+  {
+    kebab: "list-workflow-executions",
+    description: "List recent workflow executions for the project, optionally filtered by workflowId.",
+    inputSchema: S.listWorkflowExecutionsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listWorkflowExecutionsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.workflowId) body.workflowId = a.workflowId;
+      if (a.limit != null) body.limit = a.limit;
+      if (a.offset != null) body.offset = a.offset;
+      return postMcp("/api/mcp/list_workflow_executions", body);
+    },
+  },
+  {
+    kebab: "get-workflow-execution",
+    description: "Get a workflow execution by id; pass includeActions=true for the action timeline.",
+    inputSchema: S.getWorkflowExecutionInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getWorkflowExecutionInput>;
+      return postMcp("/api/mcp/get_workflow_execution", {
+        workflowExecutionId: a.workflowExecutionId,
+        includeActions: a.includeActions ?? true,
+      });
+    },
+  },
+  {
+    kebab: "get-policy",
+    description:
+      "Fetch a workflow policy file by name (e.g. run-qa.policy.md) from the platform POLICY_FILE store.",
+    inputSchema: S.getPolicyInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getPolicyInput>;
+      return postMcp("/api/mcp/get_policy", { policyFileName: a.policyFileName });
+    },
+  },
+  {
+    kebab: "list-policies",
+    description:
+      "List policy files for an optional workflow-id. Marks isDefault when filename is <workflow-id>.policy.md.",
+    inputSchema: S.listPoliciesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listPoliciesInput>;
+      const body: Record<string, unknown> = {};
+      if (a.workflowId) body.workflowId = a.workflowId;
+      return postMcp("/api/mcp/list_policies", body);
+    },
+  },
+  {
+    kebab: "list-workflow-catalog",
+    description: "List supported TestChimp workflows with Active / Disabled / Missing Config status for the project.",
+    inputSchema: S.listWorkflowCatalogInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_workflow_catalog", {}),
+  },
 ];
 
 const TOOL_BY_KEBAB = new Map(TOOL_DEFINITIONS.map((t) => [t.kebab, t]));

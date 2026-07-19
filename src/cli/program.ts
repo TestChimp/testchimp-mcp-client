@@ -943,6 +943,76 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
+  // Workflow policy + traceability tools (US-181). Prefer --json-input for nested TestLocator.
+  program
+    .command("report-agent-action")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-agent-action")!.description)
+    .addOption(jsonInputOption())
+    .requiredOption("--workflow-id <id>", "Catalog workflow id")
+    .requiredOption("--workflow-execution-id <ulid>", "Stable ULID for the whole run")
+    .requiredOption("--action-type <type>", "CREATED|UPDATED|DELETED|ANALYZED|ACTION_COMPLETED|ACTION_FAILED")
+    .option("--policy-file <name>", "Policy filename")
+    .option("--policy-version <semver>", "Policy version from frontmatter")
+    .option("--git-sha <sha>", "Current HEAD sha")
+    .option("--actor-type <type>", "LOCAL_AGENT|CLOUD_AGENT (or local-agent|cloud-agent)")
+    .option("--user-id <id>", "Optional user id for traceability")
+    .option("--branch-name <name>", "Git branch")
+    .option("--entity-type <type>", "test|story|scenario|issue|workflow|…")
+    .option("--entity-identity <ordinal>", "Project-scoped ordinal id (mutually exclusive with --test-json)")
+    .option("--test-json <json>", "TestLocator JSON (folderPath/fileName/testSuite/testName)")
+    .option("--detail-json <json>", "Optional detail payload")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {
+        workflowId: String(opts.workflowId),
+        workflowExecutionId: String(opts.workflowExecutionId),
+        actionType: String(opts.actionType),
+      };
+      if (opts.policyFile) body.policyFile = String(opts.policyFile);
+      if (opts.policyVersion) body.policyVersion = String(opts.policyVersion);
+      if (opts.gitSha) body.gitSha = String(opts.gitSha);
+      if (opts.actorType) body.actorType = String(opts.actorType);
+      if (opts.userId) body.userId = String(opts.userId);
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.entityType) body.entityType = String(opts.entityType);
+      if (opts.entityIdentity) body.entityIdentity = String(opts.entityIdentity);
+      if (opts.testJson) body.test = JSON.parse(String(opts.testJson));
+      if (opts.detailJson) body.detailJson = String(opts.detailJson);
+      const merged = mergeBodies(body, opts.jsonInput);
+      console.log(await runTool("report-agent-action", merged, { postMcp }));
+    });
+
+  program
+    .command("get-last-run-workflow-detail")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-last-run-workflow-detail")!.description)
+    .addOption(jsonInputOption())
+    .requiredOption("--workflow-id <id>", "Catalog workflow id")
+    .option("--branch-name <name>", "Optional branch filter (omit for any branch)")
+    .option("--user-id <id>", "Optional per-user last run")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = { workflowId: String(opts.workflowId) };
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.userId) body.userId = String(opts.userId);
+      const merged = mergeBodies(body, opts.jsonInput);
+      console.log(await runTool("get-last-run-workflow-detail", merged, { postMcp }));
+    });
+
+  for (const kebab of [
+    "list-workflow-executions",
+    "get-workflow-execution",
+    "get-policy",
+    "list-policies",
+    "list-workflow-catalog",
+  ] as const) {
+    program
+      .command(kebab)
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === kebab)!.description)
+      .addOption(jsonInputOption())
+      .action(async (opts) => {
+        const merged = mergeBodies({}, opts.jsonInput);
+        console.log(await runTool(kebab, merged, { postMcp }));
+      });
+  }
+
   program.on("--help", () => {
     /* default */
   });

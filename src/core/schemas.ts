@@ -572,3 +572,76 @@ export const reportRequirementQualityFindingsInput = z
       });
     }
   });
+
+export const agentActorTypeSchema = z.enum(["LOCAL_AGENT", "CLOUD_AGENT", "local-agent", "cloud-agent"]);
+export const agentActionTypeSchema = z.enum([
+  "CREATED",
+  "UPDATED",
+  "DELETED",
+  "ANALYZED",
+  "ACTION_COMPLETED",
+  "ACTION_FAILED",
+  "created",
+  "updated",
+  "deleted",
+  "analyzed",
+  "completed",
+  "failed",
+  "action_completed",
+  "action_failed",
+]);
+
+export const reportAgentActionInput = z
+  .object({
+    workflowId: z.string().min(1),
+    workflowExecutionId: z.string().min(1),
+    policyFile: z.string().optional(),
+    policyVersion: z.string().optional(),
+    gitSha: z.string().optional(),
+    actorType: agentActorTypeSchema.optional(),
+    userId: z.string().optional(),
+    branchName: z.string().optional(),
+    entityType: z.string().optional(),
+    /** Project-scoped ordinal id (or explicitly provided execution/batch id). Mutually exclusive with `test`. */
+    entityIdentity: z.string().optional(),
+    /** SmartTest TestLocator. Mutually exclusive with `entityIdentity`. */
+    test: testLocatorSchema.optional(),
+    actionType: agentActionTypeSchema,
+    detailJson: z.string().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.test && val.entityIdentity) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide either test (TestLocator) or entityIdentity (ordinal), not both",
+        path: ["test"],
+      });
+    }
+  });
+
+export const getLastRunWorkflowDetailInput = z.object({
+  workflowId: z.string().min(1),
+  branchName: z.string().optional(),
+  userId: z.string().optional(),
+});
+
+export const listWorkflowExecutionsInput = z.object({
+  workflowId: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(200).optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+});
+
+export const getWorkflowExecutionInput = z.object({
+  workflowExecutionId: z.string().min(1),
+  includeActions: z.boolean().optional(),
+});
+
+export const getPolicyInput = z.object({
+  policyFileName: z.string().min(1),
+});
+
+export const listPoliciesInput = z.object({
+  workflowId: z.string().optional(),
+});
+
+export const listWorkflowCatalogInput = z.object({});
