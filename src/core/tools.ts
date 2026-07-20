@@ -903,7 +903,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-policy",
     description:
-      "Fetch a workflow policy file by name (e.g. run-qa.policy.md) from the platform POLICY_FILE store.",
+      "Fetch a workflow policy file by name (e.g. run-qa.policy.md) from the platform POLICY_FILE store. Filename is coerced to *.policy.md (same as upsert-policy).",
     inputSchema: S.getPolicyInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getPolicyInput>;
@@ -920,6 +920,19 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const body: Record<string, unknown> = {};
       if (a.workflowId) body.workflowId = a.workflowId;
       return postMcp("/api/mcp/list_policies", body);
+    },
+  },
+  {
+    kebab: "upsert-policy",
+    description:
+      "Create or update a workflow policy file on the platform (plans/knowledge/policies/*.policy.md). policyFileName is coerced to *.policy.md (same as get-policy). Prefer after writing the file locally so the policy is available immediately (git sync also works later).",
+    inputSchema: S.upsertPolicyInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.upsertPolicyInput>;
+      return postMcp("/api/mcp/upsert_policy", {
+        policyFileName: a.policyFileName,
+        content: a.content,
+      });
     },
   },
   {

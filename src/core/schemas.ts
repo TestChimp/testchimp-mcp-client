@@ -644,4 +644,9 @@ export const listPoliciesInput = z.object({
   workflowId: z.string().optional(),
 });
 
+export const upsertPolicyInput = z.object({
+  policyFileName: z.string().min(1),
+  content: z.string().min(1),
+});
+
 export const listWorkflowCatalogInput = z.object({});

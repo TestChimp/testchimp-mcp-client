@@ -1013,6 +1013,28 @@ export function buildCliProgram(): Command {
       });
   }
 
+  program
+    .command("upsert-policy")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-policy")!.description)
+    .addOption(jsonInputOption())
+    .option("--policy-file-name <name>", "e.g. connect-to-test-env.policy.md")
+    .option("--content <markdown>", "full markdown including frontmatter")
+    .option("--content-file <path>", "read markdown from file")
+    .action(async (opts) => {
+      let content = opts.content as string | undefined;
+      if (opts.contentFile) content = await readFile(String(opts.contentFile), "utf8");
+      const body: Record<string, unknown> = {};
+      if (opts.policyFileName) body.policyFileName = String(opts.policyFileName);
+      if (content) body.content = content;
+      const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+      if (!merged.policyFileName || !merged.content) {
+        throw new Error(
+          "Provide --policy-file-name and --content or --content-file (or full body via --json-input)",
+        );
+      }
+      console.log(await runTool("upsert-policy", merged, { postMcp }));
+    });
+
   program.on("--help", () => {
     /* default */
   });
