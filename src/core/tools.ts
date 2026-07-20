@@ -3,6 +3,7 @@ import { normalizeScope } from "./normalize.js";
 import type { PostMcpFn } from "./client.js";
 import { runProvisionEphemeralEnvironmentAndWait, type ProgressLog } from "./ephemeralWait.js";
 import * as S from "./schemas.js";
+import { resolveGitHeadSha } from "./gitSha.js";
 
 export interface ToolContext {
   postMcp: PostMcpFn;
@@ -358,6 +359,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds;
       if (a.userStoryOrdinalIds?.length) body.userStoryOrdinalIds = a.userStoryOrdinalIds;
       return postMcp("/api/mcp/mark_plan_items_implementation_done", body);
+    },
+  },
+  {
+    kebab: "update-plan-items-lifecycle-status",
+    description:
+      "Update lifecycle_fields.status for one user story or test scenario (DB only; does not rewrite plan markdown). " +
+      "entityType: story | scenario; ordinalId: numeric US-/TS- ordinal; status: draft | ready | in progress | blocked | done | archived. " +
+      "Used after /testchimp implement to set status to ready (unless policy overrides).",
+    inputSchema: S.updatePlanItemsLifecycleStatusInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.updatePlanItemsLifecycleStatusInput>;
+      return postMcp("/api/mcp/update_plan_items_lifecycle_status", {
+        entityType: a.entityType,
+        ordinalId: a.ordinalId,
+        status: a.status,
+      });
     },
   },
   {
@@ -820,10 +837,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "report-agent-action",
     description:
       "Report a mutating agent action under a stable workflow-execution-id (ULID). " +
-      "First call for an id creates the workflow_executions row; later calls append agent_actions. " +
-      "Identity: pass `test` (TestLocator: folderPath/fileName/testSuite/testName) for SmartTests, " +
-      "or `entityIdentity` as a project-scoped ordinal id for stories/scenarios/issues " +
-      "(or an execution/batch id only when the prompt explicitly provided it). Do not use platform UUIDs.",
+      "First call for an id creates the workflow_executions row; later calls append Activity " +
+      "timeline rows (AGENT_WORKFLOW_ACTIVITY). " +
+      "Actions land on the entity's Activity timeline (plans, issues, SmartTest file). " +
+      "entityType: USER_STORY | SCENARIO | SMART_TEST | POLICY | ISSUE | TEST_EXECUTION | " +
+      "TEST_INVOCATION_BATCH | EXPLORATION | EVENT | WORKFLOW. " +
+      "actionType: CREATED | UPDATED | DELETED | ANALYZED | IMPLEMENTED | ACTION_COMPLETED | ACTION_FAILED. " +
+      "Identity: SMART_TEST uses `test` (TestLocator: folderPath/fileName/testSuite/testName); " +
+      "other artifact types use `entityIdentity` (ordinal / filename / opaque id). Do not use platform UUIDs. " +
+      "Completion (ACTION_COMPLETED / ACTION_FAILED): entityType WORKFLOW and entityIdentity = catalog workflow_id.",
     inputSchema: S.reportAgentActionInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.reportAgentActionInput>;
@@ -842,20 +864,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         workflowExecutionId: a.workflowExecutionId,
         actionType,
         actorType,
+        entityType: a.entityType,
       };
       if (a.policyFile) body.policyFile = a.policyFile;
       if (a.policyVersion) body.policyVersion = a.policyVersion;
-      if (a.gitSha) body.gitSha = a.gitSha;
+      const gitSha = resolveGitHeadSha(a.gitSha);
+      if (gitSha) body.gitSha = gitSha;
       if (a.userId) body.userId = a.userId;
       else if (process.env.TESTCHIMP_USER_ID) body.userId = process.env.TESTCHIMP_USER_ID;
       if (a.branchName) body.branchName = a.branchName;
-      if (a.entityType) body.entityType = a.entityType;
       if (a.test) {
         body.test = a.test;
       } else if (a.entityIdentity) {
         body.entityIdentity = a.entityIdentity;
       }
-      if (a.detailJson) body.detailJson = a.detailJson;
       return postMcp("/api/mcp/report_agent_action", body);
     },
   },

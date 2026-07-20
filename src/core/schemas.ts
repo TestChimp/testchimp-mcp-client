@@ -81,6 +81,14 @@ export const markPlanItemsImplementationDoneInput = z.object({
   userStoryOrdinalIds: z.array(z.coerce.number().int().positive()).optional(),
 });
 
+export const updatePlanItemsLifecycleStatusInput = z.object({
+  /** story | scenario (also accepts user_story / USER_STORY / SCENARIO) */
+  entityType: z.string().min(1),
+  ordinalId: z.coerce.number().int().positive(),
+  /** draft | ready | in progress | blocked | done | archived */
+  status: z.string().min(1),
+});
+
 export const getUserStoriesInput = z
   .object({
     userStoryOrdinalIds: z.array(z.coerce.number().int().positive()).min(1),
@@ -574,6 +582,21 @@ export const reportRequirementQualityFindingsInput = z
   });
 
 export const agentActorTypeSchema = z.enum(["LOCAL_AGENT", "CLOUD_AGENT", "local-agent", "cloud-agent"]);
+
+/** Closed vocabulary for report-agent-action entity_type (agent_workflow.proto AgentActionEntityType). */
+export const agentActionEntityTypeSchema = z.enum([
+  "USER_STORY",
+  "SCENARIO",
+  "SMART_TEST",
+  "POLICY",
+  "ISSUE",
+  "TEST_EXECUTION",
+  "TEST_INVOCATION_BATCH",
+  "EXPLORATION",
+  "EVENT",
+  "WORKFLOW",
+]);
+
 export const agentActionTypeSchema = z.enum([
   "CREATED",
   "UPDATED",
@@ -581,6 +604,7 @@ export const agentActionTypeSchema = z.enum([
   "ANALYZED",
   "ACTION_COMPLETED",
   "ACTION_FAILED",
+  "IMPLEMENTED",
   "created",
   "updated",
   "deleted",
@@ -589,6 +613,7 @@ export const agentActionTypeSchema = z.enum([
   "failed",
   "action_completed",
   "action_failed",
+  "implemented",
 ]);
 
 export const reportAgentActionInput = z
@@ -601,20 +626,91 @@ export const reportAgentActionInput = z
     actorType: agentActorTypeSchema.optional(),
     userId: z.string().optional(),
     branchName: z.string().optional(),
-    entityType: z.string().optional(),
+    entityType: agentActionEntityTypeSchema,
     /** Project-scoped ordinal id (or explicitly provided execution/batch id). Mutually exclusive with `test`. */
     entityIdentity: z.string().optional(),
     /** SmartTest TestLocator. Mutually exclusive with `entityIdentity`. */
     test: testLocatorSchema.optional(),
     actionType: agentActionTypeSchema,
-    detailJson: z.string().optional(),
   })
   .superRefine((val, ctx) => {
-    if (val.test && val.entityIdentity) {
+    const actionNorm = val.actionType.toString().toUpperCase().replace(/-/g, "_");
+    const isCompletion =
+      actionNorm === "ACTION_COMPLETED" ||
+      actionNorm === "ACTION_FAILED" ||
+      actionNorm === "COMPLETED" ||
+      actionNorm === "FAILED";
+
+    if (isCompletion) {
+      if (val.entityType !== "WORKFLOW") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "ACTION_COMPLETED / ACTION_FAILED require entityType WORKFLOW",
+          path: ["entityType"],
+        });
+      }
+      const identity = (val.entityIdentity ?? "").trim();
+      if (identity === "" || identity !== val.workflowId.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "entityIdentity must equal workflowId for WORKFLOW completion",
+          path: ["entityIdentity"],
+        });
+      }
+      if (val.test) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "test must not be set for WORKFLOW completion",
+          path: ["test"],
+        });
+      }
+      return;
+    }
+
+    if (val.entityType === "WORKFLOW") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Provide either test (TestLocator) or entityIdentity (ordinal), not both",
-        path: ["test"],
+        message: "WORKFLOW entityType is only valid with ACTION_COMPLETED / ACTION_FAILED",
+        path: ["entityType"],
+      });
+      return;
+    }
+
+    if (
+      actionNorm === "IMPLEMENTED" &&
+      val.entityType !== "USER_STORY" &&
+      val.entityType !== "SCENARIO"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "IMPLEMENTED is only valid for USER_STORY or SCENARIO",
+        path: ["entityType"],
+      });
+    }
+
+    if (val.entityType === "SMART_TEST") {
+      if (!val.test) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "SMART_TEST requires test (TestLocator)",
+          path: ["test"],
+        });
+      }
+      if (val.entityIdentity != null && val.entityIdentity.trim() !== "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "SMART_TEST forbids entityIdentity; use test (TestLocator)",
+          path: ["entityIdentity"],
+        });
+      }
+      return;
+    }
+
+    if (!(val.entityIdentity ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `entityIdentity is required for ${val.entityType}`,
+        path: ["entityIdentity"],
       });
     }
   });

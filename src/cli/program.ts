@@ -5,6 +5,7 @@ import { DEFAULT_BACKEND, postMcp } from "../core/client.js";
 import { deepMerge } from "../core/merge.js";
 import { runTool } from "../core/tools.js";
 import { TOOL_DEFINITIONS } from "../core/tools.js";
+import { resolveGitHeadSha } from "../core/gitSha.js";
 import { PACKAGE_VERSION } from "../core/version.js";
 
 export { PACKAGE_VERSION };
@@ -405,6 +406,53 @@ export function buildCliProgram(): Command {
       }
       const merged = mergeBodies(body, opts.jsonInput);
       const out = await runTool("mark-plan-items-implementation-done", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("update-plan-items-lifecycle-status")
+    .description(
+      TOOL_DEFINITIONS.find((t) => t.kebab === "update-plan-items-lifecycle-status")!.description
+    )
+    .addOption(jsonInputOption())
+    .option("--entity-type <type>", "story | scenario")
+    .option("--ordinal-id <n>", "numeric US-/TS- ordinal")
+    .option(
+      "--status <status>",
+      "draft | ready | in progress | blocked | done | archived"
+    )
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.entityType) body.entityType = String(opts.entityType).trim();
+      if (opts.ordinalId != null && String(opts.ordinalId).trim() !== "") {
+        body.ordinalId = Number(String(opts.ordinalId).trim());
+      }
+      if (opts.status) body.status = String(opts.status).trim();
+      const merged = mergeBodies(body, opts.jsonInput) as {
+        entityType?: string;
+        ordinalId?: number;
+        status?: string;
+      };
+      if (!merged.entityType || String(merged.entityType).trim() === "") {
+        throw new Error("entity-type is required (story | scenario)");
+      }
+      if (merged.ordinalId == null || !Number.isFinite(merged.ordinalId) || merged.ordinalId <= 0) {
+        throw new Error("ordinal-id is required (positive integer)");
+      }
+      if (!merged.status || String(merged.status).trim() === "") {
+        throw new Error(
+          "status is required (draft | ready | in progress | blocked | done | archived)"
+        );
+      }
+      const out = await runTool(
+        "update-plan-items-lifecycle-status",
+        {
+          entityType: String(merged.entityType).trim(),
+          ordinalId: merged.ordinalId,
+          status: String(merged.status).trim(),
+        },
+        { postMcp }
+      );
       console.log(out);
     });
 
@@ -950,33 +998,38 @@ export function buildCliProgram(): Command {
     .addOption(jsonInputOption())
     .requiredOption("--workflow-id <id>", "Catalog workflow id")
     .requiredOption("--workflow-execution-id <ulid>", "Stable ULID for the whole run")
-    .requiredOption("--action-type <type>", "CREATED|UPDATED|DELETED|ANALYZED|ACTION_COMPLETED|ACTION_FAILED")
+    .requiredOption(
+      "--action-type <type>",
+      "CREATED|UPDATED|DELETED|ANALYZED|IMPLEMENTED|ACTION_COMPLETED|ACTION_FAILED",
+    )
     .option("--policy-file <name>", "Policy filename")
     .option("--policy-version <semver>", "Policy version from frontmatter")
     .option("--git-sha <sha>", "Current HEAD sha")
     .option("--actor-type <type>", "LOCAL_AGENT|CLOUD_AGENT (or local-agent|cloud-agent)")
     .option("--user-id <id>", "Optional user id for traceability")
     .option("--branch-name <name>", "Git branch")
-    .option("--entity-type <type>", "test|story|scenario|issue|workflow|…")
+    .requiredOption(
+      "--entity-type <type>",
+      "USER_STORY|SCENARIO|SMART_TEST|POLICY|ISSUE|TEST_EXECUTION|TEST_INVOCATION_BATCH|EXPLORATION|EVENT|WORKFLOW",
+    )
     .option("--entity-identity <ordinal>", "Project-scoped ordinal id (mutually exclusive with --test-json)")
     .option("--test-json <json>", "TestLocator JSON (folderPath/fileName/testSuite/testName)")
-    .option("--detail-json <json>", "Optional detail payload")
     .action(async (opts) => {
       const body: Record<string, unknown> = {
         workflowId: String(opts.workflowId),
         workflowExecutionId: String(opts.workflowExecutionId),
         actionType: String(opts.actionType),
+        entityType: String(opts.entityType),
       };
       if (opts.policyFile) body.policyFile = String(opts.policyFile);
       if (opts.policyVersion) body.policyVersion = String(opts.policyVersion);
-      if (opts.gitSha) body.gitSha = String(opts.gitSha);
+      const gitSha = resolveGitHeadSha(opts.gitSha ? String(opts.gitSha) : undefined);
+      if (gitSha) body.gitSha = gitSha;
       if (opts.actorType) body.actorType = String(opts.actorType);
       if (opts.userId) body.userId = String(opts.userId);
       if (opts.branchName) body.branchName = String(opts.branchName);
-      if (opts.entityType) body.entityType = String(opts.entityType);
       if (opts.entityIdentity) body.entityIdentity = String(opts.entityIdentity);
       if (opts.testJson) body.test = JSON.parse(String(opts.testJson));
-      if (opts.detailJson) body.detailJson = String(opts.detailJson);
       const merged = mergeBodies(body, opts.jsonInput);
       console.log(await runTool("report-agent-action", merged, { postMcp }));
     });
