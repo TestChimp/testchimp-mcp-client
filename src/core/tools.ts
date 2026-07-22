@@ -4,6 +4,7 @@ import type { PostMcpFn } from "./client.js";
 import { runProvisionEphemeralEnvironmentAndWait, type ProgressLog } from "./ephemeralWait.js";
 import * as S from "./schemas.js";
 import { resolveGitHeadSha } from "./gitSha.js";
+import { buildAgentTraceabilityPayload } from "./agentTraceability.js";
 
 export interface ToolContext {
   postMcp: PostMcpFn;
@@ -190,14 +191,19 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Response includes content: canonical stub markdown already containing id: US-<ordinalId>. " +
       "BLOCKING workflow: call this FIRST → Write the returned content to the repo plans/stories path " +
       "(edit body as needed but keep id:) → call update-user-story with the full markdown. " +
-      "Never write story markdown that omits id. platformFilePath must be under plans/stories/ and end with .md.",
+      "Never write story markdown that omits id. platformFilePath must be under plans/stories/ and end with .md. " +
+      "Optional agentTraceability (or flat workflowId/workflowExecutionId/policyFile/policyVersion/gitSha/…) " +
+      "records AGENT_WORKFLOW_ACTIVITY inline — no separate report-agent-action needed for this create.",
     inputSchema: S.createUserStoryInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.createUserStoryInput>;
-      return postMcp("/api/mcp/create_user_story", {
+      const body: Record<string, unknown> = {
         platformFilePath: a.platformFilePath,
         title: a.title,
-      });
+      };
+      const trace = buildAgentTraceabilityPayload(a);
+      if (trace) body.agentTraceability = trace;
+      return postMcp("/api/mcp/create_user_story", body);
     },
   },
   {
@@ -209,15 +215,19 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "(edit body as needed but keep id: and story:) → call update-test-scenario with the full markdown. " +
       "Never write scenario markdown that omits id. update-test-scenario rejects missing id/story with a clear error. " +
       "platformFilePath must be under plans/scenarios/ and end with .md. " +
-      "userStoryOrdinalId is the numeric part of the parent US-<n> id.",
+      "userStoryOrdinalId is the numeric part of the parent US-<n> id. " +
+      "Optional agentTraceability records Activity inline (no separate report-agent-action for this create).",
     inputSchema: S.createTestScenarioInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.createTestScenarioInput>;
-      return postMcp("/api/mcp/create_test_scenario", {
+      const body: Record<string, unknown> = {
         platformFilePath: a.platformFilePath,
         title: a.title,
         userStoryOrdinalId: a.userStoryOrdinalId,
-      });
+      };
+      const trace = buildAgentTraceabilityPayload(a);
+      if (trace) body.agentTraceability = trace;
+      return postMcp("/api/mcp/create_test_scenario", body);
     },
   },
   {
@@ -225,11 +235,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Sync a user story markdown file to the platform after local edits. " +
       "Requires frontmatter id: US-<n> (platform-issued). Missing id returns an error telling you to call create-user-story first. " +
-      "Parses frontmatter (id, title, priority) and updates the linked support file and entity.",
+      "Parses frontmatter (id, title, priority) and updates the linked support file and entity. " +
+      "Optional agentTraceability records UPDATED Activity inline.",
     inputSchema: S.updatePlanMarkdownInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updatePlanMarkdownInput>;
-      return postMcp("/api/mcp/update_user_story", { content: a.content });
+      const body: Record<string, unknown> = { content: a.content };
+      const trace = buildAgentTraceabilityPayload(a);
+      if (trace) body.agentTraceability = trace;
+      return postMcp("/api/mcp/update_user_story", body);
     },
   },
   {
@@ -237,11 +251,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Sync a test scenario markdown file to the platform after local edits. " +
       "Requires frontmatter id: TS-<n> and story: US-<n>. Missing either returns an error telling you to call create-test-scenario first. " +
-      "Parses frontmatter and updates linking if story changes.",
+      "Parses frontmatter and updates linking if story changes. " +
+      "Optional agentTraceability records UPDATED Activity inline.",
     inputSchema: S.updatePlanMarkdownInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updatePlanMarkdownInput>;
-      return postMcp("/api/mcp/update_test_scenario", { content: a.content });
+      const body: Record<string, unknown> = { content: a.content };
+      const trace = buildAgentTraceabilityPayload(a);
+      if (trace) body.agentTraceability = trace;
+      return postMcp("/api/mcp/update_test_scenario", body);
     },
   },
   {
@@ -306,7 +324,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Update a TestChimp issue status by ordinal id (same flexible issueId formats as get-issue-details). " +
       "status must be one of: ACTIVE, IGNORED, FIXED, DUPLICATE, IN_PROGRESS_BUG, ARCHIVED_BUG, BLOCKED. " +
       "For /testchimp fix issue: set IN_PROGRESS_BUG after applying a code fix; set FIXED only after user confirmation / commits pushed. " +
-      "Optional ignoreReason when status is IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT.",
+      "Optional ignoreReason when status is IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT. " +
+      "Optional agentTraceability records UPDATED Activity inline.",
     inputSchema: S.updateIssueStatusInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updateIssueStatusInput>;
@@ -315,6 +334,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         status: a.status,
       };
       if (a.ignoreReason) body.ignoreReason = a.ignoreReason;
+      const trace = buildAgentTraceabilityPayload(a);
+      if (trace) body.agentTraceability = trace;
       return postMcp("/api/mcp/update_issue_status", body);
     },
   },
@@ -325,6 +346,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Use simple fields for common creates, or pass the full curated contract via --json-input " +
       "(description, issueType, category, severity, status, reportedReleaseId, dueDateMillis, assignee, " +
       "linkTargets, labels, source, environment, attachments, artifactReference). " +
+      "Optional agentTraceability (or flat workflowId/policyFile/…) records CREATED Activity inline — " +
+      "prefer this over a separate report-agent-action for issue creates. " +
       "Authenticated via project API key; project is resolved from the key.",
     inputSchema: S.createIssueInput,
     execute: async (args, { postMcp }) => {
@@ -344,6 +367,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.environment != null) body.environment = a.environment;
       if (a.attachments?.length) body.attachments = a.attachments;
       if (a.artifactReference != null) body.artifactReference = a.artifactReference;
+      const trace = buildAgentTraceabilityPayload(a);
+      if (trace) body.agentTraceability = trace;
       return postMcp("/api/mcp/create_issue", body);
     },
   },
@@ -873,6 +898,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.userId) body.userId = a.userId;
       else if (process.env.TESTCHIMP_USER_ID) body.userId = process.env.TESTCHIMP_USER_ID;
       if (a.branchName) body.branchName = a.branchName;
+      // Nested traceability wins for agentModel; only fill from flat/env when nested omits it.
+      if (a.traceability && typeof a.traceability === "object") {
+        const nested = { ...a.traceability } as Record<string, unknown>;
+        const nestedModel =
+          nested.agentModel != null && String(nested.agentModel).trim() !== ""
+            ? String(nested.agentModel).trim()
+            : undefined;
+        const flatModel = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
+        if (nestedModel) {
+          nested.agentModel = nestedModel;
+        } else if (flatModel) {
+          nested.agentModel = flatModel;
+        }
+        body.traceability = nested;
+      } else {
+        const model = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
+        if (model) {
+          body.traceability = { agentModel: model };
+        }
+      }
       if (a.test) {
         body.test = a.test;
       } else if (a.entityIdentity) {

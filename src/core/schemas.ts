@@ -61,20 +61,51 @@ export const fetchExecutionReportInput = z
     }
   });
 
+export const agentActorTypeSchema = z.enum(["LOCAL_AGENT", "CLOUD_AGENT", "local-agent", "cloud-agent"]);
+
+/** Nested AgentActionTraceability (agent_traceability.proto) for mutating MCP CRUDs. */
+export const agentActionTraceabilitySchema = z
+  .object({
+    workflowId: z.string().optional(),
+    workflowExecutionId: z.string().optional(),
+    policyFile: z.string().optional(),
+    policyVersion: z.string().optional(),
+    gitSha: z.string().optional(),
+    actorType: agentActorTypeSchema.optional(),
+    userId: z.string().optional(),
+    branchName: z.string().optional(),
+    agentModel: z.string().optional(),
+  })
+  .strict();
+
+/** Flat + nested traceability fields shared by create/update MCP tools. */
+export const agentTraceabilityFieldsSchema = z.object({
+  workflowId: z.string().optional(),
+  workflowExecutionId: z.string().optional(),
+  policyFile: z.string().optional(),
+  policyVersion: z.string().optional(),
+  gitSha: z.string().optional(),
+  actorType: agentActorTypeSchema.optional(),
+  userId: z.string().optional(),
+  branchName: z.string().optional(),
+  agentModel: z.string().optional(),
+  agentTraceability: agentActionTraceabilitySchema.optional(),
+});
+
 export const createUserStoryInput = z.object({
   platformFilePath: z.string().min(1),
   title: z.string().min(1),
-});
+}).merge(agentTraceabilityFieldsSchema);
 
 export const createTestScenarioInput = z.object({
   platformFilePath: z.string().min(1),
   title: z.string().min(1),
   userStoryOrdinalId: z.coerce.number().int().positive(),
-});
+}).merge(agentTraceabilityFieldsSchema);
 
 export const updatePlanMarkdownInput = z.object({
   content: z.string().min(1),
-});
+}).merge(agentTraceabilityFieldsSchema);
 
 export const markPlanItemsImplementationDoneInput = z.object({
   scenarioOrdinalIds: z.array(z.coerce.number().int().positive()).optional(),
@@ -122,7 +153,7 @@ export const updateIssueStatusInput = z.object({
   ignoreReason: z
     .enum(["INTENDED_BEHAVIOUR", "INACCURATE_ASSESSMENT", "NOT_IMPORTANT"])
     .optional(),
-});
+}).merge(agentTraceabilityFieldsSchema);
 
 const linkedEntityTypeSchema = z.enum([
   "STORY",
@@ -191,7 +222,7 @@ export const createIssueInput = z.object({
   environment: z.string().optional(),
   attachments: z.array(z.record(z.string(), z.unknown())).optional(),
   artifactReference: z.record(z.string(), z.unknown()).optional(),
-});
+}).merge(agentTraceabilityFieldsSchema);
 
 export const emptyInput = z.object({});
 
@@ -581,8 +612,6 @@ export const reportRequirementQualityFindingsInput = z
     }
   });
 
-export const agentActorTypeSchema = z.enum(["LOCAL_AGENT", "CLOUD_AGENT", "local-agent", "cloud-agent"]);
-
 /** Closed vocabulary for report-agent-action entity_type (agent_workflow.proto AgentActionEntityType). */
 export const agentActionEntityTypeSchema = z.enum([
   "USER_STORY",
@@ -626,6 +655,8 @@ export const reportAgentActionInput = z
     actorType: agentActorTypeSchema.optional(),
     userId: z.string().optional(),
     branchName: z.string().optional(),
+    agentModel: z.string().optional(),
+    traceability: agentActionTraceabilitySchema.optional(),
     entityType: agentActionEntityTypeSchema,
     /** Project-scoped ordinal id (or explicitly provided execution/batch id). Mutually exclusive with `test`. */
     entityIdentity: z.string().optional(),

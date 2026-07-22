@@ -43,6 +43,34 @@ function mergeBodies(flagBody: Record<string, unknown>, jsonInputRaw: string | u
   return deepMerge(flagBody, extra);
 }
 
+/** Shared agent policy/traceability flags for mutating CRUD commands. */
+function addAgentTraceabilityOptions(cmd: Command): Command {
+  return cmd
+    .option("--workflow-id <id>", "Catalog workflow id for agent Activity")
+    .option("--workflow-execution-id <ulid>", "Stable ULID for the whole agent run")
+    .option("--policy-file <name>", "Policy filename (e.g. run-qa.policy.md)")
+    .option("--policy-version <semver>", "Policy version from frontmatter")
+    .option("--git-sha <sha>", "Git SHA (defaults to HEAD)")
+    .option("--actor-type <type>", "LOCAL_AGENT | CLOUD_AGENT")
+    .option("--user-id <id>", "Optional user id")
+    .option("--branch-name <name>", "Git branch name")
+    .option("--agent-model <model>", "Optional agent model id (agent/CLI only)");
+}
+
+function collectAgentTraceabilityFlags(opts: Record<string, unknown>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (opts.workflowId) body.workflowId = String(opts.workflowId).trim();
+  if (opts.workflowExecutionId) body.workflowExecutionId = String(opts.workflowExecutionId).trim();
+  if (opts.policyFile) body.policyFile = String(opts.policyFile).trim();
+  if (opts.policyVersion) body.policyVersion = String(opts.policyVersion).trim();
+  if (opts.gitSha) body.gitSha = String(opts.gitSha).trim();
+  if (opts.actorType) body.actorType = String(opts.actorType).trim();
+  if (opts.userId) body.userId = String(opts.userId).trim();
+  if (opts.branchName) body.branchName = String(opts.branchName).trim();
+  if (opts.agentModel) body.agentModel = String(opts.agentModel).trim();
+  return body;
+}
+
 function stderrProgress(msg: string): void {
   console.error(`[testchimp] ${msg}`);
 }
@@ -164,52 +192,60 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  program
-    .command("create-user-story")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-user-story")!.description)
-    .addOption(jsonInputOption())
-    .requiredOption("--platform-file-path <path>")
-    .requiredOption("--title <title>")
-    .action(async (opts) => {
-      const body = { platformFilePath: opts.platformFilePath, title: opts.title };
-      const merged = mergeBodies(body, opts.jsonInput);
-      const out = await runTool("create-user-story", merged, { postMcp });
-      console.log(out);
-    });
+  addAgentTraceabilityOptions(
+    program
+      .command("create-user-story")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-user-story")!.description)
+      .addOption(jsonInputOption())
+      .requiredOption("--platform-file-path <path>")
+      .requiredOption("--title <title>"),
+  ).action(async (opts) => {
+    const body = {
+      platformFilePath: opts.platformFilePath,
+      title: opts.title,
+      ...collectAgentTraceabilityFlags(opts),
+    };
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("create-user-story", merged, { postMcp });
+    console.log(out);
+  });
 
-  program
-    .command("create-test-scenario")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-test-scenario")!.description)
-    .addOption(jsonInputOption())
-    .requiredOption("--platform-file-path <path>")
-    .requiredOption("--title <title>")
-    .requiredOption("--user-story-ordinal-id <n>")
-    .action(async (opts) => {
-      const body = {
-        platformFilePath: opts.platformFilePath,
-        title: opts.title,
-        userStoryOrdinalId: Number(opts.userStoryOrdinalId),
-      };
-      const merged = mergeBodies(body, opts.jsonInput);
-      const out = await runTool("create-test-scenario", merged, { postMcp });
-      console.log(out);
-    });
+  addAgentTraceabilityOptions(
+    program
+      .command("create-test-scenario")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-test-scenario")!.description)
+      .addOption(jsonInputOption())
+      .requiredOption("--platform-file-path <path>")
+      .requiredOption("--title <title>")
+      .requiredOption("--user-story-ordinal-id <n>"),
+  ).action(async (opts) => {
+    const body = {
+      platformFilePath: opts.platformFilePath,
+      title: opts.title,
+      userStoryOrdinalId: Number(opts.userStoryOrdinalId),
+      ...collectAgentTraceabilityFlags(opts),
+    };
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("create-test-scenario", merged, { postMcp });
+    console.log(out);
+  });
 
-  program
-    .command("update-user-story")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-user-story")!.description)
-    .addOption(jsonInputOption())
-    .option("--content <markdown>", "full markdown including frontmatter")
-    .option("--content-file <path>", "read markdown from file")
-    .action(async (opts) => {
-      let content = opts.content as string | undefined;
-      if (opts.contentFile) content = await readFile(String(opts.contentFile), "utf8");
-      if (!content) throw new Error("Provide --content or --content-file (or full body via --json-input)");
-      const body = { content };
-      const merged = mergeBodies(body, opts.jsonInput);
-      const out = await runTool("update-user-story", merged, { postMcp });
-      console.log(out);
-    });
+  addAgentTraceabilityOptions(
+    program
+      .command("update-user-story")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-user-story")!.description)
+      .addOption(jsonInputOption())
+      .option("--content <markdown>", "full markdown including frontmatter")
+      .option("--content-file <path>", "read markdown from file"),
+  ).action(async (opts) => {
+    let content = opts.content as string | undefined;
+    if (opts.contentFile) content = await readFile(String(opts.contentFile), "utf8");
+    if (!content) throw new Error("Provide --content or --content-file (or full body via --json-input)");
+    const body = { content, ...collectAgentTraceabilityFlags(opts) };
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("update-user-story", merged, { postMcp });
+    console.log(out);
+  });
 
   program
     .command("get-user-stories")
@@ -282,105 +318,97 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  program
-    .command("update-issue-status")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-issue-status")!.description)
-    .addOption(jsonInputOption())
-    .option("--issue-id <id>", "Issue ordinal id (#B-123, B-123, B123, or 123)")
-    .option(
-      "--status <status>",
-      "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED",
-    )
-    .option(
-      "--ignore-reason <reason>",
-      "When status=IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT",
-    )
-    .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.issueId) body.issueId = String(opts.issueId).trim();
-      if (opts.status) body.status = String(opts.status).trim();
-      if (opts.ignoreReason) body.ignoreReason = String(opts.ignoreReason).trim();
-      const merged = mergeBodies(body, opts.jsonInput) as {
-        issueId?: string;
-        status?: string;
-        ignoreReason?: string;
-      };
-      if (!merged.issueId || String(merged.issueId).trim() === "") {
-        throw new Error("issueId is required (--issue-id)");
-      }
-      if (!merged.status || String(merged.status).trim() === "") {
-        throw new Error(
-          "status is required (ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED)",
-        );
-      }
-      const out = await runTool(
-        "update-issue-status",
-        {
-          issueId: String(merged.issueId).trim(),
-          status: String(merged.status).trim(),
-          ...(merged.ignoreReason
-            ? { ignoreReason: String(merged.ignoreReason).trim() }
-            : {}),
-        },
-        { postMcp },
+  addAgentTraceabilityOptions(
+    program
+      .command("update-issue-status")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-issue-status")!.description)
+      .addOption(jsonInputOption())
+      .option("--issue-id <id>", "Issue ordinal id (#B-123, B-123, B123, or 123)")
+      .option(
+        "--status <status>",
+        "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED",
+      )
+      .option(
+        "--ignore-reason <reason>",
+        "When status=IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT",
+      ),
+  ).action(async (opts) => {
+    const body: Record<string, unknown> = {
+      ...collectAgentTraceabilityFlags(opts),
+    };
+    if (opts.issueId) body.issueId = String(opts.issueId).trim();
+    if (opts.status) body.status = String(opts.status).trim();
+    if (opts.ignoreReason) body.ignoreReason = String(opts.ignoreReason).trim();
+    const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+    if (!merged.issueId || String(merged.issueId).trim() === "") {
+      throw new Error("issueId is required (--issue-id)");
+    }
+    if (!merged.status || String(merged.status).trim() === "") {
+      throw new Error(
+        "status is required (ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED)",
       );
-      console.log(out);
-    });
+    }
+    const out = await runTool("update-issue-status", merged, { postMcp });
+    console.log(out);
+  });
 
-  program
-    .command("create-issue")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-issue")!.description)
-    .addOption(jsonInputOption())
-    .option("--title <title>", "Issue title (required unless provided via --json-input)")
-    .option("--description <text>", "Issue description (markdown supported)")
-    .option(
-      "--issue-type <type>",
-      "BUG_ISSUE | SUGGESTION_ISSUE | OBSERVATION_ISSUE | TASK_ISSUE",
-    )
-    .option(
-      "--category <category>",
-      "FUNCTIONAL | SECURITY | ACCESSIBILITY | PERFORMANCE | VISUAL | …",
-    )
-    .option(
-      "--severity <severity>",
-      "LOW_SEVERITY | MEDIUM_SEVERITY | HIGH_SEVERITY | CRITICAL_SEVERITY",
-    )
-    .option(
-      "--status <status>",
-      "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED",
-    )
-    .option("--reported-release-id <id>", "Release label/id to attach to the issue")
-    .option("--due-date-millis <ms>", "Due date as UTC epoch millis")
-    .option("--assignee <userId>", "Assignee user id")
-    .option("--labels <csv>", "Comma-separated labels")
-    .option("--source <name>", "External ingest source identifier (stored as label source:<name>)")
-    .option("--environment <name>", "Environment tag (defaults to QA when omitted)")
-    .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.title) body.title = String(opts.title).trim();
-      if (opts.description) body.description = String(opts.description);
-      if (opts.issueType) body.issueType = String(opts.issueType).trim();
-      if (opts.category) body.category = String(opts.category).trim();
-      if (opts.severity) body.severity = String(opts.severity).trim();
-      if (opts.status) body.status = String(opts.status).trim();
-      if (opts.reportedReleaseId) body.reportedReleaseId = String(opts.reportedReleaseId).trim();
-      if (opts.dueDateMillis != null) body.dueDateMillis = Number(opts.dueDateMillis);
-      if (opts.assignee) body.assignee = String(opts.assignee).trim();
-      if (opts.labels) {
-        body.labels = String(opts.labels)
-          .split(",")
-          .map((s: string) => s.trim())
-          .filter(Boolean);
-      }
-      if (opts.source) body.source = String(opts.source).trim();
-      if (opts.environment) body.environment = String(opts.environment).trim();
-      const merged = mergeBodies(body, opts.jsonInput) as { title?: string };
-      if (!merged.title || String(merged.title).trim() === "") {
-        throw new Error("title is required (--title or --json-input {\"title\":\"...\"})");
-      }
-      const out = await runTool("create-issue", merged, { postMcp });
-      console.log(out);
-    });
+  addAgentTraceabilityOptions(
+    program
+      .command("create-issue")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-issue")!.description)
+      .addOption(jsonInputOption())
+      .option("--title <title>", "Issue title (required unless provided via --json-input)")
+      .option("--description <text>", "Issue description (markdown supported)")
+      .option(
+        "--issue-type <type>",
+        "BUG_ISSUE | SUGGESTION_ISSUE | OBSERVATION_ISSUE | TASK_ISSUE",
+      )
+      .option(
+        "--category <category>",
+        "FUNCTIONAL | SECURITY | ACCESSIBILITY | PERFORMANCE | VISUAL | …",
+      )
+      .option(
+        "--severity <severity>",
+        "LOW_SEVERITY | MEDIUM_SEVERITY | HIGH_SEVERITY | CRITICAL_SEVERITY",
+      )
+      .option(
+        "--status <status>",
+        "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED",
+      )
+      .option("--reported-release-id <id>", "Release label/id to attach to the issue")
+      .option("--due-date-millis <ms>", "Due date as UTC epoch millis")
+      .option("--assignee <userId>", "Assignee user id")
+      .option("--labels <csv>", "Comma-separated labels")
+      .option("--source <name>", "External ingest source identifier (stored as label source:<name>)")
+      .option("--environment <name>", "Environment tag (defaults to QA when omitted)"),
+  ).action(async (opts) => {
+    const body: Record<string, unknown> = {
+      ...collectAgentTraceabilityFlags(opts),
+    };
+    if (opts.title) body.title = String(opts.title).trim();
+    if (opts.description) body.description = String(opts.description);
+    if (opts.issueType) body.issueType = String(opts.issueType).trim();
+    if (opts.category) body.category = String(opts.category).trim();
+    if (opts.severity) body.severity = String(opts.severity).trim();
+    if (opts.status) body.status = String(opts.status).trim();
+    if (opts.reportedReleaseId) body.reportedReleaseId = String(opts.reportedReleaseId).trim();
+    if (opts.dueDateMillis != null) body.dueDateMillis = Number(opts.dueDateMillis);
+    if (opts.assignee) body.assignee = String(opts.assignee).trim();
+    if (opts.labels) {
+      body.labels = String(opts.labels)
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+    }
+    if (opts.source) body.source = String(opts.source).trim();
+    if (opts.environment) body.environment = String(opts.environment).trim();
+    const merged = mergeBodies(body, opts.jsonInput) as { title?: string };
+    if (!merged.title || String(merged.title).trim() === "") {
+      throw new Error("title is required (--title or --json-input {\"title\":\"...\"})");
+    }
+    const out = await runTool("create-issue", merged, { postMcp });
+    console.log(out);
+  });
 
   program
     .command("mark-plan-items-implementation-done")
@@ -456,21 +484,22 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  program
-    .command("update-test-scenario")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-test-scenario")!.description)
-    .addOption(jsonInputOption())
-    .option("--content <markdown>")
-    .option("--content-file <path>")
-    .action(async (opts) => {
-      let content = opts.content as string | undefined;
-      if (opts.contentFile) content = await readFile(String(opts.contentFile), "utf8");
-      if (!content) throw new Error("Provide --content or --content-file (or full body via --json-input)");
-      const body = { content };
-      const merged = mergeBodies(body, opts.jsonInput);
-      const out = await runTool("update-test-scenario", merged, { postMcp });
-      console.log(out);
-    });
+  addAgentTraceabilityOptions(
+    program
+      .command("update-test-scenario")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-test-scenario")!.description)
+      .addOption(jsonInputOption())
+      .option("--content <markdown>")
+      .option("--content-file <path>"),
+  ).action(async (opts) => {
+    let content = opts.content as string | undefined;
+    if (opts.contentFile) content = await readFile(String(opts.contentFile), "utf8");
+    if (!content) throw new Error("Provide --content or --content-file (or full body via --json-input)");
+    const body = { content, ...collectAgentTraceabilityFlags(opts) };
+    const merged = mergeBodies(body, opts.jsonInput);
+    const out = await runTool("update-test-scenario", merged, { postMcp });
+    console.log(out);
+  });
 
   program
     .command("get-eaas-config")
@@ -1008,6 +1037,7 @@ export function buildCliProgram(): Command {
     .option("--actor-type <type>", "LOCAL_AGENT|CLOUD_AGENT (or local-agent|cloud-agent)")
     .option("--user-id <id>", "Optional user id for traceability")
     .option("--branch-name <name>", "Git branch")
+    .option("--agent-model <model>", "Optional agent model id (agent/CLI only)")
     .requiredOption(
       "--entity-type <type>",
       "USER_STORY|SCENARIO|SMART_TEST|POLICY|ISSUE|TEST_EXECUTION|TEST_INVOCATION_BATCH|EXPLORATION|EVENT|WORKFLOW",
@@ -1028,6 +1058,7 @@ export function buildCliProgram(): Command {
       if (opts.actorType) body.actorType = String(opts.actorType);
       if (opts.userId) body.userId = String(opts.userId);
       if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.agentModel) body.agentModel = String(opts.agentModel).trim();
       if (opts.entityIdentity) body.entityIdentity = String(opts.entityIdentity);
       if (opts.testJson) body.test = JSON.parse(String(opts.testJson));
       const merged = mergeBodies(body, opts.jsonInput);
