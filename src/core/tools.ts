@@ -1003,6 +1003,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "upsert-plans-support-file",
+    description:
+      "Create or update any file under the mapped plans root on the platform by relative path (no git commit/push required). " +
+      "Primary use: upload workflow execution plans at knowledge/workflow_plans/<workflow-id>/<workflow_execution_id>.plan.md after the Plan phase. " +
+      "filePath is relative to the plans mapped root (leading plans/ is stripped). Under workflow_plans/, filenames are coerced to *.plan.md and stored as WORKFLOW_EXECUTION_PLAN. " +
+      "Response includes supportFileId, filePath (canonical), filetype, created. Blocking step before Execute for cloud agents.",
+    inputSchema: S.upsertPlansSupportFileInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.upsertPlansSupportFileInput>;
+      return postMcp("/api/mcp/upsert_plans_support_file", {
+        filePath: a.filePath,
+        content: a.content,
+      });
+    },
+  },
+  {
     kebab: "list-workflow-catalog",
     description: "List supported TestChimp workflows with Active / Disabled / Missing Config status for the project.",
     inputSchema: S.listWorkflowCatalogInput,

@@ -776,4 +776,10 @@ export const upsertPolicyInput = z.object({
   content: z.string().min(1),
 });
 
+export const upsertPlansSupportFileInput = z.object({
+  /** Path relative to mapped plans root (e.g. knowledge/workflow_plans/run-qa/<ulid>.plan.md). */
+  filePath: z.string().min(1),
+  content: z.string().min(1),
+});
+
 export const listWorkflowCatalogInput = z.object({});

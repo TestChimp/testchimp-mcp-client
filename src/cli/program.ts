@@ -1119,6 +1119,31 @@ export function buildCliProgram(): Command {
       console.log(await runTool("upsert-policy", merged, { postMcp }));
     });
 
+  program
+    .command("upsert-plans-support-file")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-plans-support-file")!.description)
+    .addOption(jsonInputOption())
+    .option(
+      "--file-path <path>",
+      "path relative to mapped plans root (e.g. knowledge/workflow_plans/run-qa/<ulid>.plan.md)",
+    )
+    .option("--content <markdown>", "full file content")
+    .option("--content-file <path>", "read content from local file")
+    .action(async (opts) => {
+      let content = opts.content as string | undefined;
+      if (opts.contentFile) content = await readFile(String(opts.contentFile), "utf8");
+      const body: Record<string, unknown> = {};
+      if (opts.filePath) body.filePath = String(opts.filePath);
+      if (content !== undefined) body.content = content;
+      const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+      if (!merged.filePath || merged.content === undefined || merged.content === null) {
+        throw new Error(
+          "Provide --file-path and --content or --content-file (or full body via --json-input)",
+        );
+      }
+      console.log(await runTool("upsert-plans-support-file", merged, { postMcp }));
+    });
+
   program.on("--help", () => {
     /* default */
   });
