@@ -75,6 +75,7 @@ function listExecutionBody(args: z.infer<typeof S.listExecutionInput>): Record<s
   if (args.scope != null) body.scope = normalizeScope(args.scope);
   if (args.branchName != null && args.branchName.trim() !== "") body.branchName = args.branchName.trim();
   if (args.scenarioId != null && args.scenarioId.trim() !== "") body.scenarioId = args.scenarioId.trim();
+  if (args.testId != null && args.testId.trim() !== "") body.testId = args.testId.trim();
   const dimensionFilters = [...(args.dimensionFilters ?? [])];
   if (args.platform != null) {
     const hasPlatformFilter = dimensionFilters.some(
@@ -162,7 +163,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-execution-history",
     description:
-      "Fetch SmartTest execution history for an optional platform-rooted folder scope, or for a scenario when scenarioId is set. " +
+      "Fetch SmartTest execution history for a testId (top 5 recent runs), an optional platform-rooted folder/file scope, or a scenario when scenarioId is set. " +
+      "Prefer testId when you have it from fetch-execution-report. Typically omit environment to avoid env scoping. " +
       "Use branchName and scope.filePaths as for coverage. Optional platform (web|ios|android) and dimensionFilters narrow results.",
     inputSchema: S.listExecutionInput,
     execute: async (args, { postMcp }) => {

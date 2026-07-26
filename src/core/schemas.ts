@@ -39,6 +39,7 @@ export const listExecutionInput = z.object({
   scope: scopeSchema,
   branchName: z.string().optional(),
   scenarioId: z.string().optional(),
+  testId: z.string().optional(),
   platform: executionPlatformSchema.optional(),
   dimensionFilters: z.array(executionJobDimensionFilterSchema).optional(),
   limit: z.number().int().positive().max(500).optional(),

@@ -158,6 +158,7 @@ export function buildCliProgram(): Command {
     .option("--environment <s>")
     .option("--branch-name <s>")
     .option("--scenario-id <id>")
+    .option("--test-id <id>")
     .option("--platform <web|ios|android>")
     .option("--file-paths <csv>")
     .option("--folder-path <path>")
@@ -167,6 +168,7 @@ export function buildCliProgram(): Command {
       if (opts.environment) body.environment = opts.environment;
       if (opts.branchName) body.branchName = opts.branchName;
       if (opts.scenarioId) body.scenarioId = opts.scenarioId;
+      if (opts.testId) body.testId = opts.testId;
       if (opts.platform) body.platform = opts.platform;
       const scope: { filePaths?: string[]; folderPath?: string } = {};
       if (opts.filePaths) scope.filePaths = String(opts.filePaths).split(",").map((s: string) => s.trim()).filter(Boolean);
