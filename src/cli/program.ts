@@ -991,6 +991,36 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("list-semantic-nearby")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-semantic-nearby")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("list-semantic-nearby", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("mark-entity-distinct")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "mark-entity-distinct")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("mark-entity-distinct", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("unmark-entity-distinct")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "unmark-entity-distinct")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("unmark-entity-distinct", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("get-requirement-quality-report")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-requirement-quality-report")!.description)
     .addOption(jsonInputOption())

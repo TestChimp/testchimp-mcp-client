@@ -805,6 +805,61 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "list-semantic-nearby",
+    description:
+      "List semantically nearby entities across types (Story/Scenario/Test/Issue/Event). " +
+      "TEST uses TestLocator; STORY/SCENARIO/ISSUE use sourceOrdinalId; EVENT uses sourceEventTitle. " +
+      "Response TEST hits include TestLocator (never platform test_id).",
+    inputSchema: S.listSemanticNearbyInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listSemanticNearbyInput>;
+      const body: Record<string, unknown> = {
+        sourceEntityType: a.sourceEntityType,
+      };
+      if (a.sourceTest) body.sourceTest = a.sourceTest;
+      if (a.sourceOrdinalId != null) body.sourceOrdinalId = Number(a.sourceOrdinalId);
+      if (a.sourceEventTitle) body.sourceEventTitle = a.sourceEventTitle;
+      if (a.targetEntityTypes?.length) body.targetEntityTypes = a.targetEntityTypes;
+      if (a.limit != null) body.limit = a.limit;
+      return postMcp("/api/mcp/list_semantic_nearby", body);
+    },
+  },
+  {
+    kebab: "mark-entity-distinct",
+    description:
+      "Mark two same-type entities as distinct. TEST uses TestLocators; " +
+      "STORY/SCENARIO/ISSUE use ordinals; EVENT uses titles.",
+    inputSchema: S.markEntityDistinctInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.markEntityDistinctInput>;
+      const body: Record<string, unknown> = { entityType: a.entityType };
+      if (a.focusTest) body.focusTest = a.focusTest;
+      if (a.otherTest) body.otherTest = a.otherTest;
+      if (a.focusOrdinalId != null) body.focusOrdinalId = Number(a.focusOrdinalId);
+      if (a.otherOrdinalId != null) body.otherOrdinalId = Number(a.otherOrdinalId);
+      if (a.focusEventTitle) body.focusEventTitle = a.focusEventTitle;
+      if (a.otherEventTitle) body.otherEventTitle = a.otherEventTitle;
+      return postMcp("/api/mcp/mark_entity_distinct", body);
+    },
+  },
+  {
+    kebab: "unmark-entity-distinct",
+    description:
+      "Remove a distinct mark between two same-type entities (same identity rules as mark-entity-distinct).",
+    inputSchema: S.markEntityDistinctInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.markEntityDistinctInput>;
+      const body: Record<string, unknown> = { entityType: a.entityType };
+      if (a.focusTest) body.focusTest = a.focusTest;
+      if (a.otherTest) body.otherTest = a.otherTest;
+      if (a.focusOrdinalId != null) body.focusOrdinalId = Number(a.focusOrdinalId);
+      if (a.otherOrdinalId != null) body.otherOrdinalId = Number(a.otherOrdinalId);
+      if (a.focusEventTitle) body.focusEventTitle = a.focusEventTitle;
+      if (a.otherEventTitle) body.otherEventTitle = a.otherEventTitle;
+      return postMcp("/api/mcp/unmark_entity_distinct", body);
+    },
+  },
+  {
     kebab: "get-requirement-quality-report",
     description:
       "Fetch the stored requirement quality report (metrics + findings with user states) for a user story or test scenario. " +

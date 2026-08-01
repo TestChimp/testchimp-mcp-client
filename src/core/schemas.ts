@@ -481,6 +481,86 @@ export const markSemanticTestsDistinctInput = z.object({
   distinctTest: testLocatorSchema,
 });
 
+/** LinkedEntityType names for semantic nearby (embedding-capable). */
+export const semanticNearbyEntityTypeSchema = z.enum([
+  "STORY",
+  "SCENARIO",
+  "TEST",
+  "ISSUE",
+  "EVENT",
+]);
+
+export const listSemanticNearbyInput = z
+  .object({
+    sourceEntityType: semanticNearbyEntityTypeSchema,
+    sourceTest: testLocatorSchema.optional(),
+    sourceOrdinalId: z.union([z.number(), z.string()]).optional(),
+    sourceEventTitle: z.string().optional(),
+    targetEntityTypes: z.array(semanticNearbyEntityTypeSchema).optional(),
+    limit: z.number().int().positive().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.sourceEntityType === "TEST" && !val.sourceTest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "TEST requires sourceTest (TestLocator)",
+        path: ["sourceTest"],
+      });
+    }
+    if (
+      (val.sourceEntityType === "STORY" ||
+        val.sourceEntityType === "SCENARIO" ||
+        val.sourceEntityType === "ISSUE") &&
+      (val.sourceOrdinalId == null || String(val.sourceOrdinalId).trim() === "")
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${val.sourceEntityType} requires sourceOrdinalId`,
+        path: ["sourceOrdinalId"],
+      });
+    }
+    if (val.sourceEntityType === "EVENT" && !(val.sourceEventTitle ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "EVENT requires sourceEventTitle",
+        path: ["sourceEventTitle"],
+      });
+    }
+  });
+
+export const markEntityDistinctInput = z
+  .object({
+    entityType: semanticNearbyEntityTypeSchema,
+    focusTest: testLocatorSchema.optional(),
+    otherTest: testLocatorSchema.optional(),
+    focusOrdinalId: z.union([z.number(), z.string()]).optional(),
+    otherOrdinalId: z.union([z.number(), z.string()]).optional(),
+    focusEventTitle: z.string().optional(),
+    otherEventTitle: z.string().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.entityType === "TEST") {
+      if (!val.focusTest || !val.otherTest) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "TEST requires focusTest and otherTest",
+        });
+      }
+    } else if (val.entityType === "EVENT") {
+      if (!(val.focusEventTitle ?? "").trim() || !(val.otherEventTitle ?? "").trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "EVENT requires focusEventTitle and otherEventTitle",
+        });
+      }
+    } else if (val.focusOrdinalId == null || val.otherOrdinalId == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${val.entityType} requires focusOrdinalId and otherOrdinalId`,
+      });
+    }
+  });
+
 /** RequirementSubjectType — proto enum names (JsonFormat camelCase on wire). */
 export const requirementSubjectTypeSchema = z.enum(["STORY", "SCENARIO"]);
 
