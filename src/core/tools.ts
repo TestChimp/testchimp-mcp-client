@@ -281,15 +281,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-test-scenarios",
     description:
-      "Fetch test scenarios from the TestChimp platform by ordinal id (numeric part of TS-<n>). " +
-      "Returns full plan markdown content, title, platform file path, and linked user story ordinal ids. " +
-      "Use when plan files are not yet synced to the repo.",
+      "Fetch test scenarios from the TestChimp platform by ordinal id (numeric part of TS-<n>) " +
+      "and/or external TMS ids (e.g. C12345, PROJ-101 — server strips prefixes and matches numerical part). " +
+      "Returns full plan markdown content, title, platform file path, linked user story ordinal ids, " +
+      "and external_source / external_system_id when present. " +
+      "Use when plan files are not yet synced to the repo, or when linking imported tests to scenarios by TMS id.",
     inputSchema: S.getTestScenariosInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getTestScenariosInput>;
-      return postMcp("/api/mcp/get_test_scenarios", {
-        scenarioOrdinalIds: a.scenarioOrdinalIds,
-      });
+      const body: Record<string, unknown> = {};
+      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds;
+      if (a.externalIds?.length) body.externalIds = a.externalIds;
+      return postMcp("/api/mcp/get_test_scenarios", body);
     },
   },
   {
@@ -348,6 +351,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Use simple fields for common creates, or pass the full curated contract via --json-input " +
       "(description, issueType, category, severity, status, reportedReleaseId, dueDateMillis, assignee, " +
       "linkTargets, labels, source, environment, attachments, artifactReference). " +
+      "For /testchimp implement TASK_ISSUE creates: set labels=[\"TestChimp Implement\"] (not source), " +
+      "severity from task priority, category (e.g. FUNCTIONAL), and linkTargets for STORY and/or SCENARIO ordinals. " +
       "Optional agentTraceability (or flat workflowId/policyFile/…) records CREATED Activity inline — " +
       "prefer this over a separate report-agent-action for issue creates. " +
       "Authenticated via project API key; project is resolved from the key.",

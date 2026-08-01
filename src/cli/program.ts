@@ -272,15 +272,34 @@ export function buildCliProgram(): Command {
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-test-scenarios")!.description)
     .addOption(jsonInputOption())
     .option("--scenario-ordinal-ids <csv>", "comma-separated TS-<n> numeric ids")
+    .option(
+      "--external-ids <csv>",
+      "comma-separated external TMS ids (e.g. C12345,PROJ-101); server matches exact then numerical part",
+    )
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
       if (opts.scenarioOrdinalIds) {
-        body.scenarioOrdinalIds = String(opts.scenarioOrdinalIds)
+        const ids = String(opts.scenarioOrdinalIds)
           .split(",")
           .map((s: string) => Number(s.trim()))
           .filter((n: number) => Number.isFinite(n) && n > 0);
+        if (ids.length > 0) body.scenarioOrdinalIds = ids;
       }
-      const merged = mergeBodies(body, opts.jsonInput);
+      if (opts.externalIds) {
+        const ids = String(opts.externalIds)
+          .split(",")
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0);
+        if (ids.length > 0) body.externalIds = ids;
+      }
+      const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+      // Drop empty arrays so refine / merge with json-input does not fail misleadingly.
+      if (Array.isArray(merged.scenarioOrdinalIds) && merged.scenarioOrdinalIds.length === 0) {
+        delete merged.scenarioOrdinalIds;
+      }
+      if (Array.isArray(merged.externalIds) && merged.externalIds.length === 0) {
+        delete merged.externalIds;
+      }
       const out = await runTool("get-test-scenarios", merged, { postMcp });
       console.log(out);
     });

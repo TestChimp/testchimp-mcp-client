@@ -128,8 +128,16 @@ export const getUserStoriesInput = z
 
 export const getTestScenariosInput = z
   .object({
-    scenarioOrdinalIds: z.array(z.coerce.number().int().positive()).min(1),
-  });
+    scenarioOrdinalIds: z.array(z.coerce.number().int().positive()).min(1).optional(),
+    /** Full TMS external ids (e.g. C12345, PROJ-101). Server matches exact then numerical part. */
+    externalIds: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .refine(
+    (v) =>
+      (v.scenarioOrdinalIds != null && v.scenarioOrdinalIds.length > 0) ||
+      (v.externalIds != null && v.externalIds.length > 0),
+    { message: "Provide scenarioOrdinalIds and/or externalIds (non-empty)" },
+  );
 
 export const getManualSessionDetailsInput = z.object({
   manualSessionId: z.string().min(1),
