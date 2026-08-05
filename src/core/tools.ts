@@ -1086,6 +1086,51 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: S.listWorkflowCatalogInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_workflow_catalog", {}),
   },
+  {
+    kebab: "list-api-operation-services",
+    description:
+      "List API operation service resources for the project (configured OpenAPI root file paths + operation counts). " +
+      "Use rootFilePath as the service resource id for list-api-operations / get-api-operation-detail.",
+    inputSchema: S.listApiOperationServicesInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_api_operation_services", {}),
+  },
+  {
+    kebab: "list-api-operations",
+    description:
+      "List API operations for a service resource with covering-test previews and coverageSummary scores " +
+      "(same payload as the Operations list UI). Prefer --root-file-path (repo-relative OpenAPI root).",
+    inputSchema: S.listApiOperationsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listApiOperationsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.rootFilePath != null && a.rootFilePath.trim() !== "") body.rootFilePath = a.rootFilePath.trim();
+      if (a.serviceKey != null && a.serviceKey.trim() !== "") body.serviceKey = a.serviceKey.trim();
+      if (a.includeManual != null) body.includeManual = a.includeManual;
+      if (a.includeRemoved != null) body.includeRemoved = a.includeRemoved;
+      return postMcp("/api/mcp/list_api_operations", body);
+    },
+  },
+  {
+    kebab: "get-api-operation-detail",
+    description:
+      "Fetch detailed API operation coverage (request/query/response fields, response codes, covering tests) — " +
+      "same payload as the Operation detail UI. Prefer TestChimp operation id (--id ULID); " +
+      "or rootFilePath + oasOperationId; or rootFilePath + httpMethod + pathTemplate.",
+    inputSchema: S.getApiOperationDetailInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getApiOperationDetailInput>;
+      const body: Record<string, unknown> = {};
+      if (a.id != null && a.id.trim() !== "") body.id = a.id.trim();
+      if (a.rootFilePath != null && a.rootFilePath.trim() !== "") body.rootFilePath = a.rootFilePath.trim();
+      if (a.serviceKey != null && a.serviceKey.trim() !== "") body.serviceKey = a.serviceKey.trim();
+      if (a.oasOperationId != null && a.oasOperationId.trim() !== "") body.oasOperationId = a.oasOperationId.trim();
+      if (a.httpMethod != null && a.httpMethod.trim() !== "") body.httpMethod = a.httpMethod.trim();
+      if (a.pathTemplate != null && a.pathTemplate.trim() !== "") body.pathTemplate = a.pathTemplate.trim();
+      if (a.includeManual != null) body.includeManual = a.includeManual;
+      if (a.includeRemoved != null) body.includeRemoved = a.includeRemoved;
+      return postMcp("/api/mcp/get_api_operation_detail", body);
+    },
+  },
 ];
 
 const TOOL_BY_KEBAB = new Map(TOOL_DEFINITIONS.map((t) => [t.kebab, t]));

@@ -1195,6 +1195,59 @@ export function buildCliProgram(): Command {
       console.log(await runTool("upsert-plans-support-file", merged, { postMcp }));
     });
 
+  program
+    .command("list-api-operation-services")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-api-operation-services")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      console.log(await runTool("list-api-operation-services", merged, { postMcp }));
+    });
+
+  program
+    .command("list-api-operations")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-api-operations")!.description)
+    .addOption(jsonInputOption())
+    .option("--root-file-path <path>", "Repo-relative OpenAPI root path (preferred service resource id)")
+    .option("--service-key <key>", "Internal service key alias")
+    .option("--include-manual", "Include MANUAL test_mode coverage in previews")
+    .option("--include-removed", "Include soft-deleted (REMOVED) operations")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.rootFilePath) body.rootFilePath = String(opts.rootFilePath);
+      if (opts.serviceKey) body.serviceKey = String(opts.serviceKey);
+      if (opts.includeManual) body.includeManual = true;
+      if (opts.includeRemoved) body.includeRemoved = true;
+      const merged = mergeBodies(body, opts.jsonInput);
+      console.log(await runTool("list-api-operations", merged, { postMcp }));
+    });
+
+  program
+    .command("get-api-operation-detail")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-api-operation-detail")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <ulid>", "TestChimp operation id (ULID PK) — preferred")
+    .option("--root-file-path <path>", "Repo-relative OpenAPI root path")
+    .option("--service-key <key>", "Internal service key")
+    .option("--oas-operation-id <id>", "OpenAPI operationId")
+    .option("--http-method <method>", "HTTP method (with --path-template)")
+    .option("--path-template <path>", "OpenAPI path template (with --http-method)")
+    .option("--include-manual", "Include MANUAL test_mode coverage")
+    .option("--include-removed", "Include soft-deleted schema fields / response codes")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.id) body.id = String(opts.id);
+      if (opts.rootFilePath) body.rootFilePath = String(opts.rootFilePath);
+      if (opts.serviceKey) body.serviceKey = String(opts.serviceKey);
+      if (opts.oasOperationId) body.oasOperationId = String(opts.oasOperationId);
+      if (opts.httpMethod) body.httpMethod = String(opts.httpMethod);
+      if (opts.pathTemplate) body.pathTemplate = String(opts.pathTemplate);
+      if (opts.includeManual) body.includeManual = true;
+      if (opts.includeRemoved) body.includeRemoved = true;
+      const merged = mergeBodies(body, opts.jsonInput);
+      console.log(await runTool("get-api-operation-detail", merged, { postMcp }));
+    });
+
   program.on("--help", () => {
     /* default */
   });

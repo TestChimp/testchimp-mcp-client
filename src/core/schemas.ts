@@ -872,3 +872,47 @@ export const upsertPlansSupportFileInput = z.object({
 });
 
 export const listWorkflowCatalogInput = z.object({});
+
+/** API operation coverage (OpenAPI ops + denorm coverage) — CLI ≥ 0.1.28 */
+export const listApiOperationServicesInput = z.object({});
+
+export const listApiOperationsInput = z.object({
+  /** Preferred: repo-relative OpenAPI root path. */
+  rootFilePath: z.string().optional(),
+  /** Alias for rootFilePath resolution; internal service key. */
+  serviceKey: z.string().optional(),
+  includeManual: z.boolean().optional(),
+  includeRemoved: z.boolean().optional(),
+});
+
+export const getApiOperationDetailInput = z
+  .object({
+    /** TestChimp operation id (ULID PK). Preferred. */
+    id: z.string().optional(),
+    rootFilePath: z.string().optional(),
+    serviceKey: z.string().optional(),
+    oasOperationId: z.string().optional(),
+    httpMethod: z.string().optional(),
+    pathTemplate: z.string().optional(),
+    includeManual: z.boolean().optional(),
+    includeRemoved: z.boolean().optional(),
+  })
+  .superRefine((v, ctx) => {
+    const id = v.id?.trim();
+    const root = v.rootFilePath?.trim();
+    const service = v.serviceKey?.trim();
+    const oas = v.oasOperationId?.trim();
+    const method = v.httpMethod?.trim();
+    const path = v.pathTemplate?.trim();
+    const hasService = !!(root || service);
+    if (id) return;
+    if (oas && hasService) return;
+    if (method && path && hasService) return;
+    if (oas && !hasService) return; // server allows project-wide oas fallback
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "Provide --id (TestChimp operation ULID), or --root-file-path/--service-key with --oas-operation-id, " +
+        "or --root-file-path/--service-key with --http-method and --path-template",
+    });
+  });
