@@ -148,6 +148,15 @@ async function loadRequirementQualityReportJson(
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
+    kebab: "get-org-capabilities",
+    description:
+      "Fetch the organization's enabled capabilities (e.g. TRUE_COVERAGE, API_CONTRACT_COVERAGE) and " +
+      "freeTrialActive flag. Call before relying on TrueCoverage / API contract coverage features so " +
+      "playbooks can soft-skip gated insights instead of failing. Authenticated via project API key.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_org_capabilities", {}),
+  },
+  {
     kebab: "get-requirement-coverage",
     description:
       "Fetch requirement (scenario) coverage under an optional platform-rooted folder scope (tests/... or plans/...). " +
