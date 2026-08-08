@@ -51,7 +51,10 @@ function normalizeActorType(raw: unknown): "LOCAL_AGENT" | "CLOUD_AGENT" | undef
  * Build camelCase AgentActionTraceability for MCP JSON bodies.
  * Returns undefined unless the caller supplied explicit traceability intent
  * **and** a non-empty workflowId (server requires workflow_id for inline Activity).
- * Auto-fills gitSha / agentModel / userId only after that bar is met.
+ * For Activity/timeline attachment the server also requires workflowExecutionId
+ * (stable Plan ULID for the whole run) — omit it and the mutation still succeeds
+ * but no workflow_executions / Activity row is recorded (server does not auto-mint).
+ * Auto-fills gitSha / agentModel / userId only after the workflowId bar is met.
  * Non-empty nested `agentTraceability` wins over flat for overlapping keys.
  */
 export function buildAgentTraceabilityPayload(

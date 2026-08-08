@@ -339,7 +339,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "status must be one of: ACTIVE, IGNORED, FIXED, DUPLICATE, IN_PROGRESS_BUG, ARCHIVED_BUG, BLOCKED. " +
       "For /testchimp fix issue: set IN_PROGRESS_BUG after applying a code fix; set FIXED only after user confirmation / commits pushed. " +
       "Optional ignoreReason when status is IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT. " +
-      "Optional agentTraceability records UPDATED Activity inline.",
+      "Optional agentTraceability records UPDATED Activity inline " +
+      "(requires both workflowId and workflowExecutionId for Activity attachment).",
     inputSchema: S.updateIssueStatusInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updateIssueStatusInput>;
@@ -362,8 +363,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "linkTargets, labels, source, environment, attachments, artifactReference). " +
       "For /testchimp implement TASK_ISSUE creates: set labels=[\"TestChimp Implement\"] (not source), " +
       "severity from task priority, category (e.g. FUNCTIONAL), and linkTargets for STORY and/or SCENARIO ordinals. " +
-      "Optional agentTraceability (or flat workflowId/policyFile/…) records CREATED Activity inline — " +
+      "Optional agentTraceability (or flat workflowId/workflowExecutionId/policyFile/…) records CREATED Activity inline — " +
       "prefer this over a separate report-agent-action for issue creates. " +
+      "For Activity/timeline attachment both workflowId and workflowExecutionId (stable Plan ULID) are required; " +
+      "do not omit workflowExecutionId or mint a new ULID per issue. " +
       "Authenticated via project API key; project is resolved from the key.",
     inputSchema: S.createIssueInput,
     execute: async (args, { postMcp }) => {
@@ -416,6 +419,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         ordinalId: a.ordinalId,
         status: a.status,
       });
+    },
+  },
+  {
+    kebab: "get-spec-lifecycle-details",
+    description:
+      "Fetch lifecycle_fields for user stories and/or test scenarios by ordinal id (DB only; no markdown). " +
+      "Pass scenarioIds / storyIds as lists of bare ordinals (canonical) or prefixed forms (TS-107, #US-12). " +
+      "Use after identifying scenarios in scope for create-tests to read verification_strategy (auto|manual) and skip manual ones.",
+    inputSchema: S.getSpecLifecycleDetailsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getSpecLifecycleDetailsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.scenarioIds?.length) body.scenarioIds = a.scenarioIds;
+      if (a.storyIds?.length) body.storyIds = a.storyIds;
+      return postMcp("/api/mcp/get_spec_lifecycle_details", body);
     },
   },
   {

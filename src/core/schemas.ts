@@ -121,6 +121,24 @@ export const updatePlanItemsLifecycleStatusInput = z.object({
   status: z.string().min(1),
 });
 
+export const getSpecLifecycleDetailsInput = z
+  .object({
+    /** Bare ordinals or TS-/ #TS- forms; numbers coerced to strings. */
+    scenarioIds: z
+      .array(z.union([z.string(), z.number()]).transform((v) => String(v).trim()).pipe(z.string().min(1)))
+      .optional(),
+    /** Bare ordinals or US-/ #US- forms; numbers coerced to strings. */
+    storyIds: z
+      .array(z.union([z.string(), z.number()]).transform((v) => String(v).trim()).pipe(z.string().min(1)))
+      .optional(),
+  })
+  .refine(
+    (v) =>
+      (v.scenarioIds != null && v.scenarioIds.length > 0) ||
+      (v.storyIds != null && v.storyIds.length > 0),
+    { message: "Provide scenarioIds and/or storyIds (non-empty)" },
+  );
+
 export const getUserStoriesInput = z
   .object({
     userStoryOrdinalIds: z.array(z.coerce.number().int().positive()).min(1),

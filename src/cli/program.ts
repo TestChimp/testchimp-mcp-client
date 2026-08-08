@@ -505,6 +505,45 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
+  program
+    .command("get-spec-lifecycle-details")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-spec-lifecycle-details")!.description)
+    .addOption(jsonInputOption())
+    .option(
+      "--scenario-ids <csv>",
+      "comma-separated scenario ordinals (bare 107 or TS-107 / #TS-107)",
+    )
+    .option(
+      "--story-ids <csv>",
+      "comma-separated story ordinals (bare 12 or US-12 / #US-12)",
+    )
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.scenarioIds) {
+        const ids = String(opts.scenarioIds)
+          .split(",")
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0);
+        if (ids.length > 0) body.scenarioIds = ids;
+      }
+      if (opts.storyIds) {
+        const ids = String(opts.storyIds)
+          .split(",")
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0);
+        if (ids.length > 0) body.storyIds = ids;
+      }
+      const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+      if (Array.isArray(merged.scenarioIds) && merged.scenarioIds.length === 0) {
+        delete merged.scenarioIds;
+      }
+      if (Array.isArray(merged.storyIds) && merged.storyIds.length === 0) {
+        delete merged.storyIds;
+      }
+      const out = await runTool("get-spec-lifecycle-details", merged, { postMcp });
+      console.log(out);
+    });
+
   addAgentTraceabilityOptions(
     program
       .command("update-test-scenario")
