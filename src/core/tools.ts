@@ -65,6 +65,13 @@ function listCoverageBody(args: z.infer<typeof S.listCoverageInput>): Record<str
     });
     body.recordTypes = normalized;
   }
+  if (args.scenarioLifecycleStatuses != null && args.scenarioLifecycleStatuses.length > 0) {
+    body.scenarioLifecycleStatuses = args.scenarioLifecycleStatuses.map((s) => String(s).trim()).filter(Boolean);
+  }
+  if (args.limit != null) body.limit = args.limit;
+  if (args.considerScenarioPriority != null) body.considerScenarioPriority = args.considerScenarioPriority;
+  if (args.considerSemanticCoverage != null) body.considerSemanticCoverage = args.considerSemanticCoverage;
+  if (args.autoVerificationOnly != null) body.autoVerificationOnly = args.autoVerificationOnly;
   return body;
 }
 
@@ -92,6 +99,54 @@ function listExecutionBody(args: z.infer<typeof S.listExecutionInput>): Record<s
   if (args.limit != null) body.limit = args.limit;
   if (args.offset != null) body.offset = args.offset;
   return body;
+}
+
+/** Mean success duration above this counts as a slow test (mirrors UI ExecutionTimingSummary). */
+const SLOW_TEST_MEAN_SECS = 30;
+
+type TimingStatsLike = { meanSecs?: number | string | null };
+type TestScopeStatsLike = {
+  successTiming?: TimingStatsLike | null;
+  failTiming?: TimingStatsLike | null;
+};
+
+function parseMeanSecs(raw: unknown): number | null {
+  if (raw == null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && !Number.isNaN(n) && n >= 0 ? n : null;
+}
+
+/** Suite rollup from list_execution_history testStats (sum of success means = UI Total time). */
+function aggregateSuiteExecutionStats(
+  testStats: TestScopeStatsLike[] | undefined,
+): Record<string, unknown> {
+  const stats = Array.isArray(testStats) ? testStats : [];
+  let timedTestCount = 0;
+  let sumSuccessMeanSecs = 0;
+  let sumFailMeanSecs = 0;
+  let maxSuccessMeanSecs = 0;
+  let slowTestCount = 0;
+
+  for (const s of stats) {
+    const successMean = parseMeanSecs(s.successTiming?.meanSecs);
+    if (successMean != null) {
+      timedTestCount += 1;
+      sumSuccessMeanSecs += successMean;
+      if (successMean > maxSuccessMeanSecs) maxSuccessMeanSecs = successMean;
+      if (successMean > SLOW_TEST_MEAN_SECS) slowTestCount += 1;
+    }
+    const failMean = parseMeanSecs(s.failTiming?.meanSecs);
+    if (failMean != null) sumFailMeanSecs += failMean;
+  }
+
+  return {
+    testCount: stats.length,
+    timedTestCount,
+    sumSuccessMeanSecs,
+    sumFailMeanSecs,
+    maxSuccessMeanSecs: timedTestCount > 0 ? maxSuccessMeanSecs : 0,
+    slowTestCount,
+  };
 }
 
 type RequirementSubjectType = z.infer<typeof S.requirementSubjectTypeSchema>;
@@ -162,7 +217,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Fetch requirement (scenario) coverage under an optional platform-rooted folder scope (tests/... or plans/...). " +
       "Use scope.filePaths or scope.folderPath (platform tests/plans roots). Omit branchName for cross-branch coverage " +
       "(aggregates branch copies; execution jobs deduped by stable hash of tests-root-relative path + test name). " +
-      "Pass branchName only when results must be limited to one Git branch. Optional platform (web|ios|android) filters rollup.",
+      "Pass branchName only when results must be limited to one Git branch. Optional platform (web|ios|android) filters rollup. " +
+      "For top-N gap recommendations: set scenarioLifecycleStatuses, considerScenarioPriority / considerSemanticCoverage, and limit; " +
+      "prefer response rankedScenarios (gaps only). Server excludes verification_strategy=manual by default (autoVerificationOnly).",
     inputSchema: S.listCoverageInput,
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_requirement_coverage", listCoverageBody(args as z.infer<typeof S.listCoverageInput>));
@@ -179,6 +236,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_execution_history", listExecutionBody(args as z.infer<typeof S.listExecutionInput>));
       return json;
+    },
+  },
+  {
+    kebab: "get-suite-execution-stats",
+    description:
+      "Aggregate suite timing from list_execution_history testStats (same filters as get-execution-history). " +
+      "Returns testCount, timedTestCount, sumSuccessMeanSecs (UI ExecutionTimingSummary total), sumFailMeanSecs, " +
+      "maxSuccessMeanSecs, slowTestCount (success mean > 30s). " +
+      "Sum of means is aggregate test CPU-time, not CI wall-clock under parallelism. " +
+      "Compare sumSuccessMeanSecs against any suite budget in the agent — this tool only returns stats.",
+    inputSchema: S.suiteExecutionStatsInput,
+    execute: async (args, { postMcp }) => {
+      const json = await postMcp(
+        "/api/mcp/list_execution_history",
+        listExecutionBody(args as z.infer<typeof S.listExecutionInput>),
+      );
+      const parsed = JSON.parse(json) as { testStats?: TestScopeStatsLike[] };
+      return JSON.stringify(aggregateSuiteExecutionStats(parsed.testStats));
     },
   },
   {

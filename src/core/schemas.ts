@@ -31,6 +31,19 @@ export const listCoverageInput = z.object({
    * When provided, send proto enum names ("SMART_TEST", "MANUAL") or CLI-friendly aliases ("smart_test", "manual").
    */
   recordTypes: z.array(requirementCoverageRecordTypeSchema).optional(),
+  /** Allowlist of scenario lifecycle statuses (e.g. ["ready"] or ["draft","ready"]). Empty/omit = no status filter. */
+  scenarioLifecycleStatuses: z.array(z.string().min(1)).optional(),
+  /** When set (>0), truncate rankedScenarios to top N after filter+rank (server clamps to 200). */
+  limit: z.number().int().positive().max(200).optional(),
+  /** Rank by scenario priority high > medium > low > unset. */
+  considerScenarioPriority: z.boolean().optional(),
+  /** Reserved for future semantic-gap ranking; accepted by server, ignored in v1. */
+  considerSemanticCoverage: z.boolean().optional(),
+  /**
+   * Exclude scenarios with verification_strategy=manual. Server defaults to true when unset.
+   * Prefer --include-manual-verification (sets false) over setting this explicitly.
+   */
+  autoVerificationOnly: z.boolean().optional(),
 });
 
 export const listExecutionInput = z.object({
@@ -45,6 +58,9 @@ export const listExecutionInput = z.object({
   limit: z.number().int().positive().max(500).optional(),
   offset: z.number().int().nonnegative().optional(),
 });
+
+/** Same filters as get-execution-history; rolls up list_execution_history testStats. */
+export const suiteExecutionStatsInput = listExecutionInput;
 
 export const fetchExecutionReportInput = z
   .object({

@@ -126,8 +126,14 @@ export function buildCliProgram(): Command {
     .option("--branch-name <s>")
     .option("--platform <web|ios|android>")
     .option("--record-types <csv>", "coverage sources: smart_test,manual (aliases: automated,smarttest)")
-    .option("--include-manual", "include manual sessions in addition to automated (default)")
+    .option("--include-manual", "include manual session coverage in addition to automated SmartTests")
     .option("--manual-only", "manual-only coverage (no automated)")
+    .option("--lifecycle-statuses <csv>", "scenario lifecycle allowlist (e.g. ready or draft,ready)")
+    .option("--limit <n>", "top N gaps after filter+rank into rankedScenarios (max 200)", (v) => parseInt(v, 10))
+    .option("--consider-scenario-priority", "rank by scenario priority high→medium→low→unset")
+    .option("--consider-semantic-coverage", "reserved ranking signal (accepted; no server effect yet)")
+    .option("--auto-verification-only", "exclude verification_strategy=manual (server default when unset)")
+    .option("--include-manual-verification", "include verification_strategy=manual (overrides --auto-verification-only)")
     .option("--file-paths <csv>", "comma-separated paths under platform tests root")
     .option("--folder-path <path>", "folder under tests root, slash-separated")
     .action(async (opts) => {
@@ -141,6 +147,17 @@ export function buildCliProgram(): Command {
       if (opts.includeManual) recordTypes = Array.from(new Set([...(recordTypes ?? ["smart_test"]), "manual"]));
       if (opts.manualOnly) recordTypes = ["manual"];
       if (recordTypes && recordTypes.length > 0) body.recordTypes = recordTypes;
+      if (opts.lifecycleStatuses) {
+        body.scenarioLifecycleStatuses = String(opts.lifecycleStatuses)
+          .split(",")
+          .map((s: string) => s.trim())
+          .filter(Boolean);
+      }
+      if (opts.limit != null && !Number.isNaN(opts.limit)) body.limit = opts.limit;
+      if (opts.considerScenarioPriority) body.considerScenarioPriority = true;
+      if (opts.considerSemanticCoverage) body.considerSemanticCoverage = true;
+      if (opts.includeManualVerification) body.autoVerificationOnly = false;
+      else if (opts.autoVerificationOnly) body.autoVerificationOnly = true;
       const scope: { filePaths?: string[]; folderPath?: string } = {};
       if (opts.filePaths) scope.filePaths = String(opts.filePaths).split(",").map((s: string) => s.trim()).filter(Boolean);
       if (opts.folderPath) scope.folderPath = opts.folderPath;
@@ -176,6 +193,35 @@ export function buildCliProgram(): Command {
       if (Object.keys(scope).length) body.scope = scope;
       const merged = mergeBodies(body, opts.jsonInput);
       const out = await runTool("get-execution-history", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("get-suite-execution-stats")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-suite-execution-stats")!.description)
+    .addOption(jsonInputOption())
+    .option("--release <s>")
+    .option("--environment <s>")
+    .option("--branch-name <s>")
+    .option("--scenario-id <id>")
+    .option("--test-id <id>")
+    .option("--platform <web|ios|android>")
+    .option("--file-paths <csv>")
+    .option("--folder-path <path>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.release) body.release = opts.release;
+      if (opts.environment) body.environment = opts.environment;
+      if (opts.branchName) body.branchName = opts.branchName;
+      if (opts.scenarioId) body.scenarioId = opts.scenarioId;
+      if (opts.testId) body.testId = opts.testId;
+      if (opts.platform) body.platform = opts.platform;
+      const scope: { filePaths?: string[]; folderPath?: string } = {};
+      if (opts.filePaths) scope.filePaths = String(opts.filePaths).split(",").map((s: string) => s.trim()).filter(Boolean);
+      if (opts.folderPath) scope.folderPath = opts.folderPath;
+      if (Object.keys(scope).length) body.scope = scope;
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("get-suite-execution-stats", merged, { postMcp });
       console.log(out);
     });
 
