@@ -1,4 +1,5 @@
 import { resolveGitHeadSha } from "./gitSha.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 /** Flat CLI/MCP fields that map to AgentActionTraceability. */
 export type AgentTraceabilityFields = {
@@ -11,6 +12,8 @@ export type AgentTraceabilityFields = {
   userId?: string;
   branchName?: string;
   agentModel?: string;
+  skillVersion?: string;
+  cliVersion?: string;
   /** Nested form (wins over flat when both present and non-empty). */
   agentTraceability?: Record<string, unknown>;
 };
@@ -31,6 +34,8 @@ function hasExplicitTraceabilityIntent(a: AgentTraceabilityFields): boolean {
   if (nonEmptyString(a.userId)) return true;
   if (nonEmptyString(a.branchName)) return true;
   if (nonEmptyString(a.agentModel)) return true;
+  if (nonEmptyString(a.skillVersion)) return true;
+  if (nonEmptyString(a.cliVersion)) return true;
   if (a.agentTraceability && typeof a.agentTraceability === "object") {
     return Object.keys(a.agentTraceability).some(
       (k) => nonEmptyString((a.agentTraceability as Record<string, unknown>)[k]) != null,
@@ -48,13 +53,34 @@ function normalizeActorType(raw: unknown): "LOCAL_AGENT" | "CLOUD_AGENT" | undef
 }
 
 /**
+ * Resolve skill / CLI versions for traceability payloads.
+ * CLI version defaults to this package's version; skill version from flag/env only.
+ */
+export function resolveToolchainVersions(a: {
+  skillVersion?: string;
+  cliVersion?: string;
+  nested?: Record<string, unknown> | null;
+}): { skillVersion?: string; cliVersion?: string } {
+  const skillVersion =
+    nonEmptyString(a.nested?.skillVersion) ??
+    nonEmptyString(a.skillVersion) ??
+    nonEmptyString(process.env.TESTCHIMP_SKILL_VERSION);
+  const cliVersion =
+    nonEmptyString(a.nested?.cliVersion) ??
+    nonEmptyString(a.cliVersion) ??
+    nonEmptyString(process.env.TESTCHIMP_CLI_VERSION) ??
+    PACKAGE_VERSION;
+  return { skillVersion, cliVersion };
+}
+
+/**
  * Build camelCase AgentActionTraceability for MCP JSON bodies.
  * Returns undefined unless the caller supplied explicit traceability intent
  * **and** a non-empty workflowId (server requires workflow_id for inline Activity).
  * For Activity/timeline attachment the server also requires workflowExecutionId
  * (stable Plan ULID for the whole run) — omit it and the mutation still succeeds
  * but no workflow_executions / Activity row is recorded (server does not auto-mint).
- * Auto-fills gitSha / agentModel / userId only after the workflowId bar is met.
+ * Auto-fills gitSha / agentModel / userId / cliVersion only after the workflowId bar is met.
  * Non-empty nested `agentTraceability` wins over flat for overlapping keys.
  */
 export function buildAgentTraceabilityPayload(
@@ -92,6 +118,11 @@ export function buildAgentTraceabilityPayload(
     nonEmptyString(nested?.agentModel) ??
     nonEmptyString(a.agentModel) ??
     nonEmptyString(process.env.TESTCHIMP_AGENT_MODEL);
+  const { skillVersion, cliVersion } = resolveToolchainVersions({
+    skillVersion: a.skillVersion,
+    cliVersion: a.cliVersion,
+    nested,
+  });
 
   // Server requires workflow_id for inline mutation Activity — do not send orphan payloads.
   if (!workflowId) {
@@ -108,6 +139,8 @@ export function buildAgentTraceabilityPayload(
   if (userId) out.userId = userId;
   if (branchName) out.branchName = branchName;
   if (agentModel) out.agentModel = agentModel;
+  if (skillVersion) out.skillVersion = skillVersion;
+  if (cliVersion) out.cliVersion = cliVersion;
 
   return out;
 }

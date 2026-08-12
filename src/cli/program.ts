@@ -54,7 +54,9 @@ function addAgentTraceabilityOptions(cmd: Command): Command {
     .option("--actor-type <type>", "LOCAL_AGENT | CLOUD_AGENT")
     .option("--user-id <id>", "Optional user id")
     .option("--branch-name <name>", "Git branch name")
-    .option("--agent-model <model>", "Optional agent model id (agent/CLI only)");
+    .option("--agent-model <model>", "Optional agent model id (agent/CLI only)")
+    .option("--skill-version <semver>", "TestChimp skill version from SKILL.md frontmatter")
+    .option("--cli-version <semver>", "CLI version (defaults to this package version)");
 }
 
 function collectAgentTraceabilityFlags(opts: Record<string, unknown>): Record<string, unknown> {
@@ -68,6 +70,8 @@ function collectAgentTraceabilityFlags(opts: Record<string, unknown>): Record<st
   if (opts.userId) body.userId = String(opts.userId).trim();
   if (opts.branchName) body.branchName = String(opts.branchName).trim();
   if (opts.agentModel) body.agentModel = String(opts.agentModel).trim();
+  if (opts.skillVersion) body.skillVersion = String(opts.skillVersion).trim();
+  if (opts.cliVersion) body.cliVersion = String(opts.cliVersion).trim();
   return body;
 }
 
@@ -1174,6 +1178,8 @@ export function buildCliProgram(): Command {
     .option("--user-id <id>", "Optional user id for traceability")
     .option("--branch-name <name>", "Git branch")
     .option("--agent-model <model>", "Optional agent model id (agent/CLI only)")
+    .option("--skill-version <semver>", "TestChimp skill version from SKILL.md frontmatter")
+    .option("--cli-version <semver>", "CLI version (defaults to this package version)")
     .requiredOption(
       "--entity-type <type>",
       "USER_STORY|SCENARIO|SMART_TEST|POLICY|ISSUE|TEST_EXECUTION|TEST_INVOCATION_BATCH|EXPLORATION|EVENT|WORKFLOW",
@@ -1195,6 +1201,8 @@ export function buildCliProgram(): Command {
       if (opts.userId) body.userId = String(opts.userId);
       if (opts.branchName) body.branchName = String(opts.branchName);
       if (opts.agentModel) body.agentModel = String(opts.agentModel).trim();
+      if (opts.skillVersion) body.skillVersion = String(opts.skillVersion).trim();
+      if (opts.cliVersion) body.cliVersion = String(opts.cliVersion).trim();
       if (opts.entityIdentity) body.entityIdentity = String(opts.entityIdentity);
       if (opts.testJson) body.test = JSON.parse(String(opts.testJson));
       const merged = mergeBodies(body, opts.jsonInput);

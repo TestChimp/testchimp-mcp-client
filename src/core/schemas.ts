@@ -92,6 +92,8 @@ export const agentActionTraceabilitySchema = z
     userId: z.string().optional(),
     branchName: z.string().optional(),
     agentModel: z.string().optional(),
+    skillVersion: z.string().optional(),
+    cliVersion: z.string().optional(),
   })
   .strict();
 
@@ -106,6 +108,8 @@ export const agentTraceabilityFieldsSchema = z.object({
   userId: z.string().optional(),
   branchName: z.string().optional(),
   agentModel: z.string().optional(),
+  skillVersion: z.string().optional(),
+  cliVersion: z.string().optional(),
   agentTraceability: agentActionTraceabilitySchema.optional(),
 });
 
@@ -779,6 +783,8 @@ export const reportAgentActionInput = z
     userId: z.string().optional(),
     branchName: z.string().optional(),
     agentModel: z.string().optional(),
+    skillVersion: z.string().optional(),
+    cliVersion: z.string().optional(),
     traceability: agentActionTraceabilitySchema.optional(),
     entityType: agentActionEntityTypeSchema,
     /** Project-scoped ordinal id (or explicitly provided execution/batch id). Mutually exclusive with `test`. */

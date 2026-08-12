@@ -4,7 +4,7 @@ import type { PostMcpFn } from "./client.js";
 import { runProvisionEphemeralEnvironmentAndWait, type ProgressLog } from "./ephemeralWait.js";
 import * as S from "./schemas.js";
 import { resolveGitHeadSha } from "./gitSha.js";
-import { buildAgentTraceabilityPayload } from "./agentTraceability.js";
+import { buildAgentTraceabilityPayload, resolveToolchainVersions } from "./agentTraceability.js";
 
 export interface ToolContext {
   postMcp: PostMcpFn;
@@ -1062,7 +1062,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.userId) body.userId = a.userId;
       else if (process.env.TESTCHIMP_USER_ID) body.userId = process.env.TESTCHIMP_USER_ID;
       if (a.branchName) body.branchName = a.branchName;
-      // Nested traceability wins for agentModel; only fill from flat/env when nested omits it.
+      // Nested traceability wins for agentModel / skillVersion / cliVersion;
+      // fill from flat/env/package when nested omits them.
+      const { skillVersion, cliVersion } = resolveToolchainVersions({
+        skillVersion: a.skillVersion,
+        cliVersion: a.cliVersion,
+        nested:
+          a.traceability && typeof a.traceability === "object"
+            ? (a.traceability as Record<string, unknown>)
+            : null,
+      });
       if (a.traceability && typeof a.traceability === "object") {
         const nested = { ...a.traceability } as Record<string, unknown>;
         const nestedModel =
@@ -1075,11 +1084,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         } else if (flatModel) {
           nested.agentModel = flatModel;
         }
+        if (skillVersion) nested.skillVersion = skillVersion;
+        if (cliVersion) nested.cliVersion = cliVersion;
         body.traceability = nested;
       } else {
         const model = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
-        if (model) {
-          body.traceability = { agentModel: model };
+        const nested: Record<string, unknown> = {};
+        if (model) nested.agentModel = model;
+        if (skillVersion) nested.skillVersion = skillVersion;
+        if (cliVersion) nested.cliVersion = cliVersion;
+        if (Object.keys(nested).length > 0) {
+          body.traceability = nested;
         }
       }
       if (a.test) {
