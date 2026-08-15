@@ -10,7 +10,16 @@ import { PACKAGE_VERSION } from "../core/version.js";
 
 export { PACKAGE_VERSION };
 
-function parseRecordTypesCsv(raw: string): ("smart_test" | "manual")[] {
+/** True when ComparePerfToBaselineResponse (or a flat PerfComparison) reports a regression. */
+function isPerfComparisonRegressed(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== "object") return false;
+  const body = parsed as { regressed?: unknown; comparison?: { regressed?: unknown } };
+  return body.regressed === true || body.comparison?.regressed === true;
+}
+
+type CoverageRecordTypeAlias = "smart_test" | "manual" | "perf_test";
+
+function parseRecordTypesCsv(raw: string): CoverageRecordTypeAlias[] {
   return String(raw)
     .split(",")
     .map((s) => s.trim())
@@ -21,9 +30,11 @@ function parseRecordTypesCsv(raw: string): ("smart_test" | "manual")[] {
       if (s === "smarttest") return "smart_test";
       if (s === "smart_test") return "smart_test";
       if (s === "manual") return "manual";
-      return s as "smart_test" | "manual";
+      if (s === "perf" || s === "perftest" || s === "perf_test") return "perf_test";
+      return s as CoverageRecordTypeAlias;
     })
-    .filter((v): v is "smart_test" | "manual" => v === "smart_test" || v === "manual");
+    .filter((v): v is CoverageRecordTypeAlias =>
+      v === "smart_test" || v === "manual" || v === "perf_test");
 }
 
 function parseJsonInput(raw: string | undefined): Record<string, unknown> {
@@ -129,8 +140,9 @@ export function buildCliProgram(): Command {
     .option("--environment <s>")
     .option("--branch-name <s>")
     .option("--platform <web|ios|android>")
-    .option("--record-types <csv>", "coverage sources: smart_test,manual (aliases: automated,smarttest)")
+    .option("--record-types <csv>", "coverage sources: smart_test,manual,perf_test (aliases: automated,smarttest,perf)")
     .option("--include-manual", "include manual session coverage in addition to automated SmartTests")
+    .option("--include-perf", "include PERF_TEST journey coverage in addition to automated SmartTests")
     .option("--manual-only", "manual-only coverage (no automated)")
     .option("--lifecycle-statuses <csv>", "scenario lifecycle allowlist (e.g. ready or draft,ready)")
     .option("--limit <n>", "top N gaps after filter+rank into rankedScenarios (max 200)", (v) => parseInt(v, 10))
@@ -146,10 +158,13 @@ export function buildCliProgram(): Command {
       if (opts.environment) body.environment = opts.environment;
       if (opts.branchName) body.branchName = opts.branchName;
       if (opts.platform) body.platform = opts.platform;
-      let recordTypes: ("smart_test" | "manual")[] | undefined;
+      let recordTypes: CoverageRecordTypeAlias[] | undefined;
       if (opts.recordTypes) recordTypes = parseRecordTypesCsv(String(opts.recordTypes));
       if (opts.includeManual) recordTypes = Array.from(new Set([...(recordTypes ?? ["smart_test"]), "manual"]));
       if (opts.manualOnly) recordTypes = ["manual"];
+      if (opts.includePerf) {
+        recordTypes = Array.from(new Set([...(recordTypes ?? ["smart_test"]), "perf_test"]));
+      }
       if (recordTypes && recordTypes.length > 0) body.recordTypes = recordTypes;
       if (opts.lifecycleStatuses) {
         body.scenarioLifecycleStatuses = String(opts.lifecycleStatuses)
@@ -1340,6 +1355,155 @@ export function buildCliProgram(): Command {
       if (opts.includeRemoved) body.includeRemoved = true;
       const merged = mergeBodies(body, opts.jsonInput);
       console.log(await runTool("get-api-operation-detail", merged, { postMcp }));
+    });
+
+  program
+    .command("list-perf-runs")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-perf-runs")!.description)
+    .addOption(jsonInputOption())
+    .option("--testchimp-id <id>")
+    .option("--kind <kind>", "JOURNEY | COMPOSITE")
+    .option("--branch-name <name>")
+    .option("--profile <name>")
+    .option("--dataset <name>")
+    .option("--llm-mode <mode>")
+    .option("--environment <name>")
+    .option("--limit <n>", "Maximum results", (v) => Number(v))
+    .option("--offset <n>", "Pagination offset", (v) => Number(v))
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.testchimpId) body.testchimpId = String(opts.testchimpId);
+      if (opts.kind) body.kind = String(opts.kind);
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.profile) body.profile = String(opts.profile);
+      if (opts.dataset) body.dataset = String(opts.dataset);
+      if (opts.llmMode) body.llmMode = String(opts.llmMode);
+      if (opts.environment) body.environment = String(opts.environment);
+      if (opts.limit != null) body.limit = opts.limit;
+      if (opts.offset != null) body.offset = opts.offset;
+      console.log(await runTool("list-perf-runs", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
+    .command("get-perf-run")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-perf-run")!.description)
+    .addOption(jsonInputOption())
+    .option("--run-id <id>")
+    .option("--include-raw", "Include the raw performance payload")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.runId) body.runId = String(opts.runId);
+      if (opts.includeRaw) body.includeRaw = true;
+      console.log(await runTool("get-perf-run", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
+    .command("list-perf-baselines")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-perf-baselines")!.description)
+    .addOption(jsonInputOption())
+    .option("--testchimp-id <id>")
+    .option("--limit <n>", "Maximum results", (v) => Number(v))
+    .option("--offset <n>", "Pagination offset", (v) => Number(v))
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.testchimpId) body.testchimpId = String(opts.testchimpId);
+      if (opts.limit != null) body.limit = opts.limit;
+      if (opts.offset != null) body.offset = opts.offset;
+      console.log(await runTool("list-perf-baselines", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  addAgentTraceabilityOptions(
+    program
+      .command("promote-perf-baseline")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "promote-perf-baseline")!.description)
+      .addOption(jsonInputOption())
+      .option("--run-id <id>")
+      .option("--env-class <name>"),
+  ).action(async (opts) => {
+    const body: Record<string, unknown> = {
+      ...collectAgentTraceabilityFlags(opts),
+    };
+    if (opts.runId) body.runId = String(opts.runId);
+    if (opts.envClass) body.envClass = String(opts.envClass);
+    console.log(await runTool("promote-perf-baseline", mergeBodies(body, opts.jsonInput), { postMcp }));
+  });
+
+  program
+    .command("compare-perf-to-baseline")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "compare-perf-to-baseline")!.description)
+    .addOption(jsonInputOption())
+    .option("--run-id <id>")
+    .option("--testchimp-id <id>")
+    .option("--profile <name>")
+    .option("--dataset <name>")
+    .option("--llm-mode <mode>")
+    .option("--environment <name>")
+    .option("--env-class <name>", "Baseline environment class (required)")
+    .option("--max-p95-regression-percent <n>", "Allowed p95 regression percent", (v) => Number(v))
+    .option("--max-fail-rate-increase <n>", "Allowed fail-rate increase", (v) => Number(v))
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.runId) body.runId = String(opts.runId);
+      if (opts.testchimpId) body.testchimpId = String(opts.testchimpId);
+      if (opts.profile) body.profile = String(opts.profile);
+      if (opts.dataset) body.dataset = String(opts.dataset);
+      if (opts.llmMode) body.llmMode = String(opts.llmMode);
+      if (opts.environment) body.environment = String(opts.environment);
+      if (opts.envClass) body.envClass = String(opts.envClass);
+      if (opts.maxP95RegressionPercent != null) {
+        body.maxP95RegressionPercent = opts.maxP95RegressionPercent;
+      }
+      if (opts.maxFailRateIncrease != null) body.maxFailRateIncrease = opts.maxFailRateIncrease;
+      const out = await runTool("compare-perf-to-baseline", mergeBodies(body, opts.jsonInput), { postMcp });
+      // Always print response JSON; gate CI on regressed after stdout flush.
+      console.log(out);
+      try {
+        if (isPerfComparisonRegressed(JSON.parse(out))) process.exitCode = 1;
+      } catch {
+        /* non-JSON responses still printed; leave exit 0 unless runTool threw */
+      }
+    });
+
+  program
+    .command("list-related-perf-tests")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-related-perf-tests")!.description)
+    .addOption(jsonInputOption())
+    .option("--scenario-titles <csv>", "Comma-separated scenario titles")
+    .option("--testchimp-ids <csv>", "Comma-separated TestChimp ids")
+    .option("--no-include-composites", "Exclude COMPOSITE tests")
+    .option("--limit <n>", "Maximum results (max 100)", (v) => Number(v))
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {
+        includeComposites: opts.includeComposites,
+      };
+      if (opts.scenarioTitles) {
+        body.scenarioTitles = String(opts.scenarioTitles).split(",").map((s) => s.trim()).filter(Boolean);
+      }
+      if (opts.testchimpIds) {
+        body.testchimpIds = String(opts.testchimpIds).split(",").map((s) => s.trim()).filter(Boolean);
+      }
+      if (opts.limit != null) body.limit = opts.limit;
+      console.log(await runTool("list-related-perf-tests", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
+    .command("list-api-operation-interactions")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-api-operation-interactions")!.description)
+    .addOption(jsonInputOption())
+    .option("--test-id <id>")
+    .option("--operation-id <id>")
+    .option("--interaction-type <type>", "REAL | MOCKED", "REAL")
+    .option("--limit <n>", "Maximum results (max 100)", (v) => Number(v))
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {
+        interactionType: opts.interactionType,
+      };
+      if (opts.testId) body.testId = String(opts.testId);
+      if (opts.operationId) body.operationId = String(opts.operationId);
+      if (opts.limit != null) body.limit = opts.limit;
+      console.log(
+        await runTool("list-api-operation-interactions", mergeBodies(body, opts.jsonInput), { postMcp }),
+      );
     });
 
   program.on("--help", () => {

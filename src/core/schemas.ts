@@ -9,7 +9,14 @@ export const scopeSchema = z
 
 const executionPlatformSchema = z.enum(["web", "ios", "android"]);
 
-const requirementCoverageRecordTypeSchema = z.enum(["smart_test", "manual", "SMART_TEST", "MANUAL"]);
+const requirementCoverageRecordTypeSchema = z.enum([
+  "smart_test",
+  "manual",
+  "perf_test",
+  "SMART_TEST",
+  "MANUAL",
+  "PERF_TEST",
+]);
 
 export const executionJobDimensionFilterSchema = z.object({
   dimension: z.string().min(1),
@@ -28,7 +35,8 @@ export const listCoverageInput = z.object({
    * Which coverage sources to include.
    *
    * Omit for legacy default: SMART_TEST only.
-   * When provided, send proto enum names ("SMART_TEST", "MANUAL") or CLI-friendly aliases ("smart_test", "manual").
+   * When provided, send proto enum names ("SMART_TEST", "MANUAL", "PERF_TEST")
+   * or CLI-friendly aliases ("smart_test", "manual", "perf_test").
    */
   recordTypes: z.array(requirementCoverageRecordTypeSchema).optional(),
   /** Allowlist of scenario lifecycle statuses (e.g. ["ready"] or ["draft","ready"]). Empty/omit = no status filter. */
@@ -955,4 +963,90 @@ export const getApiOperationDetailInput = z
         "Provide --id (TestChimp operation ULID), or --root-file-path/--service-key with --oas-operation-id, " +
         "or --root-file-path/--service-key with --http-method and --path-template",
     });
+  });
+
+/** Performance run kind persisted by the Phase 2 performance API. */
+export const perfRunKindSchema = z.enum(["JOURNEY", "COMPOSITE"]);
+
+export const listPerfRunsInput = z.object({
+  testchimpId: z.string().min(1).optional(),
+  kind: perfRunKindSchema.optional(),
+  branchName: z.string().min(1).optional(),
+  profile: z.string().min(1).optional(),
+  dataset: z.string().min(1).optional(),
+  llmMode: z.string().min(1).optional(),
+  environment: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+});
+
+export const getPerfRunInput = z.object({
+  runId: z.string().min(1),
+  includeRaw: z.boolean().optional(),
+});
+
+export const listPerfBaselinesInput = z.object({
+  testchimpId: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+});
+
+export const promotePerfBaselineInput = z
+  .object({
+    runId: z.string().min(1),
+    envClass: z.string().min(1),
+  })
+  .merge(agentTraceabilityFieldsSchema);
+
+export const comparePerfToBaselineInput = z
+  .object({
+    runId: z.string().min(1).optional(),
+    testchimpId: z.string().min(1).optional(),
+    profile: z.string().min(1).optional(),
+    dataset: z.string().min(1).optional(),
+    llmMode: z.string().min(1).optional(),
+    environment: z.string().min(1).optional(),
+    envClass: z.string().min(1),
+    maxP95RegressionPercent: z.coerce.number().nonnegative().optional(),
+    maxFailRateIncrease: z.coerce.number().nonnegative().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (!(v.runId ?? "").trim() && !(v.testchimpId ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide runId or testchimpId",
+      });
+    }
+  });
+
+export const listRelatedPerfTestsInput = z
+  .object({
+    scenarioTitles: z.array(z.string().min(1)).min(1).optional(),
+    testchimpIds: z.array(z.string().min(1)).min(1).optional(),
+    includeComposites: z.boolean().default(true),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.scenarioTitles?.length && !v.testchimpIds?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide scenarioTitles and/or testchimpIds",
+      });
+    }
+  });
+
+export const listApiOperationInteractionsInput = z
+  .object({
+    testId: z.string().min(1).optional(),
+    operationId: z.string().min(1).optional(),
+    interactionType: z.enum(["REAL", "MOCKED"]).default("REAL"),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (!(v.testId ?? "").trim() && !(v.operationId ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide testId and/or operationId",
+      });
+    }
   });

@@ -61,6 +61,7 @@ function listCoverageBody(args: z.infer<typeof S.listCoverageInput>): Record<str
       const raw = String(t).trim();
       if (raw === "manual") return "MANUAL";
       if (raw === "smart_test") return "SMART_TEST";
+      if (raw === "perf_test") return "PERF_TEST";
       return raw;
     });
     body.recordTypes = normalized;
@@ -1246,6 +1247,121 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.includeManual != null) body.includeManual = a.includeManual;
       if (a.includeRemoved != null) body.includeRemoved = a.includeRemoved;
       return postMcp("/api/mcp/get_api_operation_detail", body);
+    },
+  },
+  {
+    kebab: "list-perf-runs",
+    description:
+      "List performance runs, optionally filtered by TestChimp id, JOURNEY/COMPOSITE kind, branch, profile, dataset, LLM mode, or environment.",
+    inputSchema: S.listPerfRunsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listPerfRunsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.testchimpId) body.testchimpId = a.testchimpId;
+      if (a.kind) body.kind = a.kind;
+      if (a.branchName) body.branchName = a.branchName;
+      if (a.profile) body.profile = a.profile;
+      if (a.dataset) body.dataset = a.dataset;
+      if (a.llmMode) body.llmMode = a.llmMode;
+      if (a.environment) body.environment = a.environment;
+      if (a.limit != null) body.limit = a.limit;
+      if (a.offset != null) body.offset = a.offset;
+      return postMcp("/api/mcp/list_perf_runs", body);
+    },
+  },
+  {
+    kebab: "get-perf-run",
+    description: "Fetch one performance run by runId; set includeRaw to include its raw payload.",
+    inputSchema: S.getPerfRunInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getPerfRunInput>;
+      return postMcp("/api/mcp/get_perf_run", {
+        runId: a.runId,
+        ...(a.includeRaw != null ? { includeRaw: a.includeRaw } : {}),
+      });
+    },
+  },
+  {
+    kebab: "list-perf-baselines",
+    description: "List promoted performance baselines, optionally filtered by TestChimp id.",
+    inputSchema: S.listPerfBaselinesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listPerfBaselinesInput>;
+      const body: Record<string, unknown> = {};
+      if (a.testchimpId) body.testchimpId = a.testchimpId;
+      if (a.limit != null) body.limit = a.limit;
+      if (a.offset != null) body.offset = a.offset;
+      return postMcp("/api/mcp/list_perf_baselines", body);
+    },
+  },
+  {
+    kebab: "promote-perf-baseline",
+    description:
+      "Promote a performance run as the baseline for an environment class. Optional agent traceability records the mutation.",
+    inputSchema: S.promotePerfBaselineInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.promotePerfBaselineInput>;
+      const body: Record<string, unknown> = {
+        runId: a.runId,
+        envClass: a.envClass,
+      };
+      const trace = buildAgentTraceabilityPayload(a);
+      if (trace) body.agentTraceability = trace;
+      return postMcp("/api/mcp/promote_perf_baseline", body);
+    },
+  },
+  {
+    kebab: "compare-perf-to-baseline",
+    description:
+      "Compare a run (runId) or filtered target (testchimpId plus optional dimensions) to its promoted baseline. " +
+      "envClass is required. Optional thresholds override max p95 regression percent and maximum fail-rate increase.",
+    inputSchema: S.comparePerfToBaselineInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.comparePerfToBaselineInput>;
+      const body: Record<string, unknown> = {};
+      if (a.runId) body.runId = a.runId;
+      if (a.testchimpId) body.testchimpId = a.testchimpId;
+      if (a.profile) body.profile = a.profile;
+      if (a.dataset) body.dataset = a.dataset;
+      if (a.llmMode) body.llmMode = a.llmMode;
+      if (a.environment) body.environment = a.environment;
+      body.envClass = a.envClass;
+      if (a.maxP95RegressionPercent != null) body.maxP95RegressionPercent = a.maxP95RegressionPercent;
+      if (a.maxFailRateIncrease != null) body.maxFailRateIncrease = a.maxFailRateIncrease;
+      return postMcp("/api/mcp/compare_perf_to_baseline", body);
+    },
+  },
+  {
+    kebab: "list-related-perf-tests",
+    description:
+      "Find JOURNEY and, by default, COMPOSITE performance tests related to scenario titles and/or TestChimp ids.",
+    inputSchema: S.listRelatedPerfTestsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listRelatedPerfTestsInput>;
+      const body: Record<string, unknown> = {
+        includeComposites: a.includeComposites,
+      };
+      if (a.scenarioTitles?.length) body.scenarioTitles = a.scenarioTitles;
+      if (a.testchimpIds?.length) body.testchimpIds = a.testchimpIds;
+      if (a.limit != null) body.limit = a.limit;
+      return postMcp("/api/mcp/list_related_perf_tests", body);
+    },
+  },
+  {
+    kebab: "list-api-operation-interactions",
+    description:
+      "List recorded API operation interactions. Requires testId and/or operationId. " +
+      "Defaults to REAL interactions; limit is capped at 100.",
+    inputSchema: S.listApiOperationInteractionsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listApiOperationInteractionsInput>;
+      const body: Record<string, unknown> = {
+        interactionType: a.interactionType,
+      };
+      if (a.testId) body.testId = a.testId;
+      if (a.operationId) body.operationId = a.operationId;
+      if (a.limit != null) body.limit = a.limit;
+      return postMcp("/api/mcp/list_api_operation_interactions", body);
     },
   },
 ];

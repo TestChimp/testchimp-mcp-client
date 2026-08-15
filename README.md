@@ -42,10 +42,17 @@ testchimp get-requirement-coverage --branch-name main --help
 testchimp create-user-story --platform-file-path plans/stories/foo.md --title "Checkout"
 testchimp list-screen-states --json-input '{}'
 testchimp upsert-screen-states --json-input '{"screenStates":[{"screen":"Checkout","states":["empty","filled"]}]}'
+testchimp list-perf-runs --testchimp-id TC-123 --kind JOURNEY --limit 20
+testchimp get-perf-run --run-id 01ABC --include-raw
+testchimp promote-perf-baseline --run-id 01ABC --env-class CI
+testchimp compare-perf-to-baseline --run-id 01ABC --max-p95-regression-percent 10
+testchimp list-related-perf-tests --scenario-titles "Checkout,Refund"
+testchimp list-api-operation-interactions --operation-id 01XYZ --interaction-type REAL --limit 100
 ```
 
 - **stdout:** API response JSON.
 - **stderr:** progress for `provision-ephemeral-environment-and-wait` (“still waiting…” polls).
+- **performance gate:** `compare-perf-to-baseline` still prints its JSON response but exits nonzero when `regressed` is `true` (top-level or under `comparison`).
 - **Flags:** default for each subcommand; **`--json-input '<json>'`** or **`--json-input @file.json`** merges over flags (JSON wins on conflicts). Use JSON for nested bodies (e.g. TrueCoverage scopes).
 
 ## Migration from `testchimp-mcp-client`
