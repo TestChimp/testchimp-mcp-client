@@ -919,6 +919,11 @@ export const upsertPlansSupportFileInput = z.object({
   content: z.string().min(1),
 });
 
+export const getPlansSupportFileInput = z.object({
+  /** Path relative to mapped plans root (e.g. knowledge/workflow_plans/run-qa/<ulid>.plan.md). */
+  filePath: z.string().min(1),
+});
+
 export const listWorkflowCatalogInput = z.object({});
 
 /** API operation coverage (OpenAPI ops + denorm coverage) — CLI ≥ 0.1.28 */

@@ -1305,6 +1305,24 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-plans-support-file")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-plans-support-file")!.description)
+    .addOption(jsonInputOption())
+    .option(
+      "--file-path <path>",
+      "path relative to mapped plans root (e.g. knowledge/workflow_plans/run-qa/<ulid>.plan.md)",
+    )
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.filePath) body.filePath = String(opts.filePath);
+      const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+      if (!merged.filePath) {
+        throw new Error("Provide --file-path (or full body via --json-input)");
+      }
+      console.log(await runTool("get-plans-support-file", merged, { postMcp }));
+    });
+
+  program
     .command("list-api-operation-services")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-api-operation-services")!.description)
     .addOption(jsonInputOption())

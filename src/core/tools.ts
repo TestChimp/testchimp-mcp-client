@@ -1199,6 +1199,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-plans-support-file",
+    description:
+      "Fetch a file under the mapped plans root from the platform by relative path (no git required). " +
+      "Primary use: load a workflow execution plan named in a Continue Locally / implement prompt before falling back to the repo copy. " +
+      "filePath is relative to the plans mapped root (leading plans/ is stripped). Under workflow_plans/, filenames are coerced to *.plan.md. " +
+      "Response: found (false if missing), supportFileId, filePath (canonical), filetype, content.",
+    inputSchema: S.getPlansSupportFileInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getPlansSupportFileInput>;
+      return postMcp("/api/mcp/get_plans_support_file", {
+        filePath: a.filePath,
+      });
+    },
+  },
+  {
     kebab: "list-workflow-catalog",
     description: "List supported TestChimp workflows with Active / Disabled / Missing Config status for the project.",
     inputSchema: S.listWorkflowCatalogInput,
