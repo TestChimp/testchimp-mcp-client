@@ -527,6 +527,20 @@ export const markSemanticTestsDistinctInput = z.object({
   distinctTest: testLocatorSchema,
 });
 
+export const markTestsForReviewInput = z
+  .object({
+    tests: z
+      .array(
+        z.object({
+          test: testLocatorSchema,
+          confidence: z.number().int().min(0).max(100),
+        }),
+      )
+      .min(1),
+    gitCommitSha: z.string().optional(),
+  })
+  .merge(agentTraceabilityFieldsSchema);
+
 /** LinkedEntityType names for semantic nearby (embedding-capable). */
 export const semanticNearbyEntityTypeSchema = z.enum([
   "STORY",

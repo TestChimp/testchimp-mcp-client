@@ -1095,6 +1095,16 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("mark-tests-for-review")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "mark-tests-for-review")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("mark-tests-for-review", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("list-semantic-nearby")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-semantic-nearby")!.description)
     .addOption(jsonInputOption())

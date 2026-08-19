@@ -908,6 +908,37 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "mark-tests-for-review",
+    description:
+      "Report existing SmartTests that an agent patched so humans can re-verify. " +
+      "Always send per-test confidence 0–100 (higher = less need for human review). " +
+      "Do not read project config. Call only from fix-test-execution after test-incorrect patches " +
+      "(never from run-qa / create-tests; never for product-broken cases). " +
+      "Optional agentTraceability / workflowExecutionId / gitCommitSha / branchName.",
+    inputSchema: S.markTestsForReviewInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.markTestsForReviewInput>;
+      const nested =
+        a.agentTraceability && typeof a.agentTraceability === "object"
+          ? (a.agentTraceability as Record<string, unknown>)
+          : undefined;
+      const nestedStr = (key: string): string | undefined => {
+        const v = nested?.[key];
+        return typeof v === "string" && v.trim() ? v : undefined;
+      };
+      const body: Record<string, unknown> = { tests: a.tests };
+      const branchName = a.branchName || nestedStr("branchName");
+      if (branchName) body.branchName = branchName;
+      const gitCommitSha = a.gitCommitSha ?? a.gitSha ?? nestedStr("gitSha");
+      if (gitCommitSha) body.gitCommitSha = gitCommitSha;
+      const workflowExecutionId = a.workflowExecutionId || nestedStr("workflowExecutionId");
+      if (workflowExecutionId) body.workflowExecutionId = workflowExecutionId;
+      const trace = buildAgentTraceabilityPayload(a);
+      if (trace) body.agentTraceability = trace;
+      return postMcp("/api/mcp/mark_tests_for_review", body);
+    },
+  },
+  {
     kebab: "list-semantic-nearby",
     description:
       "List semantically nearby entities across types (Story/Scenario/Test/Issue/Event). " +
