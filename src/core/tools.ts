@@ -1378,6 +1378,46 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-project-init-status",
+    description:
+      "Return project-init progress for the current project (platform comms, folder mapping, test env, CI, optional imports).",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_project_init_status", {}),
+  },
+  {
+    kebab: "update-project-init-status",
+    description:
+      "Merge project-init progress fields for the current project. Server recomputes overall_complete when required items are DONE.",
+    inputSchema: S.updateProjectInitStatusInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.updateProjectInitStatusInput>;
+      return postMcp("/api/mcp/update_project_init_status", { status: a.status });
+    },
+  },
+  {
+    kebab: "get-git-folder-mapping",
+    description: "Return git provider, repository, and mapped plans/tests folder paths for the project.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_git_folder_mapping", {}),
+  },
+  {
+    kebab: "update-git-folder-mapping",
+    description:
+      "Update mapped plans/tests folder paths (and optional repository) on the platform. Agent scaffolds folders in a PR; this records platform mapping.",
+    inputSchema: S.updateGitFolderMappingInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.updateGitFolderMappingInput>;
+      const body: Record<string, unknown> = {};
+      const tests = a.testsFolderPath ?? a.tests_folder_path;
+      const plans = a.plansFolderPath ?? a.plans_folder_path;
+      const repo = a.repositoryFullName ?? a.repository_full_name;
+      if (tests) body.tests_folder_path = tests;
+      if (plans) body.plans_folder_path = plans;
+      if (repo) body.repository_full_name = repo;
+      return postMcp("/api/mcp/update_git_folder_mapping", body);
+    },
+  },
+  {
     kebab: "list-related-perf-tests",
     description:
       "Find JOURNEY and, by default, COMPOSITE performance tests related to scenario titles and/or TestChimp ids.",

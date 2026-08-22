@@ -627,6 +627,60 @@ export function buildCliProgram(): Command {
   });
 
   program
+    .command("get-project-init-status")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-project-init-status")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("get-project-init-status", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("update-project-init-status")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-project-init-status")!.description)
+    .addOption(jsonInputOption())
+    .option("--status-json <json>", "ProjectInitStatus JSON object")
+    .action(async (opts) => {
+      let status: unknown;
+      if (opts.statusJson) {
+        status = JSON.parse(String(opts.statusJson));
+      }
+      const body: Record<string, unknown> = {};
+      if (status != null) body.status = status;
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("update-project-init-status", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("get-git-folder-mapping")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-git-folder-mapping")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("get-git-folder-mapping", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("update-git-folder-mapping")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-git-folder-mapping")!.description)
+    .addOption(jsonInputOption())
+    .option("--tests-folder-path <path>")
+    .option("--plans-folder-path <path>")
+    .option("--repository-full-name <name>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.testsFolderPath) body.tests_folder_path = opts.testsFolderPath;
+      if (opts.plansFolderPath) body.plans_folder_path = opts.plansFolderPath;
+      if (opts.repositoryFullName) body.repository_full_name = opts.repositoryFullName;
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("update-git-folder-mapping", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("get-eaas-config")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-eaas-config")!.description)
     .addOption(jsonInputOption())
@@ -1532,6 +1586,26 @@ export function buildCliProgram(): Command {
       console.log(
         await runTool("list-api-operation-interactions", mergeBodies(body, opts.jsonInput), { postMcp }),
       );
+    });
+
+  const chimphands = program.command("chimphands").description("ChimpHands GitHub Actions agent bridge");
+  chimphands
+    .command("run")
+    .description("Bootstrap session, configure OpenCode, and run the interactive bridge")
+    .option("--session-id <id>", "ChimpHands session id (or SESSION_ID env)")
+    .option("--prompt <text>", "Initial prompt (or PROMPT env)")
+    .action(async (opts) => {
+      const { runChimphands } = await import("../chimphands/run.js");
+      try {
+        await runChimphands({
+          sessionId: String(opts.sessionId || process.env.SESSION_ID || "").trim(),
+          prompt: opts.prompt != null ? String(opts.prompt) : undefined,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[testchimp chimphands] ${msg}`);
+        process.exitCode = 1;
+      }
     });
 
   program.on("--help", () => {

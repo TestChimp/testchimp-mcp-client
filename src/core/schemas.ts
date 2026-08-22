@@ -281,6 +281,51 @@ export const createIssueInput = z.object({
 
 export const emptyInput = z.object({});
 
+const projectInitItemStatusSchema = z.enum([
+  "PROJECT_INIT_ITEM_STATUS_INCOMPLETE",
+  "PROJECT_INIT_ITEM_STATUS_DONE",
+  "PROJECT_INIT_ITEM_STATUS_SKIPPED",
+  "PROJECT_INIT_ITEM_STATUS_NOT_APPLICABLE",
+  "INCOMPLETE",
+  "DONE",
+  "SKIPPED",
+  "NOT_APPLICABLE",
+]);
+
+export const projectInitStatusSchema = z
+  .object({
+    platformComms: projectInitItemStatusSchema.optional(),
+    folderMapping: projectInitItemStatusSchema.optional(),
+    connectToTestEnv: projectInitItemStatusSchema.optional(),
+    ciWiring: projectInitItemStatusSchema.optional(),
+    importPlans: projectInitItemStatusSchema.optional(),
+    importTests: projectInitItemStatusSchema.optional(),
+    smokeValidation: projectInitItemStatusSchema.optional(),
+    overallComplete: projectInitItemStatusSchema.optional(),
+    platform_comms: projectInitItemStatusSchema.optional(),
+    folder_mapping: projectInitItemStatusSchema.optional(),
+    connect_to_test_env: projectInitItemStatusSchema.optional(),
+    ci_wiring: projectInitItemStatusSchema.optional(),
+    import_plans: projectInitItemStatusSchema.optional(),
+    import_tests: projectInitItemStatusSchema.optional(),
+    smoke_validation: projectInitItemStatusSchema.optional(),
+    overall_complete: projectInitItemStatusSchema.optional(),
+  })
+  .passthrough();
+
+export const updateProjectInitStatusInput = z.object({
+  status: projectInitStatusSchema,
+});
+
+export const updateGitFolderMappingInput = z.object({
+  testsFolderPath: z.string().min(1).optional(),
+  plansFolderPath: z.string().min(1).optional(),
+  repositoryFullName: z.string().optional(),
+  tests_folder_path: z.string().min(1).optional(),
+  plans_folder_path: z.string().min(1).optional(),
+  repository_full_name: z.string().optional(),
+});
+
 export const getBranchSpecificEndpointConfigInput = z.object({
   branchName: z.string().optional(),
 });
