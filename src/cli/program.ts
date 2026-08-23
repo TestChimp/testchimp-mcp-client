@@ -1604,7 +1604,7 @@ export function buildCliProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`[testchimp chimphands] ${msg}`);
-        process.exitCode = 1;
+        process.exit(1);
       }
     });
 
