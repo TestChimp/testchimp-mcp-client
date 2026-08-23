@@ -1590,6 +1590,28 @@ export function buildCliProgram(): Command {
 
   const chimphands = program.command("chimphands").description("ChimpHands GitHub Actions agent bridge");
   chimphands
+    .command("report-branch")
+    .description("Report the conversation working branch (and optional PR URL) to TestChimp")
+    .requiredOption("--branch <name>", "Feature branch name (testchimp-* or chimphands-*)")
+    .option("--pr-url <url>", "Open pull request URL")
+    .option("--session-id <id>", "ChimpHands session id (or SESSION_ID env)")
+    .action(async (opts) => {
+      const { reportWorkingBranch } = await import("../chimphands/run.js");
+      try {
+        await reportWorkingBranch({
+          sessionId: String(opts.sessionId || process.env.SESSION_ID || "").trim(),
+          branch: String(opts.branch || "").trim(),
+          pullRequestUrl: opts.prUrl != null ? String(opts.prUrl).trim() : undefined,
+        });
+        console.log(JSON.stringify({ ok: true }));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[testchimp chimphands report-branch] ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  chimphands
     .command("run")
     .description("Bootstrap session, configure OpenCode, and run the interactive bridge")
     .option("--session-id <id>", "ChimpHands session id (or SESSION_ID env)")

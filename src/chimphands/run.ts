@@ -4,7 +4,7 @@
  * Does not write mcp.json — TestChimp MCP is wired via opencode.json for OpenCode.
  */
 
-import { spawn, execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
@@ -13,6 +13,7 @@ import { getBackendUrl, requireApiKey } from "../core/client.js";
 
 const ROLE_ASSISTANT = "CHIMPHANDS_MESSAGE_ROLE_ASSISTANT";
 const ROLE_TOOL = "CHIMPHANDS_MESSAGE_ROLE_TOOL";
+const ROLE_REASONING = "CHIMPHANDS_MESSAGE_ROLE_REASONING";
 const ROLE_STATUS = "CHIMPHANDS_MESSAGE_ROLE_STATUS";
 
 const STATUS_RUNNING = "CHIMPHANDS_SESSION_STATUS_RUNNING";
@@ -20,12 +21,42 @@ const STATUS_WAITING_USER = "CHIMPHANDS_SESSION_STATUS_WAITING_USER";
 const STATUS_IDLE = "CHIMPHANDS_SESSION_STATUS_IDLE";
 const STATUS_FAILED = "CHIMPHANDS_SESSION_STATUS_FAILED";
 
-function ensureTestchimpPrompt(content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed) return trimmed;
-  const rest = trimmed.replace(/^\/testchimp\s*/i, "").trim();
-  return rest ? `/testchimp ${rest}` : "/testchimp";
+const OPENCODE_AGENT_ID = "chimphands";
+const STREAM_POST_MIN_INTERVAL_MS = 60;
+
+const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's cloud coding agent running in GitHub Actions.
+
+## Repo changes (mandatory)
+- NEVER commit or push directly to the default branch (main/master).
+- This conversation uses ONE working branch and ONE pull request. Reuse them for all follow-up work in this chat.
+- If bootstrap lists a working branch, checkout that branch and push additional commits there — update the same PR.
+- Only create a NEW branch/PR when (a) no working branch exists yet for this conversation, or (b) the prior PR was merged/closed (verify with \`gh pr view\`).
+- Branch names MUST start with \`testchimp-\` or \`chimphands-\`.
+- After creating a branch or opening a PR, IMMEDIATELY run:
+  \`testchimp chimphands report-branch --branch <name> [--pr-url <url>]\`
+- Tell the user which branch you are on and include the PR URL when available.
+
+## TestChimp workflows (/testchimp …)
+- Load and follow the \`testchimp\` skill under \`.agents/skills/testchimp/SKILL.md\`.
+- For any /testchimp command: use TestChimp MCP tools (preferred) or \`testchimp\` CLI — never invent API results.
+- Follow plan → explicit user approval → execute. Do not skip MCP calls or claim done without tool evidence.
+- Export \`TESTCHIMP_EXECUTION_SOURCE=CLOUD_AGENT\` before Playwright/Mobilewright runs.
+
+## Honesty
+- If MCP/tools fail, report the error. Never narrate success without tool output or a PR link when repo changes were needed.`;
+
+function normalizeUserMessage(content: string): string {
+  return content.trim();
 }
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type InboundUserMessage = {
+  id?: string;
+  content?: string;
+};
 
 type BootstrapResponse = {
   session_id?: string;
@@ -36,12 +67,49 @@ type BootstrapResponse = {
   conversation_summary?: string;
   idle_timeout_seconds?: number;
   chimphands_service_account_user_id?: string;
+  opencode_session_id?: string;
+  working_branch?: string;
+  pull_request_url?: string;
+  working_branch_url?: string;
   pending_user_messages?: Array<{ content?: string }>;
 };
+
+export type ReportWorkingBranchOptions = {
+  sessionId: string;
+  branch: string;
+  pullRequestUrl?: string;
+};
+
+/** Agent/CLI hook: persist the conversation working branch (+ optional PR) for UI + later turns. */
+export async function reportWorkingBranch(opts: ReportWorkingBranchOptions): Promise<void> {
+  const apiKey = requireApiKey();
+  const backend = getBackendUrl();
+  const branch = opts.branch.trim();
+  if (!branch) {
+    throw new Error("branch is required");
+  }
+  const body: Record<string, unknown> = {
+    sessionId: opts.sessionId.trim(),
+    workingBranch: branch,
+  };
+  const pr = opts.pullRequestUrl?.trim();
+  if (pr) body.pullRequestUrl = pr;
+  await postJson(backend, apiKey, "/api/chimphands/post_agent_event", body);
+}
 
 type RunOptions = {
   sessionId: string;
   prompt?: string;
+};
+
+type PostEventOptions = {
+  status?: string;
+  messageId?: string;
+  opencodeSessionId?: string;
+  workingBranch?: string;
+  pullRequestUrl?: string;
+  /** When true, coalesce rapid assistant/reasoning chunks (still persisted in order). */
+  throttle?: boolean;
 };
 
 function apiHeaders(apiKey: string): Record<string, string> {
@@ -64,11 +132,70 @@ async function postJson(backend: string, apiKey: string, path: string, body: unk
   return text;
 }
 
-function postJsonFireAndForget(backend: string, apiKey: string, path: string, body: unknown): void {
-  void postJson(backend, apiKey, path, body).catch((err: unknown) => {
-    const detail = err instanceof Error ? err.message : String(err);
-    console.error(`ChimpHands API telemetry failed ${path}: ${detail}`);
-  });
+/** Serializes post_agent_event calls so streaming chunks commit and fan out in order. */
+class AgentEventPoster {
+  private chain: Promise<void> = Promise.resolve();
+  private lastStreamPostAt = 0;
+
+  constructor(
+    private readonly backend: string,
+    private readonly apiKey: string,
+    private readonly sessionId: string,
+  ) {}
+
+  enqueue(
+    role: string,
+    content: string,
+    opts?: PostEventOptions,
+  ): Promise<void> {
+    const body: Record<string, unknown> = {
+      sessionId: this.sessionId,
+      role,
+      content: String(content || "").slice(0, 20000),
+    };
+    if (opts?.messageId) body.messageId = opts.messageId;
+    if (opts?.status != null) body.status = opts.status;
+    if (opts?.opencodeSessionId) body.opencodeSessionId = opts.opencodeSessionId;
+    if (opts?.workingBranch) body.workingBranch = opts.workingBranch;
+    if (opts?.pullRequestUrl) body.pullRequestUrl = opts.pullRequestUrl;
+
+    this.chain = this.chain.then(async () => {
+      if (opts?.throttle) {
+        const now = Date.now();
+        const wait = STREAM_POST_MIN_INTERVAL_MS - (now - this.lastStreamPostAt);
+        if (wait > 0) await sleep(wait);
+        this.lastStreamPostAt = Date.now();
+      }
+      await postJson(this.backend, this.apiKey, "/api/chimphands/post_agent_event", body);
+    });
+    return this.chain;
+  }
+
+  fireAndForget(role: string, content: string, opts?: PostEventOptions): void {
+    void this.enqueue(role, content, opts).catch((err: unknown) => {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(`ChimpHands API telemetry failed: ${detail}`);
+    });
+  }
+
+  flush(): Promise<void> {
+    return this.chain;
+  }
+
+  reportWorkingBranch(branch: string, pullRequestUrl?: string): void {
+    this.chain = this.chain.then(async () => {
+      const body: Record<string, unknown> = {
+        sessionId: this.sessionId,
+        workingBranch: branch,
+      };
+      if (pullRequestUrl?.trim()) body.pullRequestUrl = pullRequestUrl.trim();
+      await postJson(this.backend, this.apiKey, "/api/chimphands/post_agent_event", body);
+    });
+    void this.chain.catch((err: unknown) => {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(`ChimpHands report-branch failed: ${detail}`);
+    });
+  }
 }
 
 const TESTCHIMP_PROVIDER_ID = "testchimp";
@@ -92,9 +219,15 @@ function extractOpencodeFatalError(raw: string): string | null {
       name?: string;
       message?: string;
       data?: { message?: string; ref?: string };
+      error?: { name?: string; message?: string; data?: { message?: string } };
     };
     if (ev.type === "error" || ev.name === "UnknownError") {
-      const msg = ev.data?.message || ev.message || line;
+      const msg =
+        ev.error?.data?.message ||
+        ev.error?.message ||
+        ev.data?.message ||
+        ev.message ||
+        line;
       const ref = ev.data?.ref ? ` (ref ${ev.data.ref})` : "";
       return `${msg}${ref}`;
     }
@@ -112,6 +245,56 @@ function extractOpencodeFatalError(raw: string): string | null {
     return line.trim();
   }
   return null;
+}
+
+type OpencodePart = {
+  id?: string;
+  messageID?: string;
+  type?: string;
+  text?: string;
+  tool?: string;
+  state?: {
+    status?: string;
+    title?: string;
+    output?: string;
+    input?: Record<string, unknown>;
+  };
+};
+
+type OpencodeEvent = {
+  type?: string;
+  sessionID?: string;
+  part?: OpencodePart;
+  error?: { name?: string; message?: string; data?: { message?: string } };
+};
+
+function parseOpencodeEvent(line: string): OpencodeEvent | null {
+  try {
+    return JSON.parse(line) as OpencodeEvent;
+  } catch {
+    return null;
+  }
+}
+
+function formatToolUseContent(part: OpencodePart): string {
+  const title = part.state?.title || part.tool || "tool";
+  const status = part.state?.status?.trim();
+  const input = part.state?.input;
+  const inputText =
+    input && Object.keys(input).length
+      ? `\nInput: ${JSON.stringify(input).slice(0, 4000)}`
+      : "";
+  const output = part.state?.output?.trim();
+  const statusLine = status ? `[${title}] (${status})` : `[${title}]`;
+  if (output) return `${statusLine}\n${output}`;
+  if (inputText) return `${statusLine}${inputText}`;
+  return statusLine;
+}
+
+function opencodeMessageId(prefix: string, part?: OpencodePart): string | undefined {
+  const raw = part?.id || part?.messageID;
+  if (!raw) return undefined;
+  return `${prefix}${raw}`;
 }
 
 function summarizeOpencodeFailure(stderr: string, stdout: string, exitCode: number | null): string {
@@ -133,6 +316,58 @@ function summarizeOpencodeFailure(stderr: string, stdout: string, exitCode: numb
   return exitCode ? `opencode exited with code ${exitCode}` : "opencode failed";
 }
 
+function isMissingOpencodeSessionError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    (m.includes("session") && m.includes("not found")) ||
+    m.includes("unknown session") ||
+    m.includes("invalid session")
+  );
+}
+
+function wrapPromptWithContext(
+  conversationSummary: string,
+  userPrompt: string,
+  isNewOpencodeSession: boolean,
+  workingBranch?: string,
+  pullRequestUrl?: string,
+): string {
+  const parts: string[] = [];
+  if (workingBranch?.trim()) {
+    parts.push(
+      "## Conversation working branch (reuse for this thread)",
+      `Branch: \`${workingBranch.trim()}\``,
+      pullRequestUrl?.trim() ? `PR: ${pullRequestUrl.trim()}` : "",
+      "Checkout this branch, commit and push here. Do NOT open a new PR unless the one above was merged/closed.",
+      "",
+    );
+  }
+  const task = normalizeUserMessage(userPrompt);
+  if (isNewOpencodeSession && conversationSummary.trim()) {
+    parts.push(`Conversation so far:\n${conversationSummary.trim()}`, "", `Current task:\n${task}`);
+    return parts.filter(Boolean).join("\n");
+  }
+  if (parts.length) {
+    parts.push(`Current task:\n${task}`);
+    return parts.filter(Boolean).join("\n");
+  }
+  return task;
+}
+
+function detectWorkingBranchFromToolOutput(output: string): { branch?: string; pullRequestUrl?: string } {
+  const text = output.trim();
+  if (!text) return {};
+  const prMatch = text.match(/https:\/\/github\.com\/[^\s)\]]+\/pull\/\d+/);
+  const checkoutMatch = text.match(/checkout\s+-b\s+((?:testchimp-|chimphands-)[^\s'"]+)/i);
+  const pushMatch = text.match(/push\s+(?:--set-upstream\s+|-u\s+)?origin\s+((?:testchimp-|chimphands-)[^\s'"]+)/i);
+  const branchMatch = text.match(/branch['":\s]+((?:testchimp-|chimphands-)[^\s'"]+)/i);
+  const branch = (checkoutMatch?.[1] || pushMatch?.[1] || branchMatch?.[1])?.replace(/[`'"]/g, "");
+  return {
+    branch,
+    pullRequestUrl: prMatch?.[0],
+  };
+}
+
 function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapResponse): string {
   const llmBase = (boot.llm_base_url || `${backend}/v1`).replace(/\/$/, "");
   const llmKey = apiKey || boot.llm_api_key || "";
@@ -141,6 +376,7 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
   const mcpEnv: Record<string, string> = {
     TESTCHIMP_API_KEY: apiKey,
     TESTCHIMP_BACKEND_URL: backend,
+    TESTCHIMP_EXECUTION_SOURCE: "CLOUD_AGENT",
   };
   const serviceUserId = boot.chimphands_service_account_user_id?.trim();
   if (serviceUserId) {
@@ -152,6 +388,7 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
       {
         $schema: "https://opencode.ai/config.json",
         model,
+        default_agent: OPENCODE_AGENT_ID,
         autoupdate: false,
         provider: {
           [TESTCHIMP_PROVIDER_ID]: {
@@ -167,6 +404,23 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
               },
             },
           },
+        },
+        agent: {
+          [OPENCODE_AGENT_ID]: {
+            mode: "primary",
+            description: "TestChimp ChimpHands cloud agent (PR-only repo writes)",
+            prompt: CHIMPHANDS_AGENT_PROMPT,
+            steps: 80,
+            permission: {
+              skill: "allow",
+              bash: "allow",
+              edit: "allow",
+              read: "allow",
+            },
+          },
+        },
+        skills: {
+          paths: [".agents/skills/testchimp"],
         },
         mcp: {
           testchimp: {
@@ -184,165 +438,252 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
   return model;
 }
 
+type RunOpencodeCallbacks = {
+  onSessionId?: (sessionId: string) => void;
+  onWorkingBranch?: (branch: string, pullRequestUrl?: string) => void;
+  postEvent: (role: string, content: string, opts?: PostEventOptions) => void;
+};
+
+function buildOpencodeArgs(prompt: string, model: string, opencodeSessionId?: string): string[] {
+  const args = ["run", prompt, "--model", model, "--format", "json", "--agent", OPENCODE_AGENT_ID];
+  if (opencodeSessionId?.trim()) {
+    args.push("--session", opencodeSessionId.trim());
+  }
+  return args;
+}
+
 function runOpencode(
   prompt: string,
   model: string,
   childEnv: NodeJS.ProcessEnv,
-  postEvent: (role: string, content: string, status?: string) => void,
-): Promise<{ code: number; err: string }> {
-  const help = (() => {
-    try {
-      return execFileSync("opencode", ["run", "--help"], { encoding: "utf8", env: childEnv });
-    } catch {
-      return "";
-    }
-  })();
-  const useJson = help.includes("--format");
-  const baseArgs = ["run", prompt, "--model", model];
-  if (useJson) {
-    const child = spawn("opencode", [...baseArgs, "--format", "json"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: childEnv,
-    });
-    let err = "";
-    child.stderr.on("data", (d: Buffer) => {
-      err += d.toString();
-    });
-    return new Promise((resolve) => {
-      let buf = "";
-      let fatalError: string | null = null;
-      child.stdout.on("data", (chunk: Buffer) => {
-        buf += chunk.toString();
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const fatal = extractOpencodeFatalError(line);
-          if (fatal) {
-            fatalError = fatal;
-            continue;
+  opencodeSessionId: string | undefined,
+  callbacks: RunOpencodeCallbacks,
+): Promise<{ code: number; err: string; opencodeSessionId?: string }> {
+  let activeSessionId = opencodeSessionId?.trim() || undefined;
+  const baseArgs = buildOpencodeArgs(prompt, model, activeSessionId);
+
+  const child = spawn("opencode", baseArgs, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: childEnv,
+  });
+  let err = "";
+  child.stderr.on("data", (d: Buffer) => {
+    err += d.toString();
+  });
+
+  return new Promise((resolve) => {
+    let buf = "";
+    let fatalError: string | null = null;
+    const textByPartId = new Map<string, string>();
+
+    const noteSessionId = (sessionId?: string) => {
+      const id = sessionId?.trim();
+      if (!id || id === activeSessionId) return;
+      activeSessionId = id;
+      callbacks.onSessionId?.(id);
+    };
+
+    const handleOpencodeLine = (line: string) => {
+      if (!line.trim()) return;
+      const fatal = extractOpencodeFatalError(line);
+      if (fatal) {
+        fatalError = fatal;
+        return;
+      }
+      const ev = parseOpencodeEvent(line);
+      if (!ev?.type) return;
+      noteSessionId(ev.sessionID);
+
+      switch (ev.type) {
+        case "text": {
+          const chunk = ev.part?.text;
+          if (!chunk) return;
+          const partId = ev.part?.id || ev.part?.messageID;
+          if (!partId) {
+            callbacks.postEvent(ROLE_ASSISTANT, chunk, { throttle: true });
+            return;
           }
-          let content = line;
-          let role = ROLE_ASSISTANT;
-          try {
-            const ev = JSON.parse(line) as {
-              content?: string;
-              message?: string;
-              text?: string;
-              type?: string;
-              role?: string;
-            };
-            content = ev.content || ev.message || ev.text || JSON.stringify(ev);
-            if (ev.type === "tool" || ev.role === "tool") role = ROLE_TOOL;
-            if (ev.type === "status") role = ROLE_STATUS;
-          } catch {
-            /* plain line */
-          }
-          postEvent(role, content);
-        }
-      });
-      child.on("close", (code) => {
-        if (buf.trim()) {
-          const fatal = extractOpencodeFatalError(buf);
-          if (fatal) fatalError = fatal;
-          else if (!fatalError) postEvent(ROLE_ASSISTANT, buf.trim());
-        }
-        const stderrFatal = extractOpencodeFatalError(err);
-        if (stderrFatal) fatalError = stderrFatal;
-        if (fatalError) {
-          resolve({ code: 1, err: fatalError });
+          const next = (textByPartId.get(partId) || "") + chunk;
+          textByPartId.set(partId, next);
+          callbacks.postEvent(ROLE_ASSISTANT, next, {
+            throttle: true,
+            messageId: opencodeMessageId("oc_text_", ev.part),
+          });
           return;
         }
-        if (code != null && code !== 0) {
-          resolve({ code, err: summarizeOpencodeFailure(err, buf, code) });
+        case "reasoning": {
+          const chunk = ev.part?.text;
+          if (!chunk) return;
+          const partId = ev.part?.id || ev.part?.messageID;
+          if (!partId) {
+            callbacks.postEvent(ROLE_REASONING, chunk, { throttle: true });
+            return;
+          }
+          const reasoningKey = `reasoning:${partId}`;
+          const next = (textByPartId.get(reasoningKey) || "") + chunk;
+          textByPartId.set(reasoningKey, next);
+          callbacks.postEvent(ROLE_REASONING, next, {
+            throttle: true,
+            messageId: opencodeMessageId("oc_reasoning_", ev.part),
+          });
           return;
         }
-        resolve({ code: code == null ? 1 : code, err });
-      });
+        case "tool_use": {
+          const status = ev.part?.state?.status;
+          if (!status || status === "pending") return;
+          const toolContent = formatToolUseContent(ev.part!);
+          callbacks.postEvent(ROLE_TOOL, toolContent, {
+            messageId: opencodeMessageId("oc_tool_", ev.part),
+          });
+          if (status === "completed") {
+            const detected = detectWorkingBranchFromToolOutput(toolContent);
+            if (detected.branch) {
+              callbacks.onWorkingBranch?.(detected.branch, detected.pullRequestUrl);
+            }
+          }
+          return;
+        }
+        case "error": {
+          const msg =
+            ev.error?.data?.message ||
+            ev.error?.message ||
+            line.trim();
+          if (msg) fatalError = msg;
+          return;
+        }
+        case "step_start":
+        case "step_finish":
+          return;
+        default:
+          return;
+      }
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      const lines = buf.split("\n");
+      buf = lines.pop() || "";
+      for (const line of lines) {
+        handleOpencodeLine(line);
+      }
     });
-  }
-  try {
-    const out = execFileSync("opencode", baseArgs, {
-      encoding: "utf8",
-      maxBuffer: 20 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: childEnv,
+
+    child.on("close", (code) => {
+      if (buf.trim()) {
+        handleOpencodeLine(buf.trim());
+      }
+      const stderrFatal = extractOpencodeFatalError(err);
+      if (stderrFatal) fatalError = stderrFatal;
+      if (fatalError) {
+        resolve({ code: 1, err: fatalError, opencodeSessionId: activeSessionId });
+        return;
+      }
+      if (code != null && code !== 0) {
+        resolve({
+          code,
+          err: summarizeOpencodeFailure(err, buf, code),
+          opencodeSessionId: activeSessionId,
+        });
+        return;
+      }
+      resolve({ code: code == null ? 1 : code, err, opencodeSessionId: activeSessionId });
     });
-    const fatal = extractOpencodeFatalError(out);
-    if (fatal) return Promise.resolve({ code: 1, err: fatal });
-    if (out) postEvent(ROLE_ASSISTANT, out);
-    return Promise.resolve({ code: 0, err: "" });
-  } catch (e: unknown) {
-    const errObj = e as { stderr?: Buffer; stdout?: Buffer; message?: string; status?: number };
-    const stderr = errObj.stderr?.toString() || "";
-    const stdout = errObj.stdout?.toString() || "";
-    const fatal = summarizeOpencodeFailure(stderr, stdout, errObj.status ?? 1);
-    return Promise.resolve({ code: errObj.status || 1, err: fatal });
-  }
+  });
 }
 
-function connectInbound(
+function connectInboundStream(
   backend: string,
   apiKey: string,
   sessionId: string,
-  onUserMessage: (content: string) => void,
-  onIdle: () => void,
-  onClosed: () => void,
-): void {
+  handlers: {
+    onUserMessage: (msg: InboundUserMessage) => void;
+    onIdle: () => void;
+    shouldRun: () => boolean;
+  },
+): () => void {
   const url = new URL(`${backend}/api/chimphands/sessions/${encodeURIComponent(sessionId)}/inbound`);
   const lib = url.protocol === "https:" ? https : http;
-  const req = lib.request(
-    {
-      hostname: url.hostname,
-      port: url.port || (url.protocol === "https:" ? 443 : 80),
-      path: url.pathname + url.search,
-      method: "GET",
-      headers: {
-        "TestChimp-Api-Key": apiKey,
-        Accept: "text/event-stream",
-        "Cache-Control": "no-cache",
+  let stopped = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectDelayMs = 1000;
+
+  const scheduleReconnect = () => {
+    if (stopped || !handlers.shouldRun()) return;
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, reconnectDelayMs);
+    reconnectDelayMs = Math.min(reconnectDelayMs * 2, 15_000);
+  };
+
+  const connect = () => {
+    if (stopped || !handlers.shouldRun()) return;
+    const req = lib.request(
+      {
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: url.pathname + url.search,
+        method: "GET",
+        headers: {
+          "TestChimp-Api-Key": apiKey,
+          Accept: "text/event-stream",
+          "Cache-Control": "no-cache",
+        },
       },
-    },
-    (res) => {
-      let buf = "";
-      let eventName = "message";
-      res.on("data", (chunk: Buffer) => {
-        buf += chunk.toString();
-        const parts = buf.split("\n");
-        buf = parts.pop() || "";
-        for (const line of parts) {
-          if (line.startsWith("event:")) {
-            eventName = line.slice(6).trim() || "message";
-          } else if (line.startsWith("data:")) {
-            const data = line.slice(5).trim();
-            if (eventName === "idle") {
-              onIdle();
-            } else if (eventName === "user_message" || eventName === "message") {
-              try {
-                const msg = JSON.parse(data) as { content?: string };
-                const content = msg.content || "";
-                if (content) onUserMessage(content);
-              } catch {
-                /* ignore */
+      (res) => {
+        reconnectDelayMs = 1000;
+        let buf = "";
+        let eventName = "message";
+        res.on("data", (chunk: Buffer) => {
+          buf += chunk.toString();
+          const parts = buf.split("\n");
+          buf = parts.pop() || "";
+          for (const line of parts) {
+            if (line.startsWith("event:")) {
+              eventName = line.slice(6).trim() || "message";
+            } else if (line.startsWith("data:")) {
+              const data = line.slice(5).trim();
+              if (eventName === "idle") {
+                handlers.onIdle();
+              } else if (eventName === "user_message" || eventName === "message") {
+                try {
+                  const msg = JSON.parse(data) as {
+                    id?: string;
+                    message_id?: string;
+                    content?: string;
+                  };
+                  handlers.onUserMessage({
+                    id: msg.id || msg.message_id,
+                    content: msg.content || "",
+                  });
+                } catch {
+                  /* ignore */
+                }
               }
+              eventName = "message";
+            } else if (line === "") {
+              eventName = "message";
             }
-            eventName = "message";
-          } else if (line === "") {
-            eventName = "message";
           }
-        }
-      });
-      res.on("end", () => onClosed());
-    },
-  );
-  req.on("error", () => onClosed());
-  req.end();
+        });
+        res.on("end", () => scheduleReconnect());
+      },
+    );
+    req.on("error", () => scheduleReconnect());
+    req.end();
+  };
+
+  connect();
+  return () => {
+    stopped = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+  };
 }
 
 export async function runChimphands(opts: RunOptions): Promise<void> {
   const apiKey = requireApiKey();
   const backend = getBackendUrl();
-  // Ensure child processes see the resolved backend (prod default when unset).
   process.env.TESTCHIMP_BACKEND_URL = backend;
 
   const sessionId = (opts.sessionId || process.env.SESSION_ID || "").trim();
@@ -357,10 +698,14 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   const boot = JSON.parse(bootText) as BootstrapResponse;
 
   const githubRunId = (process.env.GITHUB_RUN_ID || "").trim();
+  const poster = new AgentEventPoster(backend, apiKey, sessionId);
+
   if (githubRunId) {
-    postJsonFireAndForget(backend, apiKey, "/api/chimphands/post_agent_event", {
+    await postJson(backend, apiKey, "/api/chimphands/post_agent_event", {
       sessionId,
       githubRunId,
+    }).catch((err: unknown) => {
+      console.error(`ChimpHands link run failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
 
@@ -373,70 +718,129 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   const opencodeModel = writeOpencodeConfig(backend, apiKey, boot);
   console.error(`ChimpHands OpenCode model: ${opencodeModel}`);
 
+  let opencodeSessionId = boot.opencode_session_id?.trim() || undefined;
+  const conversationSummary = boot.conversation_summary || "";
+  let workingBranch = boot.working_branch?.trim() || undefined;
+  let pullRequestUrl = boot.pull_request_url?.trim() || undefined;
+
+  const noteWorkingBranch = (branch: string, prUrl?: string) => {
+    const normalizedBranch = branch.trim();
+    if (!normalizedBranch) return;
+    const branchIsNew = !workingBranch;
+    const nextPr = prUrl?.trim() || pullRequestUrl;
+    const prIsNew = !!prUrl?.trim() && prUrl.trim() !== pullRequestUrl;
+    if (workingBranch === normalizedBranch && !prIsNew) return;
+    workingBranch = normalizedBranch;
+    if (prUrl?.trim()) pullRequestUrl = prUrl.trim();
+    if (branchIsNew || prIsNew) {
+      poster.reportWorkingBranch(normalizedBranch, nextPr);
+    }
+  };
+
   const idleMs = (Number(boot.idle_timeout_seconds) || 600) * 1000;
   const queue: string[] = [];
+  const seenUserMessageIds = new Set<string>();
   let idle = false;
-  let closed = false;
+  let sessionActive = true;
   let lastUserActivity = Date.now();
 
-  const postEvent = (role: string, content: string, status?: string) => {
-    const body: Record<string, unknown> = {
-      sessionId,
-      role,
-      content: String(content || "").slice(0, 20000),
-    };
-    if (status != null) body.status = status;
-    postJsonFireAndForget(backend, apiKey, "/api/chimphands/post_agent_event", body);
+  const enqueueUserMessage = (msg: InboundUserMessage) => {
+    const id = msg.id?.trim();
+    if (id) {
+      if (seenUserMessageIds.has(id)) return;
+      seenUserMessageIds.add(id);
+    }
+    const content = normalizeUserMessage(msg.content || "");
+    if (!content) return;
+    queue.push(content);
+    lastUserActivity = Date.now();
+    idle = false;
+  };
+
+  const pollPendingUserMessages = async () => {
+    try {
+      const text = await postJson(backend, apiKey, "/api/chimphands/consume_pending_user_messages", {
+        sessionId,
+      });
+      const data = JSON.parse(text) as {
+        messages?: Array<{ id?: string; message_id?: string; content?: string }>;
+      };
+      for (const msg of data.messages || []) {
+        enqueueUserMessage({
+          id: msg.id || msg.message_id,
+          content: msg.content || "",
+        });
+      }
+    } catch {
+      // Polling is best-effort when inbound SSE misses an event.
+    }
+  };
+
+  const postEvent = (role: string, content: string, opts?: PostEventOptions) => {
+    const bodyOpts: PostEventOptions = { ...opts };
+    if (opencodeSessionId && !bodyOpts.opencodeSessionId) {
+      bodyOpts.opencodeSessionId = opencodeSessionId;
+    }
+    poster.fireAndForget(role, content, bodyOpts);
   };
 
   const complete = (status: string, errorMessage?: string) => {
     const body: Record<string, unknown> = { sessionId, status };
     if (errorMessage) body.errorMessage = String(errorMessage).slice(0, 4000);
     if (githubRunId) body.githubRunId = githubRunId;
-    postJsonFireAndForget(backend, apiKey, "/api/chimphands/complete_session", body);
+    void postJson(backend, apiKey, "/api/chimphands/complete_session", body).catch((err: unknown) => {
+      console.error(`ChimpHands complete_session failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
   };
 
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     TESTCHIMP_API_KEY: apiKey,
     TESTCHIMP_BACKEND_URL: backend,
+    TESTCHIMP_EXECUTION_SOURCE: "CLOUD_AGENT",
   };
   if (userId) childEnv.TESTCHIMP_USER_ID = userId;
 
-  connectInbound(
-    backend,
-    apiKey,
-    sessionId,
-    (content) => {
-      queue.push(ensureTestchimpPrompt(content));
-      lastUserActivity = Date.now();
-    },
-    () => {
+  const stopInbound = connectInboundStream(backend, apiKey, sessionId, {
+    onUserMessage: enqueueUserMessage,
+    onIdle: () => {
       idle = true;
     },
-    () => {
-      closed = true;
-    },
-  );
+    shouldRun: () => sessionActive,
+  });
 
-  postEvent(ROLE_STATUS, "Agent ready", STATUS_RUNNING);
+  poster.fireAndForget(ROLE_STATUS, "Agent ready", { status: STATUS_RUNNING });
 
-  let prompt = ensureTestchimpPrompt(promptInput || boot.initial_prompt || "");
-  if (boot.conversation_summary) {
-    prompt = `Conversation so far:\n${boot.conversation_summary}\n\nCurrent task:\n${prompt}`;
-  }
+  let prompt = normalizeUserMessage(promptInput || boot.initial_prompt || "");
   for (const m of boot.pending_user_messages || []) {
-    if (m?.content) queue.push(ensureTestchimpPrompt(m.content));
+    if (m?.content) enqueueUserMessage({ content: m.content });
   }
 
   const waitForNextPrompt = (): Promise<string | null> =>
     new Promise((resolve) => {
+      let lastPollAt = 0;
       const tick = () => {
         if (queue.length) {
-          resolve(ensureTestchimpPrompt(queue.shift()!));
+          resolve(normalizeUserMessage(queue.shift()!));
           return;
         }
-        if (idle || closed || Date.now() - lastUserActivity >= idleMs) {
+        const now = Date.now();
+        if (now - lastPollAt >= 1500) {
+          lastPollAt = now;
+          void pollPendingUserMessages().then(() => {
+            if (queue.length) {
+              resolve(normalizeUserMessage(queue.shift()!));
+              return;
+            }
+            if (idle || now - lastUserActivity >= idleMs) {
+              resolve(null);
+              return;
+            }
+            setTimeout(tick, 500);
+          });
+          return;
+        }
+        if (idle || now - lastUserActivity >= idleMs) {
           resolve(null);
           return;
         }
@@ -446,22 +850,65 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     });
 
   while (prompt) {
-    const result = await runOpencode(
-      ensureTestchimpPrompt(prompt),
-      opencodeModel,
-      childEnv,
-      postEvent,
+    let useOpencodeSessionId = opencodeSessionId;
+    let isNewOpencodeSession = !useOpencodeSessionId;
+    let effectivePrompt = wrapPromptWithContext(
+      conversationSummary,
+      prompt,
+      isNewOpencodeSession,
+      workingBranch,
+      pullRequestUrl,
     );
+
+    let result = await runOpencode(effectivePrompt, opencodeModel, childEnv, useOpencodeSessionId, {
+      onSessionId: (id) => {
+        opencodeSessionId = id;
+        void postJson(backend, apiKey, "/api/chimphands/post_agent_event", {
+          sessionId,
+          opencodeSessionId: id,
+        }).catch(() => {});
+      },
+      onWorkingBranch: noteWorkingBranch,
+      postEvent,
+    });
+
+    if (
+      result.code !== 0 &&
+      useOpencodeSessionId &&
+      isMissingOpencodeSessionError(result.err || "")
+    ) {
+      console.error(
+        `ChimpHands OpenCode session ${useOpencodeSessionId} missing on runner; starting fresh thread.`,
+      );
+      opencodeSessionId = undefined;
+      isNewOpencodeSession = true;
+      effectivePrompt = wrapPromptWithContext(conversationSummary, prompt, true, workingBranch, pullRequestUrl);
+      result = await runOpencode(effectivePrompt, opencodeModel, childEnv, undefined, {
+        onSessionId: (id) => {
+          opencodeSessionId = id;
+          void postJson(backend, apiKey, "/api/chimphands/post_agent_event", {
+            sessionId,
+            opencodeSessionId: id,
+          }).catch(() => {});
+        },
+        onWorkingBranch: noteWorkingBranch,
+        postEvent,
+      });
+    }
+
+    await poster.flush();
+
+    if (result.opencodeSessionId) {
+      opencodeSessionId = result.opencodeSessionId;
+    }
+
     if (result.code !== 0) {
       const errMsg = (result.err || "opencode failed").trim() || "opencode failed";
       console.error(`ChimpHands OpenCode failed: ${errMsg}`);
       try {
-        await postJson(backend, apiKey, "/api/chimphands/post_agent_event", {
-          sessionId,
-          role: ROLE_STATUS,
-          content: errMsg,
+        await poster.enqueue(ROLE_STATUS, errMsg, {
           status: STATUS_FAILED,
-          githubRunId: githubRunId || undefined,
+          opencodeSessionId,
         });
         await postJson(backend, apiKey, "/api/chimphands/complete_session", {
           sessionId,
@@ -472,18 +919,21 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       } catch (reportErr: unknown) {
         const detail = reportErr instanceof Error ? reportErr.message : String(reportErr);
         console.error(`ChimpHands failed to report OpenCode error to backend: ${detail}`);
-        postEvent(ROLE_STATUS, errMsg, STATUS_FAILED);
+        postEvent(ROLE_STATUS, errMsg, { status: STATUS_FAILED });
         complete(STATUS_FAILED, errMsg);
       }
       process.exit(result.code || 1);
     }
-    postEvent(ROLE_STATUS, "Waiting for user input", STATUS_WAITING_USER);
-    // Idle countdown starts when the agent finishes a turn, not at job bootstrap.
+
+    postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
     lastUserActivity = Date.now();
     idle = false;
     prompt = (await waitForNextPrompt()) || "";
   }
 
+  sessionActive = false;
+  stopInbound();
+  await poster.flush();
   console.error("ChimpHands session idle — no user input before timeout; completing.");
   complete(STATUS_IDLE);
 }
