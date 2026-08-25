@@ -24,7 +24,14 @@ const STATUS_FAILED = "CHIMPHANDS_SESSION_STATUS_FAILED";
 const OPENCODE_AGENT_ID = "chimphands";
 const STREAM_POST_MIN_INTERVAL_MS = 60;
 
-const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's cloud coding agent running in GitHub Actions.
+const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. You run on GitHub Actions, but this chat is an **interactive** conversation with the user in the TestChimp UI — same expectations as Cursor/Claude Code locally.
+
+## Interactive session (mandatory — default)
+- Default mode is **interactive**. Ask clarifying questions, seek plan approval, and wait for the user's reply — just as you would in Cursor.
+- \`GITHUB_ACTIONS\`, \`CLOUD_AGENT\`, and "running in CI" mean **where** you execute (runner + \`TESTCHIMP_EXECUTION_SOURCE\`). They do **NOT** mean skip questions, invent defaults, or auto-approve.
+- Only treat the run as non-interactive when the **user prompt** literally includes \`--mode=non-interactive\` (or \`mode=non-interactive\`), or the resolved skill policy explicitly sets \`allow-execute-without-approval\`.
+- When you need clarification (e.g. import plans/tests, env strategy, CI choices) or plan approval: write the questions / plan summary as assistant text, then **stop this turn**. Do not invent answers or continue into Execute. The host will wait for the next chat message and revive you.
+- Prefer a short numbered list of concrete questions over a long monologue. One decision gate at a time when possible (especially \`/testchimp project init\` Phase 1).
 
 ## Repo changes (mandatory)
 - NEVER commit or push directly to the default branch (main/master).
@@ -32,14 +39,17 @@ const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's cloud coding ag
 - If bootstrap lists a working branch, checkout that branch and push additional commits there — update the same PR.
 - Only create a NEW branch/PR when (a) no working branch exists yet for this conversation, or (b) the prior PR was merged/closed (verify with \`gh pr view\`).
 - Branch names MUST start with \`testchimp-\` or \`chimphands-\`.
-- After creating a branch or opening a PR, IMMEDIATELY run:
+- When creating a NEW working branch: create it, then IMMEDIATELY publish it with
+  \`git push -u origin <branch>\` BEFORE calling report-branch. Users open the branch URL in the UI —
+  do not report a branch that only exists locally (that causes GitHub 404).
+- After the branch is on the remote (and after opening a PR), IMMEDIATELY run:
   \`testchimp chimphands report-branch --branch <name> [--pr-url <url>]\`
 - Tell the user which branch you are on and include the PR URL when available.
 
 ## TestChimp workflows (/testchimp …)
 - Load and follow the \`testchimp\` skill under \`.agents/skills/testchimp/SKILL.md\`.
 - For any /testchimp command: use TestChimp MCP tools (preferred) or \`testchimp\` CLI — never invent API results.
-- Follow plan → explicit user approval → execute. Do not skip MCP calls or claim done without tool evidence.
+- Follow plan → explicit user approval → execute (interactive default). Do not skip MCP calls or claim done without tool evidence.
 - Export \`TESTCHIMP_EXECUTION_SOURCE=CLOUD_AGENT\` before Playwright/Mobilewright runs.
 
 ## Honesty
@@ -351,6 +361,16 @@ function isMissingOpencodeSessionError(message: string): boolean {
   );
 }
 
+function isNonInteractivePrompt(userPrompt: string): boolean {
+  return /(?:^|\s)--mode\s*=?\s*non-interactive\b|mode\s*=\s*non-interactive\b/i.test(
+    userPrompt,
+  );
+}
+
+function isTestchimpWorkflowPrompt(userPrompt: string): boolean {
+  return /(?:^|\s)\/?testchimp\b/i.test(userPrompt.trim());
+}
+
 function wrapPromptWithContext(
   conversationSummary: string,
   userPrompt: string,
@@ -369,6 +389,13 @@ function wrapPromptWithContext(
     );
   }
   const task = normalizeUserMessage(userPrompt);
+  if (isTestchimpWorkflowPrompt(task) && !isNonInteractivePrompt(task)) {
+    parts.push(
+      "## Interactive turn reminder",
+      "This is an interactive ChimpHands chat (not autonomous CI). Ask clarifying questions / seek plan approval, then end the turn and wait — do not invent defaults or Execute until the user replies. Only `--mode=non-interactive` skips that pause.",
+      "",
+    );
+  }
   if (isNewOpencodeSession && conversationSummary.trim()) {
     parts.push(`Conversation so far:\n${conversationSummary.trim()}`, "", `Current task:\n${task}`);
     return parts.filter(Boolean).join("\n");
@@ -384,10 +411,12 @@ function detectWorkingBranchFromToolOutput(output: string): { branch?: string; p
   const text = output.trim();
   if (!text) return {};
   const prMatch = text.match(/https:\/\/github\.com\/[^\s)\]]+\/pull\/\d+/);
-  const checkoutMatch = text.match(/checkout\s+-b\s+((?:testchimp-|chimphands-)[^\s'"]+)/i);
-  const pushMatch = text.match(/push\s+(?:--set-upstream\s+|-u\s+)?origin\s+((?:testchimp-|chimphands-)[^\s'"]+)/i);
-  const branchMatch = text.match(/branch['":\s]+((?:testchimp-|chimphands-)[^\s'"]+)/i);
-  const branch = (checkoutMatch?.[1] || pushMatch?.[1] || branchMatch?.[1])?.replace(/[`'"]/g, "");
+  // Only auto-detect after a successful push to origin — local checkout -b alone would
+  // report a branch URL that 404s until the remote ref exists.
+  const pushMatch = text.match(
+    /push\s+(?:--set-upstream\s+|-u\s+)?origin\s+((?:testchimp-|chimphands-)[^\s'"]+)/i
+  );
+  const branch = pushMatch?.[1]?.replace(/[`'"]/g, "");
   return {
     branch,
     pullRequestUrl: prMatch?.[0],
@@ -418,6 +447,7 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
       "X-TestChimp-ChimpHands-Session-Id": sessionId,
     };
   }
+  // @ai-sdk/openai uses /v1/responses (tools + reasoning). openai-compatible is chat-only.
   writeFileSync(
     "opencode.json",
     JSON.stringify(
@@ -428,7 +458,7 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
         autoupdate: false,
         provider: {
           [TESTCHIMP_PROVIDER_ID]: {
-            npm: "@ai-sdk/openai-compatible",
+            npm: "@ai-sdk/openai",
             name: "TestChimp",
             options: providerOptions,
             models: {
