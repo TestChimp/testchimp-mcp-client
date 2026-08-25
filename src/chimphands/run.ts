@@ -60,19 +60,45 @@ type InboundUserMessage = {
 
 type BootstrapResponse = {
   session_id?: string;
+  sessionId?: string;
   llm_base_url?: string;
+  llmBaseUrl?: string;
   llm_api_key?: string;
+  llmApiKey?: string;
   llm_model?: string;
+  llmModel?: string;
   initial_prompt?: string;
+  initialPrompt?: string;
   conversation_summary?: string;
+  conversationSummary?: string;
   idle_timeout_seconds?: number;
+  idleTimeoutSeconds?: number;
   chimphands_service_account_user_id?: string;
+  chimphandsServiceAccountUserId?: string;
   opencode_session_id?: string;
+  opencodeSessionId?: string;
   working_branch?: string;
+  workingBranch?: string;
   pull_request_url?: string;
+  pullRequestUrl?: string;
   working_branch_url?: string;
+  workingBranchUrl?: string;
   pending_user_messages?: Array<{ content?: string }>;
+  pendingUserMessages?: Array<{ content?: string }>;
 };
+
+/** Protobuf JsonFormat uses camelCase; accept snake_case too for resilience. */
+function bootStr(boot: BootstrapResponse, snake: string, camel: string): string {
+  const raw = boot as Record<string, unknown>;
+  const v = raw[snake] ?? raw[camel];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+function bootNum(boot: BootstrapResponse, snake: string, camel: string): number | undefined {
+  const raw = boot as Record<string, unknown>;
+  const v = raw[snake] ?? raw[camel];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
 
 export type ReportWorkingBranchOptions = {
   sessionId: string;
@@ -201,8 +227,8 @@ class AgentEventPoster {
 const TESTCHIMP_PROVIDER_ID = "testchimp";
 
 function resolveOpencodeModelId(boot: BootstrapResponse): string {
-  const raw = (boot.llm_model || "gpt-4o-mini").trim();
-  const modelId = raw.includes("/") ? raw.split("/").pop() || "gpt-4o-mini" : raw;
+  const raw = bootStr(boot, "llm_model", "llmModel") || "gpt-5.6-luna";
+  const modelId = raw.includes("/") ? raw.split("/").pop() || "gpt-5.6-luna" : raw;
   return modelId;
 }
 
@@ -369,18 +395,28 @@ function detectWorkingBranchFromToolOutput(output: string): { branch?: string; p
 }
 
 function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapResponse): string {
-  const llmBase = (boot.llm_base_url || `${backend}/v1`).replace(/\/$/, "");
-  const llmKey = apiKey || boot.llm_api_key || "";
+  const llmBase = (bootStr(boot, "llm_base_url", "llmBaseUrl") || `${backend}/v1`).replace(/\/$/, "");
+  const llmKey = apiKey || bootStr(boot, "llm_api_key", "llmApiKey");
   const modelId = resolveOpencodeModelId(boot);
   const model = `${TESTCHIMP_PROVIDER_ID}/${modelId}`;
+  const sessionId = bootStr(boot, "session_id", "sessionId");
   const mcpEnv: Record<string, string> = {
     TESTCHIMP_API_KEY: apiKey,
     TESTCHIMP_BACKEND_URL: backend,
     TESTCHIMP_EXECUTION_SOURCE: "CLOUD_AGENT",
   };
-  const serviceUserId = boot.chimphands_service_account_user_id?.trim();
+  const serviceUserId = bootStr(boot, "chimphands_service_account_user_id", "chimphandsServiceAccountUserId");
   if (serviceUserId) {
     mcpEnv.TESTCHIMP_USER_ID = serviceUserId;
+  }
+  const providerOptions: Record<string, unknown> = {
+    apiKey: llmKey,
+    baseURL: llmBase,
+  };
+  if (sessionId) {
+    providerOptions.headers = {
+      "X-TestChimp-ChimpHands-Session-Id": sessionId,
+    };
   }
   writeFileSync(
     "opencode.json",
@@ -394,10 +430,7 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
           [TESTCHIMP_PROVIDER_ID]: {
             npm: "@ai-sdk/openai-compatible",
             name: "TestChimp",
-            options: {
-              apiKey: llmKey,
-              baseURL: llmBase,
-            },
+            options: providerOptions,
             models: {
               [modelId]: {
                 name: modelId,
@@ -709,7 +742,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     });
   }
 
-  const userId = boot.chimphands_service_account_user_id || "";
+  const userId = bootStr(boot, "chimphands_service_account_user_id", "chimphandsServiceAccountUserId");
   if (userId) {
     process.env.TESTCHIMP_USER_ID = userId;
   }
@@ -718,10 +751,10 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   const opencodeModel = writeOpencodeConfig(backend, apiKey, boot);
   console.error(`ChimpHands OpenCode model: ${opencodeModel}`);
 
-  let opencodeSessionId = boot.opencode_session_id?.trim() || undefined;
-  const conversationSummary = boot.conversation_summary || "";
-  let workingBranch = boot.working_branch?.trim() || undefined;
-  let pullRequestUrl = boot.pull_request_url?.trim() || undefined;
+  let opencodeSessionId = bootStr(boot, "opencode_session_id", "opencodeSessionId") || undefined;
+  const conversationSummary = bootStr(boot, "conversation_summary", "conversationSummary");
+  let workingBranch = bootStr(boot, "working_branch", "workingBranch") || undefined;
+  let pullRequestUrl = bootStr(boot, "pull_request_url", "pullRequestUrl") || undefined;
 
   const noteWorkingBranch = (branch: string, prUrl?: string) => {
     const normalizedBranch = branch.trim();
@@ -737,7 +770,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
   };
 
-  const idleMs = (Number(boot.idle_timeout_seconds) || 600) * 1000;
+  const idleMs = (bootNum(boot, "idle_timeout_seconds", "idleTimeoutSeconds") || 600) * 1000;
   const queue: string[] = [];
   const seenUserMessageIds = new Set<string>();
   let idle = false;
@@ -811,8 +844,10 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
 
   poster.fireAndForget(ROLE_STATUS, "Agent ready", { status: STATUS_RUNNING });
 
-  let prompt = normalizeUserMessage(promptInput || boot.initial_prompt || "");
-  for (const m of boot.pending_user_messages || []) {
+  let prompt = normalizeUserMessage(promptInput || bootStr(boot, "initial_prompt", "initialPrompt"));
+  const pending =
+    boot.pending_user_messages || boot.pendingUserMessages || [];
+  for (const m of pending) {
     if (m?.content) enqueueUserMessage({ content: m.content });
   }
 
