@@ -38,6 +38,7 @@ const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. Y
 - This conversation uses ONE working branch and ONE pull request. Reuse them for all follow-up work in this chat.
 - If bootstrap lists a working branch, checkout that branch and push additional commits there — update the same PR.
 - Only create a NEW branch/PR when (a) no working branch exists yet for this conversation, or (b) the prior PR was merged/closed (verify with \`gh pr view\`).
+- Commit and push on the session working branch after meaningful edit batches. The host also commits any dirty worktree before idle teardown — keep the branch pushed so the UI can show diffs from GitHub.
 - Branch names MUST start with \`testchimp-\` or \`chimphands-\`.
 - When creating a NEW working branch: create it, then IMMEDIATELY publish it with
   \`git push -u origin <branch>\` BEFORE calling report-branch. Users open the branch URL in the UI —
@@ -950,6 +951,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     stopInbound();
     stopTunnel();
     stopHeartbeat();
+    await commitAndPushDirtyWorktree("chimphands: commit before session idle/shutdown");
     await poster.flush();
     await snapshotExport();
     if (runtimeId) {
@@ -1121,6 +1123,79 @@ function startRuntimeHeartbeat(backend: string, apiKey: string, runtimeId: strin
   };
 }
 
+/** Commit+push dirty worktree on the session branch before idle/teardown (no default-branch writes). */
+async function commitAndPushDirtyWorktree(message: string): Promise<void> {
+  const run = (args: string[], env?: NodeJS.ProcessEnv) =>
+    new Promise<{ code: number; out: string; err: string }>((resolve) => {
+      const child = spawn("git", args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: env ? { ...process.env, ...env } : process.env,
+      });
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (d: Buffer) => {
+        out += d.toString();
+      });
+      child.stderr.on("data", (d: Buffer) => {
+        err += d.toString();
+      });
+      child.on("close", (code) => resolve({ code: code ?? 1, out, err }));
+    });
+
+  try {
+    const branch = await run(["rev-parse", "--abbrev-ref", "HEAD"]);
+    if (branch.code !== 0) {
+      console.error(`ChimpHands git rev-parse failed: ${branch.err || branch.out}`);
+      return;
+    }
+    const current = branch.out.trim();
+    if (!current || current === "HEAD" || /^(main|master)$/i.test(current)) {
+      console.error(
+        `ChimpHands skip commit-before-idle: refusing branch "${current || "(unknown)"}"`,
+      );
+      return;
+    }
+
+    const status = await run(["status", "--porcelain"]);
+    if (status.code !== 0) {
+      console.error(`ChimpHands git status failed: ${status.err || status.out}`);
+      return;
+    }
+    if (!status.out.trim()) {
+      return;
+    }
+    const add = await run(["add", "-A"]);
+    if (add.code !== 0) {
+      console.error(`ChimpHands git add failed: ${add.err || add.out}`);
+      return;
+    }
+    const commitEnv = {
+      GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "ChimpHands",
+      GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "chimphands@testchimp.io",
+      GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "ChimpHands",
+      GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "chimphands@testchimp.io",
+    };
+    const commit = await run(
+      ["-c", "user.name=ChimpHands", "-c", "user.email=chimphands@testchimp.io", "commit", "-m", message],
+      commitEnv,
+    );
+    if (commit.code !== 0) {
+      console.error(`ChimpHands git commit: ${commit.err || commit.out}`);
+      return;
+    }
+    const push = await run(["push", "-u", "origin", "HEAD"]);
+    if (push.code !== 0) {
+      console.error(`ChimpHands git push failed: ${push.err || push.out}`);
+      return;
+    }
+    console.error(`ChimpHands committed and pushed dirty worktree on ${current} before shutdown`);
+  } catch (err: unknown) {
+    console.error(
+      `ChimpHands commit-before-idle failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function putOpencodeExport(
   backend: string,
   apiKey: string,
@@ -1233,6 +1308,19 @@ function startTunnelWorker(
       socket.send(JSON.stringify(obj));
     };
 
+    /** Keep each WS text frame small — Tomcat default max is 8KiB; GCLB is happier with modest frames. */
+    const sendBodyChunk = (bytes: Buffer) => {
+      const MAX = 24 * 1024;
+      for (let offset = 0; offset < bytes.length; offset += MAX) {
+        const slice = bytes.subarray(offset, Math.min(offset + MAX, bytes.length));
+        send({
+          type: "http_response_chunk",
+          requestId,
+          bodyBase64: Buffer.from(slice).toString("base64"),
+        });
+      }
+    };
+
     try {
       const upstream = await fetch(target, init);
       const respHeaders: Record<string, string> = {};
@@ -1253,21 +1341,13 @@ function startTunnelWorker(
           const { done, value } = await reader.read();
           if (done) break;
           if (value && value.length) {
-            send({
-              type: "http_response_chunk",
-              requestId,
-              bodyBase64: Buffer.from(value).toString("base64"),
-            });
+            sendBodyChunk(Buffer.from(value));
           }
         }
       } else {
         const buf = Buffer.from(await upstream.arrayBuffer());
         if (buf.length) {
-          send({
-            type: "http_response_chunk",
-            requestId,
-            bodyBase64: buf.toString("base64"),
-          });
+          sendBodyChunk(buf);
         }
       }
       send({ type: "http_response_end", requestId });
@@ -1298,6 +1378,18 @@ function startTunnelWorker(
     socket.on("open", () => {
       backoffMs = 1000;
       console.error(`ChimpHands agent tunnel WS connected: ${tunnelUrl}`);
+      // Application ping keeps LBs from idling out the tunnel (and proves liveness).
+      const ping = () => {
+        if (stopped || socket.readyState !== 1) return;
+        try {
+          socket.send(JSON.stringify({ type: "ping" }));
+        } catch {
+          /* ignore */
+        }
+      };
+      ping();
+      const pingTimer = setInterval(ping, 20_000);
+      socket.once("close", () => clearInterval(pingTimer));
     });
 
     socket.on("message", (data) => {
@@ -1328,10 +1420,13 @@ function startTunnelWorker(
       }
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code, reason) => {
       ws = null;
       if (stopped) return;
-      console.error(`ChimpHands agent tunnel WS closed; reconnecting in ${backoffMs}ms`);
+      const why = reason?.toString?.() || "";
+      console.error(
+        `ChimpHands agent tunnel WS closed; code=${code} reason=${why || "(none)"} reconnecting in ${backoffMs}ms`,
+      );
       reconnectTimer = setTimeout(() => {
         void connect();
       }, backoffMs);
