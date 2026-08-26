@@ -1616,16 +1616,39 @@ export function buildCliProgram(): Command {
     .description("Bootstrap session, configure OpenCode, and run the interactive bridge")
     .option("--session-id <id>", "ChimpHands session id (or SESSION_ID env)")
     .option("--prompt <text>", "Initial prompt (or PROMPT env)")
+    .option("--attach <url>", "Attach to OpenCode server (e.g. http://127.0.0.1:4096)")
     .action(async (opts) => {
       const { runChimphands } = await import("../chimphands/run.js");
       try {
         await runChimphands({
           sessionId: String(opts.sessionId || process.env.SESSION_ID || "").trim(),
           prompt: opts.prompt != null ? String(opts.prompt) : undefined,
+          attachUrl: opts.attach != null ? String(opts.attach).trim() : undefined,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`[testchimp chimphands] ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  chimphands
+    .command("serve")
+    .description("Register ChimpHands Runtime, attach to OpenCode server, run session bridge + UI tunnel")
+    .option("--session-id <id>", "ChimpHands session id (or SESSION_ID env)")
+    .option("--prompt <text>", "Initial prompt (or PROMPT env)")
+    .requiredOption("--attach <url>", "OpenCode server URL (e.g. http://127.0.0.1:4096)")
+    .action(async (opts) => {
+      const { serveChimphands } = await import("../chimphands/run.js");
+      try {
+        await serveChimphands({
+          sessionId: String(opts.sessionId || process.env.SESSION_ID || "").trim(),
+          prompt: opts.prompt != null ? String(opts.prompt) : undefined,
+          attachUrl: String(opts.attach || "").trim(),
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[testchimp chimphands serve] ${msg}`);
         process.exit(1);
       }
     });

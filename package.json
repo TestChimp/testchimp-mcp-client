@@ -1,6 +1,6 @@
 {
   "name": "@testchimp/cli",
-  "version": "0.1.44",
+  "version": "0.1.45",
   "description": "TestChimp CLI and MCP server — coverage, plans, EaaS, TrueCoverage, API operations (calls /api/mcp/*)",
   "type": "module",
   "main": "dist/bin/testchimp.js",
@@ -23,10 +23,12 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "commander": "^12.1.0",
+    "ws": "^8.21.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^6.0.2"
   },
   "keywords": [

@@ -136,6 +136,10 @@ export async function reportWorkingBranch(opts: ReportWorkingBranchOptions): Pro
 type RunOptions = {
   sessionId: string;
   prompt?: string;
+  /** When set, `opencode run --attach` to a local OpenCode server. */
+  attachUrl?: string;
+  /** Registered runtime id (from register_runtime); enables heartbeat + tunnel + complete_runtime. */
+  runtimeId?: string;
 };
 
 type PostEventOptions = {
@@ -507,10 +511,18 @@ type RunOpencodeCallbacks = {
   postEvent: (role: string, content: string, opts?: PostEventOptions) => void;
 };
 
-function buildOpencodeArgs(prompt: string, model: string, opencodeSessionId?: string): string[] {
+function buildOpencodeArgs(
+  prompt: string,
+  model: string,
+  opencodeSessionId?: string,
+  attachUrl?: string,
+): string[] {
   const args = ["run", prompt, "--model", model, "--format", "json", "--agent", OPENCODE_AGENT_ID];
   if (opencodeSessionId?.trim()) {
     args.push("--session", opencodeSessionId.trim());
+  }
+  if (attachUrl?.trim()) {
+    args.push("--attach", attachUrl.trim());
   }
   return args;
 }
@@ -521,9 +533,10 @@ function runOpencode(
   childEnv: NodeJS.ProcessEnv,
   opencodeSessionId: string | undefined,
   callbacks: RunOpencodeCallbacks,
+  attachUrl?: string,
 ): Promise<{ code: number; err: string; opencodeSessionId?: string }> {
   let activeSessionId = opencodeSessionId?.trim() || undefined;
-  const baseArgs = buildOpencodeArgs(prompt, model, activeSessionId);
+  const baseArgs = buildOpencodeArgs(prompt, model, activeSessionId, attachUrl);
 
   const child = spawn("opencode", baseArgs, {
     stdio: ["ignore", "pipe", "pipe"],
@@ -754,6 +767,8 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     throw new Error("session_id is required (pass --session-id or SESSION_ID)");
   }
   const promptInput = (opts.prompt ?? process.env.PROMPT ?? "").trim();
+  const attachUrl = (opts.attachUrl || process.env.OPENCODE_ATTACH_URL || "").trim() || undefined;
+  let runtimeId = (opts.runtimeId || process.env.CHIMPHANDS_RUNTIME_ID || "").trim() || undefined;
 
   const bootText = await postJson(backend, apiKey, "/api/chimphands/bootstrap", {
     sessionId,
@@ -772,6 +787,33 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     });
   }
 
+  if (!runtimeId && attachUrl) {
+    try {
+      const regText = await postJson(backend, apiKey, "/api/chimphands/register_runtime", {
+        sessionId,
+        location: "CHIMPHANDS_RUNTIME_LOCATION_GITHUB_CI",
+        githubRunId: githubRunId || undefined,
+      });
+      const reg = JSON.parse(regText) as { runtime?: { id?: string }; runtimeId?: string };
+      runtimeId = reg.runtime?.id || reg.runtimeId || undefined;
+      if (runtimeId) {
+        console.error(`ChimpHands runtime registered: ${runtimeId}`);
+        process.env.CHIMPHANDS_RUNTIME_ID = runtimeId;
+      }
+    } catch (err: unknown) {
+      console.error(
+        `ChimpHands register_runtime failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const stopHeartbeat = runtimeId
+    ? startRuntimeHeartbeat(backend, apiKey, runtimeId)
+    : () => {};
+  const stopTunnel = runtimeId && attachUrl
+    ? startTunnelWorker(backend, apiKey, runtimeId, attachUrl)
+    : () => {};
+
   const userId = bootStr(boot, "chimphands_service_account_user_id", "chimphandsServiceAccountUserId");
   if (userId) {
     process.env.TESTCHIMP_USER_ID = userId;
@@ -780,11 +822,41 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   mkdirSync(".opencode", { recursive: true });
   const opencodeModel = writeOpencodeConfig(backend, apiKey, boot);
   console.error(`ChimpHands OpenCode model: ${opencodeModel}`);
+  if (attachUrl) {
+    console.error(`ChimpHands OpenCode attach: ${attachUrl}`);
+  }
 
   let opencodeSessionId = bootStr(boot, "opencode_session_id", "opencodeSessionId") || undefined;
   const conversationSummary = bootStr(boot, "conversation_summary", "conversationSummary");
   let workingBranch = bootStr(boot, "working_branch", "workingBranch") || undefined;
   let pullRequestUrl = bootStr(boot, "pull_request_url", "pullRequestUrl") || undefined;
+
+  const exportSignedUrl = bootStr(boot, "opencode_export_signed_url", "opencodeExportSignedUrl");
+  if (exportSignedUrl && attachUrl) {
+    try {
+      const importedId = await importOpencodeExportFromUrl(exportSignedUrl);
+      if (importedId) {
+        opencodeSessionId = importedId;
+        console.error(`ChimpHands rehydrated OpenCode session from export: ${importedId}`);
+      }
+    } catch (err: unknown) {
+      console.error(
+        `ChimpHands export import failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const snapshotExport = async () => {
+    const sid = opencodeSessionId?.trim();
+    if (!sid) return;
+    try {
+      await putOpencodeExport(backend, apiKey, sessionId, sid);
+    } catch (err: unknown) {
+      console.error(
+        `ChimpHands export snapshot failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
 
   const noteWorkingBranch = (branch: string, prUrl?: string) => {
     const normalizedBranch = branch.trim();
@@ -806,6 +878,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   let idle = false;
   let sessionActive = true;
   let lastUserActivity = Date.now();
+  let exitCode: number | undefined;
 
   const enqueueUserMessage = (msg: InboundUserMessage) => {
     const id = msg.id?.trim();
@@ -872,6 +945,22 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     shouldRun: () => sessionActive,
   });
 
+  const shutdownRuntime = async () => {
+    sessionActive = false;
+    stopInbound();
+    stopTunnel();
+    stopHeartbeat();
+    await poster.flush();
+    await snapshotExport();
+    if (runtimeId) {
+      await postJson(backend, apiKey, "/api/chimphands/complete_runtime", {
+        runtimeId,
+        status: "CHIMPHANDS_RUNTIME_STATUS_TERMINATED",
+      }).catch(() => {});
+    }
+  };
+
+  try {
   poster.fireAndForget(ROLE_STATUS, "Agent ready", { status: STATUS_RUNNING });
 
   let prompt = normalizeUserMessage(promptInput || bootStr(boot, "initial_prompt", "initialPrompt"));
@@ -935,7 +1024,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       },
       onWorkingBranch: noteWorkingBranch,
       postEvent,
-    });
+    }, attachUrl);
 
     if (
       result.code !== 0 &&
@@ -958,7 +1047,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         },
         onWorkingBranch: noteWorkingBranch,
         postEvent,
-      });
+      }, attachUrl);
     }
 
     await poster.flush();
@@ -987,18 +1076,306 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         postEvent(ROLE_STATUS, errMsg, { status: STATUS_FAILED });
         complete(STATUS_FAILED, errMsg);
       }
-      process.exit(result.code || 1);
+      exitCode = result.code || 1;
+      break;
     }
 
     postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
+    await snapshotExport();
     lastUserActivity = Date.now();
     idle = false;
     prompt = (await waitForNextPrompt()) || "";
   }
 
-  sessionActive = false;
-  stopInbound();
-  await poster.flush();
-  console.error("ChimpHands session idle — no user input before timeout; completing.");
-  complete(STATUS_IDLE);
+  if (exitCode == null) {
+    console.error("ChimpHands session idle — no user input before timeout; completing.");
+    complete(STATUS_IDLE);
+  }
+  } finally {
+    await shutdownRuntime();
+  }
+  if (exitCode != null) {
+    process.exit(exitCode);
+  }
+}
+
+function startRuntimeHeartbeat(backend: string, apiKey: string, runtimeId: string): () => void {
+  let stopped = false;
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      // Do not claim tunnel_connected here — only the tunnel poll loop should.
+      await postJson(backend, apiKey, "/api/chimphands/runtime_heartbeat", {
+        runtimeId,
+      });
+    } catch (err: unknown) {
+      console.error(
+        `ChimpHands runtime_heartbeat failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (!stopped) setTimeout(tick, 15_000);
+  };
+  void tick();
+  return () => {
+    stopped = true;
+  };
+}
+
+async function putOpencodeExport(
+  backend: string,
+  apiKey: string,
+  sessionId: string,
+  opencodeSessionId: string,
+): Promise<void> {
+  const exported = await new Promise<string>((resolve, reject) => {
+    const child = spawn("opencode", ["export", opencodeSessionId, "--sanitize"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d: Buffer) => {
+      out += d.toString();
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      err += d.toString();
+    });
+    child.on("close", (code) => {
+      if (code === 0 && out.trim()) resolve(out);
+      else reject(new Error(err.trim() || `opencode export exited ${code}`));
+    });
+  });
+  const exportBase64 = Buffer.from(exported, "utf8").toString("base64");
+  await postJson(backend, apiKey, "/api/chimphands/put_opencode_export", {
+    sessionId,
+    exportBase64,
+  });
+}
+
+async function importOpencodeExportFromUrl(signedUrl: string): Promise<string | undefined> {
+  const res = await fetch(signedUrl);
+  if (!res.ok) {
+    throw new Error(`download export failed: ${res.status}`);
+  }
+  const text = await res.text();
+  writeFileSync("/tmp/chimphands-opencode-export.json", text, "utf8");
+  return await new Promise((resolve, reject) => {
+    const child = spawn("opencode", ["import", "/tmp/chimphands-opencode-export.json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d: Buffer) => {
+      out += d.toString();
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      err += d.toString();
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(err.trim() || `opencode import exited ${code}`));
+        return;
+      }
+      const match = (out + "\n" + err).match(/ses_[A-Za-z0-9]+/);
+      resolve(match?.[0]);
+    });
+  });
+}
+
+function startTunnelWorker(
+  backend: string,
+  apiKey: string,
+  runtimeId: string,
+  attachUrl: string,
+): () => void {
+  let stopped = false;
+  const base = attachUrl.replace(/\/$/, "");
+  let ws: import("ws").WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let backoffMs = 1000;
+
+  const wsBase = backend.replace(/^http/i, (m) => (m.toLowerCase() === "https" ? "wss" : "ws"));
+  const tunnelUrl =
+    `${wsBase.replace(/\/$/, "")}/api/chimphands/runtimes/${encodeURIComponent(runtimeId)}/tunnel`;
+
+  const clearReconnect = () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  const handleHttpRequest = async (
+    socket: import("ws").WebSocket,
+    req: {
+      requestId?: string;
+      method?: string;
+      path?: string;
+      query?: string;
+      headers?: Record<string, string>;
+      bodyBase64?: string;
+    },
+  ) => {
+    if (!req.requestId || socket.readyState !== 1) return;
+    const requestId = req.requestId;
+    const target = base + (req.path || "/") + (req.query ? `?${req.query}` : "");
+    const headers: Record<string, string> = { ...(req.headers || {}) };
+    const init: RequestInit = { method: req.method || "GET", headers };
+    if (req.bodyBase64) {
+      init.body = Buffer.from(req.bodyBase64, "base64");
+    }
+    // Long-running SSE / chat streams — no hard abort under ~5 minutes.
+    const ac = new AbortController();
+    const upstreamTimer = setTimeout(() => ac.abort(), 290_000);
+    init.signal = ac.signal;
+
+    const send = (obj: Record<string, unknown>) => {
+      if (socket.readyState !== 1) return;
+      socket.send(JSON.stringify(obj));
+    };
+
+    try {
+      const upstream = await fetch(target, init);
+      const respHeaders: Record<string, string> = {};
+      upstream.headers.forEach((v, k) => {
+        respHeaders[k] = v;
+      });
+      send({
+        type: "http_response_start",
+        requestId,
+        status: upstream.status,
+        headers: respHeaders,
+      });
+
+      const body = upstream.body;
+      if (body) {
+        const reader = body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value && value.length) {
+            send({
+              type: "http_response_chunk",
+              requestId,
+              bodyBase64: Buffer.from(value).toString("base64"),
+            });
+          }
+        }
+      } else {
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        if (buf.length) {
+          send({
+            type: "http_response_chunk",
+            requestId,
+            bodyBase64: buf.toString("base64"),
+          });
+        }
+      }
+      send({ type: "http_response_end", requestId });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      send({
+        type: "http_response",
+        requestId,
+        status: 502,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+        bodyBase64: Buffer.from(msg, "utf8").toString("base64"),
+      });
+    } finally {
+      clearTimeout(upstreamTimer);
+    }
+  };
+
+  const connect = async () => {
+    if (stopped) return;
+    clearReconnect();
+    const { default: WebSocket } = await import("ws");
+    const socket = new WebSocket(tunnelUrl, {
+      headers: { "TestChimp-Api-Key": apiKey },
+      handshakeTimeout: 30_000,
+    });
+    ws = socket;
+
+    socket.on("open", () => {
+      backoffMs = 1000;
+      console.error(`ChimpHands agent tunnel WS connected: ${tunnelUrl}`);
+    });
+
+    socket.on("message", (data) => {
+      if (stopped) return;
+      try {
+        const text = typeof data === "string" ? data : data.toString("utf8");
+        const frame = JSON.parse(text) as {
+          type?: string;
+          requestId?: string;
+          method?: string;
+          path?: string;
+          query?: string;
+          headers?: Record<string, string>;
+          bodyBase64?: string;
+        };
+        if (frame.type === "pong") return;
+        if (frame.type === "ping") {
+          socket.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
+        if (frame.type === "http_request" || frame.requestId) {
+          void handleHttpRequest(socket, frame);
+        }
+      } catch (err: unknown) {
+        console.error(
+          `ChimpHands tunnel frame error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    });
+
+    socket.on("close", () => {
+      ws = null;
+      if (stopped) return;
+      console.error(`ChimpHands agent tunnel WS closed; reconnecting in ${backoffMs}ms`);
+      reconnectTimer = setTimeout(() => {
+        void connect();
+      }, backoffMs);
+      backoffMs = Math.min(backoffMs * 2, 30_000);
+    });
+
+    socket.on("error", (err) => {
+      console.error(
+        `ChimpHands agent tunnel WS error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  };
+
+  void connect();
+  return () => {
+    stopped = true;
+    clearReconnect();
+    if (ws) {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      ws = null;
+    }
+  };
+}
+
+/** Runtime-aware entry: register + attach to local OpenCode server (Phase 1+). */
+export async function serveChimphands(opts: RunOptions & { attachUrl: string }): Promise<void> {
+  const attachUrl = opts.attachUrl.trim();
+  if (!attachUrl) {
+    throw new Error("--attach URL is required for chimphands serve");
+  }
+  // Wait for OpenCode server readiness.
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(attachUrl.replace(/\/$/, "") + "/");
+      if (res.ok || res.status === 401 || res.status === 404) break;
+    } catch {
+      /* retry */
+    }
+    await sleep(500);
+  }
+  await runChimphands({ ...opts, attachUrl });
 }
