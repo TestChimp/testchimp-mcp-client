@@ -191,6 +191,8 @@ class AgentEventPoster {
   private lastStreamPostAt = 0;
   /** When false, liveStream tokens are dropped; completed events still persist. */
   uiAttached = false;
+  private ephemeralFailLogAt = 0;
+  private ephemeralFailCount = 0;
 
   constructor(
     private readonly backend: string,
@@ -246,6 +248,7 @@ class AgentEventPoster {
             "/api/chimphands/post_ephemeral_agent_event",
             eph,
           );
+          this.ephemeralFailCount = 0;
           let delivered = false;
           try {
             const parsed = JSON.parse(text) as { delivered?: boolean };
@@ -257,8 +260,8 @@ class AgentEventPoster {
           // Mid-turn liveStream must not fall through to durable — that would write
           // every token to PG. Turn-end reconcile persists the final transcript.
           if (opts?.liveStream) {
-            console.error(
-              "ChimpHands ephemeral not delivered (replica miss?) — skipping durable for liveStream",
+            this.logEphemeralIssue(
+              "ephemeral not delivered (replica miss?) — skipping durable for liveStream",
             );
             return;
           }
@@ -269,7 +272,7 @@ class AgentEventPoster {
         } catch (err: unknown) {
           const detail = err instanceof Error ? err.message : String(err);
           if (opts?.liveStream) {
-            console.error(`ChimpHands ephemeral post failed — skipping durable for liveStream: ${detail}`);
+            this.logEphemeralIssue(`ephemeral post failed — skipping durable for liveStream: ${detail}`);
             return;
           }
           console.error(`ChimpHands ephemeral post failed — durable fallback: ${detail}`);
@@ -279,6 +282,18 @@ class AgentEventPoster {
       await postJson(this.backend, this.apiKey, "/api/chimphands/post_agent_event", body);
     });
     return this.chain;
+  }
+
+  /** Avoid flooding GHA logs when ephemeral 500s every ~150ms. */
+  private logEphemeralIssue(message: string): void {
+    this.ephemeralFailCount += 1;
+    const now = Date.now();
+    if (this.ephemeralFailCount <= 2 || now - this.ephemeralFailLogAt >= 10_000) {
+      this.ephemeralFailLogAt = now;
+      const suffix =
+        this.ephemeralFailCount > 2 ? ` (x${this.ephemeralFailCount} since last log)` : "";
+      console.error(`ChimpHands ${message}${suffix}`);
+    }
   }
 
   fireAndForget(role: string, content: string, opts?: PostEventOptions): void {
@@ -1047,18 +1062,39 @@ function killListenersOnPort(port: string): void {
 async function waitForOpencodeHttp(attachUrl: string, timeoutMs: number): Promise<void> {
   const base = attachUrl.replace(/\/$/, "");
   const deadline = Date.now() + timeoutMs;
+  const perTryMs = 2_000;
+  let attempt = 0;
+  let lastErr = "";
   while (Date.now() < deadline) {
+    attempt += 1;
     for (const path of ["/global/health", "/"]) {
       try {
-        const res = await fetch(`${base}${path}`);
-        if (res.ok || res.status === 401 || res.status === 404) return;
-      } catch {
-        /* retry */
+        const res = await fetch(`${base}${path}`, {
+          signal: AbortSignal.timeout(perTryMs),
+        });
+        if (res.ok || res.status === 401 || res.status === 404) {
+          console.error(
+            `ChimpHands OpenCode HTTP ready at ${attachUrl}${path} (http ${res.status}, attempt ${attempt})`,
+          );
+          return;
+        }
+        lastErr = `HTTP ${res.status}`;
+      } catch (err: unknown) {
+        lastErr = err instanceof Error ? err.message : String(err);
       }
+    }
+    if (attempt === 1 || attempt % 5 === 0) {
+      const left = Math.max(0, deadline - Date.now());
+      console.error(
+        `ChimpHands waiting for OpenCode HTTP at ${attachUrl} (attempt ${attempt}, ${Math.ceil(left / 1000)}s left): ${lastErr || "not ready"}`,
+      );
     }
     await sleep(400);
   }
-  throw new Error(`OpenCode server not ready at ${attachUrl} within ${timeoutMs}ms`);
+  throw new Error(
+    `OpenCode server not ready at ${attachUrl} within ${timeoutMs}ms` +
+      (lastErr ? ` (last: ${lastErr})` : ""),
+  );
 }
 
 /**
