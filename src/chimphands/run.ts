@@ -895,6 +895,35 @@ function isMissingOpencodeSessionError(message: string): boolean {
   );
 }
 
+/** Strip one layer of wrapping quotes models sometimes add when echoing. */
+function stripOuterQuotes(text: string): string {
+  const a = String(text || "").trim();
+  if (
+    (a.startsWith('"') && a.endsWith('"')) ||
+    (a.startsWith("'") && a.endsWith("'"))
+  ) {
+    return a.slice(1, -1).trim();
+  }
+  return a;
+}
+
+/**
+ * True when assistant text is an echo of a prompt we just sent to OpenCode
+ * (raw user text and/or host-wrapped effectivePrompt) — exact or streaming prefix.
+ */
+function isAssistantEchoOfSentPrompt(assistant: string, ...sentPrompts: string[]): boolean {
+  const a = stripOuterQuotes(assistant);
+  if (!a) return false;
+  for (const raw of sentPrompts) {
+    const p = String(raw || "").trim();
+    if (!p) continue;
+    if (a === p) return true;
+    // Streaming echo of the (usually long) wrapped prompt: only when clearly a prefix.
+    if (p.length >= 64 && a.length >= 24 && p.startsWith(a)) return true;
+  }
+  return false;
+}
+
 function wrapPromptWithContext(
   conversationSummary: string,
   userPrompt: string,
@@ -1669,20 +1698,19 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     poster.fireAndForget(role, content, bodyOpts);
   };
 
-  /** Drop assistant bubbles that are just the current user prompt echoed (often quoted). */
-  const postEventForTurn = (userPrompt: string, role: string, content: string, opts?: PostEventOptions) => {
-    if (role === ROLE_ASSISTANT) {
-      const a = String(content || "").trim();
-      const u = normalizeUserMessage(userPrompt);
-      if (a && u) {
-        const unquoted =
-          (a.startsWith('"') && a.endsWith('"')) || (a.startsWith("'") && a.endsWith("'"))
-            ? a.slice(1, -1).trim()
-            : a;
-        if (a === u || unquoted === u) {
-          return;
-        }
-      }
+  /**
+   * Drop ASSISTANT bubbles that echo the prompt we just sent — either the raw
+   * user text or the host-wrapped effectivePrompt (exact string OpenCode got).
+   */
+  const postEventForTurn = (
+    userPrompt: string,
+    wrappedPrompt: string,
+    role: string,
+    content: string,
+    opts?: PostEventOptions,
+  ) => {
+    if (role === ROLE_ASSISTANT && isAssistantEchoOfSentPrompt(content, userPrompt, wrappedPrompt)) {
+      return;
     }
     postEvent(role, content, opts);
   };
@@ -1798,7 +1826,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     );
 
     const turnPostEvent: RunOpencodeCallbacks["postEvent"] = (role, content, opts) =>
-      postEventForTurn(prompt, role, content, opts);
+      postEventForTurn(prompt, effectivePrompt, role, content, opts);
 
     // Visible in chat (not filtered as routine). OpenCode may not emit text until a
     // part completes — without this the UI looks empty while the turn is running.
