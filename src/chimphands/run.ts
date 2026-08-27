@@ -215,10 +215,14 @@ class AgentEventPoster {
     if (opts?.pullRequestUrl) body.pullRequestUrl = opts.pullRequestUrl;
 
     const streamRole = isStreamFanoutRole(role);
-    // Never drop liveStream tokens: ephemeral when UI is on this replica path,
-    // otherwise durable post_agent_event (cross-replica / detached safe).
 
     this.chain = this.chain.then(async () => {
+      // Mid-turn live tokens only while UI is attached — async runs skip FS fanout
+      // and rely on turn-end reconcile for durable PG.
+      if (opts?.liveStream && !this.uiAttached) {
+        return;
+      }
+
       if (opts?.throttle || (streamRole && opts?.liveStream)) {
         const now = Date.now();
         const wait = STREAM_POST_MIN_INTERVAL_MS - (now - this.lastStreamPostAt);
@@ -250,12 +254,24 @@ class AgentEventPoster {
             /* ignore */
           }
           if (delivered) return;
-          // Cross-replica: UI SSE not on this FS pod — fall through to durable.
+          // Mid-turn liveStream must not fall through to durable — that would write
+          // every token to PG. Turn-end reconcile persists the final transcript.
+          if (opts?.liveStream) {
+            console.error(
+              "ChimpHands ephemeral not delivered (replica miss?) — skipping durable for liveStream",
+            );
+            return;
+          }
+          // Completed/non-live: durable fallback for cross-replica UI.
           console.error(
             "ChimpHands ephemeral not delivered (replica miss?) — persisting via post_agent_event",
           );
         } catch (err: unknown) {
           const detail = err instanceof Error ? err.message : String(err);
+          if (opts?.liveStream) {
+            console.error(`ChimpHands ephemeral post failed — skipping durable for liveStream: ${detail}`);
+            return;
+          }
           console.error(`ChimpHands ephemeral post failed — durable fallback: ${detail}`);
         }
       }
@@ -396,7 +412,43 @@ function normalizeStdoutOpencodeEvent(raw: unknown): OpencodeEvent | null {
     error?: OpencodeEvent["error"];
   };
 
-  if (type === "message.part.updated" || type === "message.part.delta") {
+  if (type === "message.part.delta") {
+    // OpenCode streams tokens as { partID, field, delta } with no `part`.
+    const deltaProps = props as {
+      partID?: string;
+      field?: string;
+      delta?: string;
+      sessionID?: string;
+      part?: OpencodePart & { sessionID?: string; type?: string };
+    };
+    const part = deltaProps.part;
+    if (part) {
+      const partType = part.type || deltaProps.field || "";
+      let mapped: string | undefined;
+      if (partType === "text") mapped = "text";
+      else if (partType === "reasoning") mapped = "reasoning";
+      else if (partType === "tool") mapped = "tool_use";
+      else return null;
+      if (deltaProps.delta && !part.text) part.text = deltaProps.delta;
+      return {
+        type: mapped,
+        sessionID: part.sessionID || deltaProps.sessionID,
+        part,
+      };
+    }
+    const partID = deltaProps.partID;
+    const field = deltaProps.field || "text";
+    const delta = deltaProps.delta;
+    if (!partID || delta == null || delta === "") return null;
+    if (field !== "text" && field !== "reasoning") return null;
+    return {
+      type: field === "reasoning" ? "reasoning" : "text",
+      sessionID: deltaProps.sessionID,
+      part: { id: partID, type: field, text: delta },
+    };
+  }
+
+  if (type === "message.part.updated") {
     const part = props.part;
     if (!part) return null;
     const partType = part.type || "";
@@ -405,7 +457,6 @@ function normalizeStdoutOpencodeEvent(raw: unknown): OpencodeEvent | null {
     else if (partType === "reasoning") mapped = "reasoning";
     else if (partType === "tool") mapped = "tool_use";
     else return null;
-    // Prefer cumulative text; append delta when that's all we got.
     if (props.delta && !part.text) {
       part.text = props.delta;
     }
@@ -431,7 +482,7 @@ function normalizeStdoutOpencodeEvent(raw: unknown): OpencodeEvent | null {
   return null;
 }
 
-/** Pull assistant/tool parts from OpenCode HTTP after attach exits early. */
+/** Pull assistant/tool parts from OpenCode HTTP for durable PG (turn-end). */
 async function reconcileOpencodeSessionMessages(
   attachUrl: string,
   opencodeSessionId: string,
@@ -460,8 +511,20 @@ async function reconcileOpencodeSessionMessages(
     parts?: Array<OpencodePart & { type?: string; id?: string; text?: string; tool?: string }>;
   }>;
   if (!Array.isArray(data)) return 0;
+
+  // Only parts after the latest user message (this turn). Full-history reconcile
+  // every turn would O(n) upsert the entire transcript for no benefit.
+  let lastUserIdx = -1;
+  for (let i = data.length - 1; i >= 0; i--) {
+    if ((data[i]?.info?.role || "").toLowerCase() === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  const turnSlice = lastUserIdx >= 0 ? data.slice(lastUserIdx + 1) : data;
+
   let posted = 0;
-  for (const msg of data) {
+  for (const msg of turnSlice) {
     if ((msg.info?.role || "").toLowerCase() !== "assistant") continue;
     for (const part of msg.parts || []) {
       if (part.type === "text" && part.text?.trim()) {
@@ -490,7 +553,7 @@ async function reconcileOpencodeSessionMessages(
     }
   }
   if (posted) {
-    console.error(`ChimpHands reconciled ${posted} part(s) from OpenCode session API`);
+    console.error(`ChimpHands reconciled ${posted} part(s) from OpenCode session API (this turn)`);
   }
   return posted;
 }
@@ -565,6 +628,8 @@ function startOpencodeSseRelay(
       type?: string;
       properties?: {
         sessionID?: string;
+        partID?: string;
+        field?: string;
         part?: OpencodePart & { sessionID?: string; type?: string };
         delta?: string;
         error?: { name?: string; message?: string; data?: { message?: string } };
@@ -573,7 +638,36 @@ function startOpencodeSseRelay(
     const type = ev.type || "";
     const props = ev.properties || {};
 
-    if (type === "message.part.updated" || type === "message.part.delta") {
+    // Token stream: { partID, field, delta } — often no `part` object.
+    if (type === "message.part.delta") {
+      const part = props.part;
+      const partId = props.partID || part?.id || part?.messageID;
+      const field = props.field || part?.type || "text";
+      const sessionId = part?.sessionID || props.sessionID;
+      if (!sessionMatches(sessionId)) return;
+      callbacks.noteSessionId(sessionId);
+      if (!partId || props.delta == null || props.delta === "") return;
+
+      if (field === "text") {
+        const next = (textByPartId.get(partId) || "") + props.delta;
+        textByPartId.set(partId, next);
+        callbacks.postEvent(ROLE_ASSISTANT, next, liveOpts({
+          messageId: `oc_text_${partId}`,
+        }));
+        return;
+      }
+      if (field === "reasoning") {
+        const key = `reasoning:${partId}`;
+        const next = (textByPartId.get(key) || "") + props.delta;
+        textByPartId.set(key, next);
+        callbacks.postEvent(ROLE_REASONING, next, liveOpts({
+          messageId: `oc_reasoning_${partId}`,
+        }));
+      }
+      return;
+    }
+
+    if (type === "message.part.updated") {
       const part = props.part;
       if (!part) return;
       const sessionId = part.sessionID || props.sessionID;
@@ -584,12 +678,11 @@ function startOpencodeSseRelay(
         const partId = part.id || part.messageID;
         if (!partId) return;
         let next = part.text || "";
-        if (props.delta) {
+        if (props.delta && !part.text) {
           next = (textByPartId.get(partId) || "") + props.delta;
         } else if (!next && props.delta === undefined) {
           return;
         }
-        // Prefer cumulative part.text when present (idempotent); else delta accumulation.
         if (part.text) next = part.text;
         textByPartId.set(partId, next);
         if (!next) return;
@@ -617,7 +710,16 @@ function startOpencodeSseRelay(
 
       if (part.type === "tool") {
         const status = part.state?.status;
-        if (!status || status === "pending" || status === "running") return;
+        if (!status || status === "pending") return;
+        // Ephemeral "(running)" bubbles while UI attached (liveStream gated in poster).
+        if (status === "running") {
+          const toolContent = formatToolUseContent(part);
+          callbacks.postEvent(ROLE_TOOL, toolContent, liveOpts({
+            messageId: opencodeMessageId("oc_tool_", part),
+            throttle: false,
+          }));
+          return;
+        }
         const toolContent = formatToolUseContent(part);
         callbacks.postEvent(ROLE_TOOL, toolContent, liveOpts({
           messageId: opencodeMessageId("oc_tool_", part),
@@ -1077,6 +1179,19 @@ function runOpencode(
       noteSessionId(ev.sessionID);
 
       switch (ev.type) {
+        case "text":
+        case "reasoning":
+        case "tool_use": {
+          // Attach mode: live tokens come from OpenCode SSE; durable from turn-end
+          // reconcile. Avoid double-fanout / double-accumulation with stdout.
+          if (attachUrl) return;
+          break;
+        }
+        default:
+          break;
+      }
+
+      switch (ev.type) {
         case "text": {
           const chunk = ev.part?.text;
           if (!chunk) return;
@@ -1085,7 +1200,14 @@ function runOpencode(
             callbacks.postEvent(ROLE_ASSISTANT, chunk, { throttle: true });
             return;
           }
-          const next = (textByPartId.get(partId) || "") + chunk;
+          // Without attach, --format json may emit completed cumulative or deltas.
+          // Prefer replace when we already have longer text (cumulative); else append.
+          const prev = textByPartId.get(partId) || "";
+          const next = !prev
+            ? chunk
+            : chunk.startsWith(prev)
+              ? chunk
+              : prev + chunk;
           textByPartId.set(partId, next);
           callbacks.postEvent(ROLE_ASSISTANT, next, {
             throttle: true,
@@ -1102,7 +1224,12 @@ function runOpencode(
             return;
           }
           const reasoningKey = `reasoning:${partId}`;
-          const next = (textByPartId.get(reasoningKey) || "") + chunk;
+          const prev = textByPartId.get(reasoningKey) || "";
+          const next = !prev
+            ? chunk
+            : chunk.startsWith(prev)
+              ? chunk
+              : prev + chunk;
           textByPartId.set(reasoningKey, next);
           callbacks.postEvent(ROLE_REASONING, next, {
             throttle: true,
@@ -1111,8 +1238,9 @@ function runOpencode(
           return;
         }
         case "tool_use": {
+          // Durable-only path (no attach). Skip in-progress.
           const status = ev.part?.state?.status;
-          if (!status || status === "pending") return;
+          if (!status || status === "pending" || status === "running") return;
           const toolContent = formatToolUseContent(ev.part!);
           callbacks.postEvent(ROLE_TOOL, toolContent, {
             messageId: opencodeMessageId("oc_tool_", ev.part),
@@ -1314,10 +1442,14 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     });
   };
   const syncLiveSse = (attached: boolean) => {
-    poster.uiAttached = attached;
     pendingUiAttached = attached;
-    if (!attachUrl) return;
+    if (!attachUrl) {
+      poster.uiAttached = attached;
+      return;
+    }
     if (!opencodeHttpReady) {
+      // Defer SSE; still track intent so first sync after ready is correct.
+      poster.uiAttached = attached;
       if (attached) {
         console.error("ChimpHands UI attached — deferring OpenCode SSE until serve is ready");
       }
@@ -1325,20 +1457,17 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
     if (attached) {
       consecutiveUiDetached = 0;
+      // Allow liveStream immediately when heartbeat says attached.
+      poster.uiAttached = true;
       startLiveSseIfNeeded("UI attached — starting OpenCode SSE fanout");
       return;
     }
-    // Keep SSE running so live tokens can durable-post even when heartbeat
-    // briefly reports false (UI EventSource on another FS replica).
+    // Detached / async: hysteresis avoids flap from cross-replica heartbeats.
+    // Keep poster.uiAttached true + SSE up during the window so we don't drop
+    // live tokens while the UI is still actually listening on another replica.
     consecutiveUiDetached += 1;
-    if (consecutiveUiDetached < UI_DETACHED_STOP_AFTER) {
-      if (!stopLiveSse) {
-        startLiveSseIfNeeded(
-          "starting OpenCode SSE fanout (durable until UI attaches)",
-        );
-      }
-      return;
-    }
+    if (consecutiveUiDetached < UI_DETACHED_STOP_AFTER) return;
+    poster.uiAttached = false;
     if (stopLiveSse) {
       console.error(
         `ChimpHands UI detached for ${consecutiveUiDetached} heartbeats — stopping OpenCode SSE fanout`,
@@ -1413,33 +1542,6 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   const conversationSummary = bootStr(boot, "conversation_summary", "conversationSummary");
   let workingBranch = bootStr(boot, "working_branch", "workingBranch") || undefined;
   let pullRequestUrl = bootStr(boot, "pull_request_url", "pullRequestUrl") || undefined;
-
-  const exportSignedUrl = bootStr(boot, "opencode_export_signed_url", "opencodeExportSignedUrl");
-  if (exportSignedUrl && attachUrl) {
-    try {
-      const importedId = await importOpencodeExportFromUrl(exportSignedUrl);
-      if (importedId) {
-        opencodeSessionId = importedId;
-        console.error(`ChimpHands rehydrated OpenCode session from export: ${importedId}`);
-      }
-    } catch (err: unknown) {
-      console.error(
-        `ChimpHands export import failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-
-  const snapshotExport = async () => {
-    const sid = opencodeSessionId?.trim();
-    if (!sid) return;
-    try {
-      await putOpencodeExport(backend, apiKey, sessionId, sid);
-    } catch (err: unknown) {
-      console.error(
-        `ChimpHands export snapshot failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  };
 
   noteWorkingBranch = (branch: string, prUrl?: string) => {
     const normalizedBranch = branch.trim();
@@ -1542,7 +1644,6 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
     await commitAndPushDirtyWorktree("chimphands: commit before session idle/shutdown");
     await poster.flush();
-    await snapshotExport();
     if (runtimeId) {
       await postJson(backend, apiKey, "/api/chimphands/complete_runtime", {
         runtimeId,
@@ -1663,6 +1764,31 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       opencodeSessionId = result.opencodeSessionId;
     }
 
+    // Turn-end durable reconcile into PG (idempotent messageIds). Mid-turn was
+    // ephemeral-only when UI attached; async runs get their transcript here.
+    // Also reconcile on failure so partial assistant/tool output is not lost.
+    if (attachUrl && opencodeSessionId) {
+      try {
+        await reconcileOpencodeSessionMessages(
+          attachUrl,
+          opencodeSessionId,
+          (role, content, opts) => {
+            void poster.enqueue(role, content, {
+              ...opts,
+              opencodeSessionId,
+              // Explicitly not liveStream → always durable post_agent_event.
+            });
+          },
+          noteWorkingBranch,
+        );
+        await poster.flush();
+      } catch (err: unknown) {
+        console.error(
+          `ChimpHands turn-end reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     if (result.code !== 0) {
       const errMsg = (result.err || "opencode failed").trim() || "opencode failed";
       console.error(`ChimpHands OpenCode failed: ${errMsg}`);
@@ -1688,7 +1814,6 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
 
     postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
-    await snapshotExport();
     lastUserActivity = Date.now();
     idle = false;
     prompt = (await waitForNextPrompt()) || "";
@@ -1820,66 +1945,6 @@ async function commitAndPushDirtyWorktree(message: string): Promise<void> {
       `ChimpHands commit-before-idle failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-}
-
-async function putOpencodeExport(
-  backend: string,
-  apiKey: string,
-  sessionId: string,
-  opencodeSessionId: string,
-): Promise<void> {
-  const exported = await new Promise<string>((resolve, reject) => {
-    const child = spawn("opencode", ["export", opencodeSessionId], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let out = "";
-    let err = "";
-    child.stdout.on("data", (d: Buffer) => {
-      out += d.toString();
-    });
-    child.stderr.on("data", (d: Buffer) => {
-      err += d.toString();
-    });
-    child.on("close", (code) => {
-      if (code === 0 && out.trim()) resolve(out);
-      else reject(new Error(err.trim() || `opencode export exited ${code}`));
-    });
-  });
-  const exportBase64 = Buffer.from(exported, "utf8").toString("base64");
-  await postJson(backend, apiKey, "/api/chimphands/put_opencode_export", {
-    sessionId,
-    exportBase64,
-  });
-}
-
-async function importOpencodeExportFromUrl(signedUrl: string): Promise<string | undefined> {
-  const res = await fetch(signedUrl);
-  if (!res.ok) {
-    throw new Error(`download export failed: ${res.status}`);
-  }
-  const text = await res.text();
-  writeFileSync("/tmp/chimphands-opencode-export.json", text, "utf8");
-  return await new Promise((resolve, reject) => {
-    const child = spawn("opencode", ["import", "/tmp/chimphands-opencode-export.json"], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let out = "";
-    let err = "";
-    child.stdout.on("data", (d: Buffer) => {
-      out += d.toString();
-    });
-    child.stderr.on("data", (d: Buffer) => {
-      err += d.toString();
-    });
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(err.trim() || `opencode import exited ${code}`));
-        return;
-      }
-      const match = (out + "\n" + err).match(/ses_[A-Za-z0-9]+/);
-      resolve(match?.[0]);
-    });
-  });
 }
 
 function startTunnelWorker(
