@@ -160,9 +160,13 @@ type PostEventOptions = {
   throttle?: boolean;
   /**
    * Live OpenCode /event deltas. Dropped when UI is detached.
-   * Completed `--format json` events omit this so they always persist (durable fallback).
+   * Never persisted — turn-end reconcile writes PG.
    */
   liveStream?: boolean;
+  /**
+   * Turn-end / completed transcript. Always `post_agent_event`; never ephemeral.
+   */
+  durable?: boolean;
 };
 
 function apiHeaders(apiKey: string): Record<string, string> {
@@ -219,20 +223,20 @@ class AgentEventPoster {
     const streamRole = isStreamFanoutRole(role);
 
     this.chain = this.chain.then(async () => {
-      // Mid-turn live tokens only while UI is attached — async runs skip FS fanout
-      // and rely on turn-end reconcile for durable PG.
-      if (opts?.liveStream && !this.uiAttached) {
+      const live = !!opts?.liveStream && !opts?.durable;
+      // Mid-turn tokens never hit PG. Async / detached: drop. Attached: ephemeral only.
+      if (live && !this.uiAttached) {
         return;
       }
 
-      if (opts?.throttle || (streamRole && opts?.liveStream)) {
+      if (opts?.throttle || (streamRole && live)) {
         const now = Date.now();
         const wait = STREAM_POST_MIN_INTERVAL_MS - (now - this.lastStreamPostAt);
         if (wait > 0) await sleep(wait);
         this.lastStreamPostAt = Date.now();
       }
 
-      const tryEphemeral = streamRole && this.uiAttached;
+      const tryEphemeral = live && streamRole && this.uiAttached;
       if (tryEphemeral) {
         const eph: Record<string, unknown> = {
           sessionId: this.sessionId,
@@ -242,41 +246,18 @@ class AgentEventPoster {
         if (opts?.messageId) eph.messageId = opts.messageId;
         if (opts?.opencodeSessionId) eph.opencodeSessionId = opts.opencodeSessionId;
         try {
-          const text = await postJson(
+          await postJson(
             this.backend,
             this.apiKey,
             "/api/chimphands/post_ephemeral_agent_event",
             eph,
           );
           this.ephemeralFailCount = 0;
-          let delivered = false;
-          try {
-            const parsed = JSON.parse(text) as { delivered?: boolean };
-            delivered = !!parsed.delivered;
-          } catch {
-            /* ignore */
-          }
-          if (delivered) return;
-          // Mid-turn liveStream must not fall through to durable — that would write
-          // every token to PG. Turn-end reconcile persists the final transcript.
-          if (opts?.liveStream) {
-            this.logEphemeralIssue(
-              "ephemeral not delivered (replica miss?) — skipping durable for liveStream",
-            );
-            return;
-          }
-          // Completed/non-live: durable fallback for cross-replica UI.
-          console.error(
-            "ChimpHands ephemeral not delivered (replica miss?) — persisting via post_agent_event",
-          );
         } catch (err: unknown) {
           const detail = err instanceof Error ? err.message : String(err);
-          if (opts?.liveStream) {
-            this.logEphemeralIssue(`ephemeral post failed — skipping durable for liveStream: ${detail}`);
-            return;
-          }
-          console.error(`ChimpHands ephemeral post failed — durable fallback: ${detail}`);
+          this.logEphemeralIssue(`ephemeral post failed — not persisting liveStream: ${detail}`);
         }
+        return;
       }
 
       await postJson(this.backend, this.apiKey, "/api/chimphands/post_agent_event", body);
@@ -1812,7 +1793,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
             void poster.enqueue(role, content, {
               ...opts,
               opencodeSessionId,
-              // Explicitly not liveStream → always durable post_agent_event.
+              durable: true,
             });
           },
           noteWorkingBranch,
