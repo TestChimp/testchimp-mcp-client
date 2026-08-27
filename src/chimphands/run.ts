@@ -101,8 +101,8 @@ type BootstrapResponse = {
   workingBranchUrl?: string;
   ui_attached?: boolean;
   uiAttached?: boolean;
-  pending_user_messages?: Array<{ content?: string }>;
-  pendingUserMessages?: Array<{ content?: string }>;
+  pending_user_messages?: Array<{ id?: string; message_id?: string; content?: string }>;
+  pendingUserMessages?: Array<{ id?: string; messageId?: string; content?: string }>;
 };
 
 /** Protobuf JsonFormat uses camelCase; accept snake_case too for resilience. */
@@ -215,10 +215,8 @@ class AgentEventPoster {
     if (opts?.pullRequestUrl) body.pullRequestUrl = opts.pullRequestUrl;
 
     const streamRole = isStreamFanoutRole(role);
-    // Live token fanout only while UI watching; completed json events always go durable.
-    if (streamRole && opts?.liveStream && !this.uiAttached) {
-      return this.chain;
-    }
+    // Never drop liveStream tokens: ephemeral when UI is on this replica path,
+    // otherwise durable post_agent_event (cross-replica / detached safe).
 
     this.chain = this.chain.then(async () => {
       if (opts?.throttle || (streamRole && opts?.liveStream)) {
@@ -1043,7 +1041,7 @@ function runOpencode(
       callbacks.postEvent(ROLE_STATUS, "Agent is still working… (waiting for OpenCode output)", {
         status: STATUS_RUNNING,
       });
-    }, 45_000);
+    }, 15_000);
 
     const noteSessionId = (sessionId?: string) => {
       const id = sessionId?.trim();
@@ -1067,7 +1065,14 @@ function runOpencode(
         fatalError = fatal;
         return;
       }
-      const ev = parseOpencodeEvent(line);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        return;
+      }
+      // Newer OpenCode --format json uses bus shape (message.part.updated); normalize first.
+      const ev = normalizeStdoutOpencodeEvent(parsed) || parseOpencodeEvent(line);
       if (!ev?.type) return;
       noteSessionId(ev.sessionID);
 
@@ -1288,6 +1293,26 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   /** Do not open localhost OpenCode /event until serve has been (re)started with config. */
   let opencodeHttpReady = !attachUrl;
   let pendingUiAttached = !!(boot.uiAttached ?? boot.ui_attached);
+  /** Consecutive uiAttached=false heartbeats before stopping OpenCode SSE (multi-replica poison). */
+  let consecutiveUiDetached = 0;
+  const UI_DETACHED_STOP_AFTER = 3;
+  const startLiveSseIfNeeded = (reason: string) => {
+    if (!attachUrl || !opencodeHttpReady || stopLiveSse) return;
+    console.error(`ChimpHands ${reason}`);
+    stopLiveSse = startOpencodeSseRelay(attachUrl, {
+      getActiveSessionId: () => opencodeSessionId,
+      noteSessionId: (id) => {
+        if (id?.trim()) opencodeSessionId = id.trim();
+      },
+      postEvent: (role, content, opts) => {
+        poster.fireAndForget(role, content, {
+          ...opts,
+          opencodeSessionId: opts?.opencodeSessionId || opencodeSessionId,
+        });
+      },
+      onWorkingBranch: noteWorkingBranchPlaceholder,
+    });
+  };
   const syncLiveSse = (attached: boolean) => {
     poster.uiAttached = attached;
     pendingUiAttached = attached;
@@ -1298,23 +1323,26 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       }
       return;
     }
-    if (attached && !stopLiveSse) {
-      console.error("ChimpHands UI attached — starting OpenCode SSE fanout");
-      stopLiveSse = startOpencodeSseRelay(attachUrl, {
-        getActiveSessionId: () => opencodeSessionId,
-        noteSessionId: (id) => {
-          if (id?.trim()) opencodeSessionId = id.trim();
-        },
-        postEvent: (role, content, opts) => {
-          poster.fireAndForget(role, content, {
-            ...opts,
-            opencodeSessionId: opts?.opencodeSessionId || opencodeSessionId,
-          });
-        },
-        onWorkingBranch: noteWorkingBranchPlaceholder,
-      });
-    } else if (!attached && stopLiveSse) {
-      console.error("ChimpHands UI detached — stopping OpenCode SSE fanout");
+    if (attached) {
+      consecutiveUiDetached = 0;
+      startLiveSseIfNeeded("UI attached — starting OpenCode SSE fanout");
+      return;
+    }
+    // Keep SSE running so live tokens can durable-post even when heartbeat
+    // briefly reports false (UI EventSource on another FS replica).
+    consecutiveUiDetached += 1;
+    if (consecutiveUiDetached < UI_DETACHED_STOP_AFTER) {
+      if (!stopLiveSse) {
+        startLiveSseIfNeeded(
+          "starting OpenCode SSE fanout (durable until UI attaches)",
+        );
+      }
+      return;
+    }
+    if (stopLiveSse) {
+      console.error(
+        `ChimpHands UI detached for ${consecutiveUiDetached} heartbeats — stopping OpenCode SSE fanout`,
+      );
       stopLiveSse();
       stopLiveSse = null;
     }
@@ -1527,10 +1555,22 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   poster.fireAndForget(ROLE_STATUS, "Agent ready", { status: STATUS_RUNNING });
 
   let prompt = normalizeUserMessage(promptInput || bootStr(boot, "initial_prompt", "initialPrompt"));
+  // Bootstrap sets initialPrompt from the last pending user message AND returns
+  // pendingUserMessages — enqueue only messages that are not the initial prompt
+  // (otherwise the same turn runs twice: session=new then session=ses_…).
   const pending =
     boot.pending_user_messages || boot.pendingUserMessages || [];
+  const initialNorm = normalizeUserMessage(prompt);
   for (const m of pending) {
-    if (m?.content) enqueueUserMessage({ content: m.content });
+    const content = normalizeUserMessage(m?.content || "");
+    if (!content) continue;
+    if (initialNorm && content === initialNorm) continue;
+    const id =
+      ("id" in m && m.id) ||
+      ("message_id" in m && m.message_id) ||
+      ("messageId" in m && m.messageId) ||
+      undefined;
+    enqueueUserMessage({ id: id || undefined, content });
   }
 
   const waitForNextPrompt = (): Promise<string | null> =>
@@ -1687,7 +1727,9 @@ function startRuntimeHeartbeat(
           ui_attached?: boolean;
         };
         const attached = !!(data.uiAttached ?? data.ui_attached);
-        if (attached !== lastAttached) {
+        // Always notify on false so syncLiveSse can accumulate detach hysteresis;
+        // still skip duplicate true→true noise.
+        if (attached !== lastAttached || !attached) {
           lastAttached = attached;
           onUiAttached?.(attached);
         }
