@@ -29,6 +29,32 @@ function isStreamFanoutRole(role: string): boolean {
   return role === ROLE_ASSISTANT || role === ROLE_TOOL || role === ROLE_REASONING;
 }
 
+/**
+ * OpenCode sometimes emits the same thought as both a reasoning part and a text part.
+ * Skip ASSISTANT fanout when content matches (or is a streaming prefix of) reasoning.
+ */
+function isTextDuplicateOfReasoning(text: string, reasoningBodies: Iterable<string>): boolean {
+  const a = String(text || "").trim();
+  if (!a) return false;
+  for (const raw of reasoningBodies) {
+    const r = String(raw || "").trim();
+    if (!r) continue;
+    if (a === r) return true;
+    if (a.length >= 32 && r.length >= 32 && (r.startsWith(a) || a.startsWith(r))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function reasoningBodiesFromPartMap(textByPartId: Map<string, string>): string[] {
+  const out: string[] = [];
+  for (const [key, val] of textByPartId) {
+    if (key.startsWith("reasoning:")) out.push(val);
+  }
+  return out;
+}
+
 const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. You run on GitHub Actions, but this chat is an **interactive** conversation with the user in the TestChimp UI — same expectations as Cursor/Claude Code locally.
 
 ## Interactive session (mandatory — default)
@@ -522,9 +548,16 @@ async function reconcileOpencodeSessionMessages(
   let posted = 0;
   for (const msg of turnSlice) {
     if ((msg.info?.role || "").toLowerCase() !== "assistant") continue;
+    const reasoningBodies = (msg.parts || [])
+      .filter((p) => p.type === "reasoning" && p.text?.trim())
+      .map((p) => p.text!.trim());
     for (const part of msg.parts || []) {
       if (part.type === "text" && part.text?.trim()) {
-        postEvent(ROLE_ASSISTANT, part.text.trim(), {
+        const text = part.text.trim();
+        if (isTextDuplicateOfReasoning(text, reasoningBodies)) {
+          continue;
+        }
+        postEvent(ROLE_ASSISTANT, text, {
           messageId: opencodeMessageId("oc_text_", part),
         });
         posted += 1;
@@ -647,6 +680,9 @@ function startOpencodeSseRelay(
       if (field === "text") {
         const next = (textByPartId.get(partId) || "") + props.delta;
         textByPartId.set(partId, next);
+        if (isTextDuplicateOfReasoning(next, reasoningBodiesFromPartMap(textByPartId))) {
+          return;
+        }
         callbacks.postEvent(ROLE_ASSISTANT, next, liveOpts({
           messageId: `oc_text_${partId}`,
         }));
@@ -682,6 +718,9 @@ function startOpencodeSseRelay(
         if (part.text) next = part.text;
         textByPartId.set(partId, next);
         if (!next) return;
+        if (isTextDuplicateOfReasoning(next, reasoningBodiesFromPartMap(textByPartId))) {
+          return;
+        }
         callbacks.postEvent(ROLE_ASSISTANT, next, liveOpts({
           messageId: opencodeMessageId("oc_text_", part),
         }));
@@ -1214,7 +1253,9 @@ function runOpencode(
           if (!chunk) return;
           const partId = ev.part?.id || ev.part?.messageID;
           if (!partId) {
-            callbacks.postEvent(ROLE_ASSISTANT, chunk, { throttle: true });
+            if (!isTextDuplicateOfReasoning(chunk, reasoningBodiesFromPartMap(textByPartId))) {
+              callbacks.postEvent(ROLE_ASSISTANT, chunk, { throttle: true });
+            }
             return;
           }
           // Without attach, --format json may emit completed cumulative or deltas.
@@ -1226,6 +1267,9 @@ function runOpencode(
               ? chunk
               : prev + chunk;
           textByPartId.set(partId, next);
+          if (isTextDuplicateOfReasoning(next, reasoningBodiesFromPartMap(textByPartId))) {
+            return;
+          }
           callbacks.postEvent(ROLE_ASSISTANT, next, {
             throttle: true,
             messageId: opencodeMessageId("oc_text_", ev.part),
@@ -1625,6 +1669,24 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     poster.fireAndForget(role, content, bodyOpts);
   };
 
+  /** Drop assistant bubbles that are just the current user prompt echoed (often quoted). */
+  const postEventForTurn = (userPrompt: string, role: string, content: string, opts?: PostEventOptions) => {
+    if (role === ROLE_ASSISTANT) {
+      const a = String(content || "").trim();
+      const u = normalizeUserMessage(userPrompt);
+      if (a && u) {
+        const unquoted =
+          (a.startsWith('"') && a.endsWith('"')) || (a.startsWith("'") && a.endsWith("'"))
+            ? a.slice(1, -1).trim()
+            : a;
+        if (a === u || unquoted === u) {
+          return;
+        }
+      }
+    }
+    postEvent(role, content, opts);
+  };
+
   const complete = (status: string, errorMessage?: string) => {
     const body: Record<string, unknown> = { sessionId, status };
     if (errorMessage) body.errorMessage = String(errorMessage).slice(0, 4000);
@@ -1735,6 +1797,9 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       pullRequestUrl,
     );
 
+    const turnPostEvent: RunOpencodeCallbacks["postEvent"] = (role, content, opts) =>
+      postEventForTurn(prompt, role, content, opts);
+
     // Visible in chat (not filtered as routine). OpenCode may not emit text until a
     // part completes — without this the UI looks empty while the turn is running.
     postEvent(ROLE_STATUS, "Agent is working…", { status: STATUS_RUNNING });
@@ -1748,7 +1813,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         }).catch(() => {});
       },
       onWorkingBranch: noteWorkingBranch,
-      postEvent,
+      postEvent: turnPostEvent,
     }, attachUrl);
 
     if (
@@ -1771,7 +1836,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
           }).catch(() => {});
         },
         onWorkingBranch: noteWorkingBranch,
-        postEvent,
+        postEvent: turnPostEvent,
       }, attachUrl);
     }
 
@@ -1790,7 +1855,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
           attachUrl,
           opencodeSessionId,
           (role, content, opts) => {
-            void poster.enqueue(role, content, {
+            turnPostEvent(role, content, {
               ...opts,
               opencodeSessionId,
               durable: true,
