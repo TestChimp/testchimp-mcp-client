@@ -4,8 +4,10 @@
  * Does not write mcp.json — TestChimp MCP is wired via opencode.json for OpenCode.
  */
 
-import { execSync, spawn } from "node:child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, openSync, writeFileSync } from "node:fs";
+import fs from "node:fs/promises";
+import path from "node:path";
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
@@ -400,6 +402,36 @@ type OpencodeEvent = {
   error?: { name?: string; message?: string; data?: { message?: string } };
 };
 
+/**
+ * OpenCode `message.part.delta` always sends `field: "text"` for both reasoning and
+ * answer parts. Resolve kind from partID → type learned via `message.part.updated`.
+ */
+function resolveDeltaPartKind(
+  partId: string,
+  field: string | undefined,
+  partType: string | undefined,
+  partTypeById: Map<string, string>,
+): "text" | "reasoning" | "other" {
+  if (partType) {
+    partTypeById.set(partId, partType);
+  }
+  const known = partTypeById.get(partId);
+  if (known === "reasoning" || partType === "reasoning") {
+    partTypeById.set(partId, "reasoning");
+    return "reasoning";
+  }
+  if (known === "text" || partType === "text") {
+    partTypeById.set(partId, "text");
+    return "text";
+  }
+  // Unknown part: field is unreliable (reasoning deltas also use field "text").
+  if (field === "reasoning") {
+    partTypeById.set(partId, "reasoning");
+    return "reasoning";
+  }
+  return "text";
+}
+
 function parseOpencodeEvent(line: string): OpencodeEvent | null {
   try {
     return JSON.parse(line) as OpencodeEvent;
@@ -412,8 +444,14 @@ function parseOpencodeEvent(line: string): OpencodeEvent | null {
  * Newer OpenCode `--format json` lines often use the SSE bus shape
  * (`message.part.updated` + `properties.part`) instead of legacy `type: "text"`.
  * Normalize both into the same OpencodeEvent used by the stdout switch.
+ *
+ * `partTypeById` must be shared across lines: deltas use `field: "text"` for
+ * reasoning parts too — type comes from earlier `message.part.updated`.
  */
-function normalizeStdoutOpencodeEvent(raw: unknown): OpencodeEvent | null {
+function normalizeStdoutOpencodeEvent(
+  raw: unknown,
+  partTypeById: Map<string, string>,
+): OpencodeEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   // Global envelope
@@ -445,13 +483,19 @@ function normalizeStdoutOpencodeEvent(raw: unknown): OpencodeEvent | null {
     };
     const part = deltaProps.part;
     if (part) {
-      const partType = part.type || deltaProps.field || "";
+      const partId = part.id || part.messageID || deltaProps.partID || "";
+      const kind = partId
+        ? resolveDeltaPartKind(partId, deltaProps.field, part.type, partTypeById)
+        : part.type === "reasoning"
+          ? "reasoning"
+          : "text";
       let mapped: string | undefined;
-      if (partType === "text") mapped = "text";
-      else if (partType === "reasoning") mapped = "reasoning";
-      else if (partType === "tool") mapped = "tool_use";
+      if (kind === "text" || part.type === "text") mapped = "text";
+      else if (kind === "reasoning" || part.type === "reasoning") mapped = "reasoning";
+      else if (part.type === "tool") mapped = "tool_use";
       else return null;
       if (deltaProps.delta && !part.text) part.text = deltaProps.delta;
+      if (mapped === "reasoning") part.type = "reasoning";
       return {
         type: mapped,
         sessionID: part.sessionID || deltaProps.sessionID,
@@ -459,20 +503,27 @@ function normalizeStdoutOpencodeEvent(raw: unknown): OpencodeEvent | null {
       };
     }
     const partID = deltaProps.partID;
-    const field = deltaProps.field || "text";
     const delta = deltaProps.delta;
     if (!partID || delta == null || delta === "") return null;
-    if (field !== "text" && field !== "reasoning") return null;
+    if (deltaProps.field && deltaProps.field !== "text" && deltaProps.field !== "reasoning") {
+      return null;
+    }
+    const kind = resolveDeltaPartKind(partID, deltaProps.field, undefined, partTypeById);
+    if (kind !== "text" && kind !== "reasoning") return null;
     return {
-      type: field === "reasoning" ? "reasoning" : "text",
+      type: kind,
       sessionID: deltaProps.sessionID,
-      part: { id: partID, type: field, text: delta },
+      part: { id: partID, type: kind, text: delta },
     };
   }
 
   if (type === "message.part.updated") {
     const part = props.part;
     if (!part) return null;
+    const partId = part.id || part.messageID;
+    if (partId && part.type) {
+      partTypeById.set(partId, part.type);
+    }
     const partType = part.type || "";
     let mapped: string | undefined;
     if (partType === "text") mapped = "text";
@@ -626,6 +677,8 @@ function startOpencodeSseRelay(
   const ac = new AbortController();
   let stopped = false;
   const textByPartId = new Map<string, string>();
+  /** partID → "text" | "reasoning" | … from message.part.updated (deltas lie about field). */
+  const partTypeById = new Map<string, string>();
   const directory = process.cwd();
 
   const sessionMatches = (sessionId?: string): boolean => {
@@ -667,17 +720,26 @@ function startOpencodeSseRelay(
     const type = ev.type || "";
     const props = ev.properties || {};
 
-    // Token stream: { partID, field, delta } — often no `part` object.
+    // Token stream: { partID, field, delta } — field is usually "text" even for reasoning.
     if (type === "message.part.delta") {
       const part = props.part;
       const partId = props.partID || part?.id || part?.messageID;
-      const field = props.field || part?.type || "text";
       const sessionId = part?.sessionID || props.sessionID;
       if (!sessionMatches(sessionId)) return;
       callbacks.noteSessionId(sessionId);
       if (!partId || props.delta == null || props.delta === "") return;
 
-      if (field === "text") {
+      const kind = resolveDeltaPartKind(partId, props.field, part?.type, partTypeById);
+      if (kind === "reasoning") {
+        const key = `reasoning:${partId}`;
+        const next = (textByPartId.get(key) || "") + props.delta;
+        textByPartId.set(key, next);
+        callbacks.postEvent(ROLE_REASONING, next, liveOpts({
+          messageId: `oc_reasoning_${partId}`,
+        }));
+        return;
+      }
+      if (kind === "text") {
         const next = (textByPartId.get(partId) || "") + props.delta;
         textByPartId.set(partId, next);
         if (isTextDuplicateOfReasoning(next, reasoningBodiesFromPartMap(textByPartId))) {
@@ -685,15 +747,6 @@ function startOpencodeSseRelay(
         }
         callbacks.postEvent(ROLE_ASSISTANT, next, liveOpts({
           messageId: `oc_text_${partId}`,
-        }));
-        return;
-      }
-      if (field === "reasoning") {
-        const key = `reasoning:${partId}`;
-        const next = (textByPartId.get(key) || "") + props.delta;
-        textByPartId.set(key, next);
-        callbacks.postEvent(ROLE_REASONING, next, liveOpts({
-          messageId: `oc_reasoning_${partId}`,
         }));
       }
       return;
@@ -706,8 +759,12 @@ function startOpencodeSseRelay(
       if (!sessionMatches(sessionId)) return;
       callbacks.noteSessionId(sessionId);
 
+      const partId = part.id || part.messageID;
+      if (partId && part.type) {
+        partTypeById.set(partId, part.type);
+      }
+
       if (part.type === "text") {
-        const partId = part.id || part.messageID;
         if (!partId) return;
         let next = part.text || "";
         if (props.delta && !part.text) {
@@ -728,11 +785,17 @@ function startOpencodeSseRelay(
       }
 
       if (part.type === "reasoning") {
-        const partId = part.id || part.messageID;
         if (!partId) return;
+        // Deltas before type was known may have been buffered under the text key.
+        const orphanText = textByPartId.get(partId);
+        if (orphanText) {
+          textByPartId.delete(partId);
+        }
         let next = part.text || "";
         if (props.delta && !part.text) {
-          next = (textByPartId.get(`reasoning:${partId}`) || "") + props.delta;
+          next = (textByPartId.get(`reasoning:${partId}`) || orphanText || "") + props.delta;
+        } else if (!next && orphanText) {
+          next = orphanText;
         }
         if (part.text) next = part.text;
         textByPartId.set(`reasoning:${partId}`, next);
@@ -918,8 +981,10 @@ function isAssistantEchoOfSentPrompt(assistant: string, ...sentPrompts: string[]
     const p = String(raw || "").trim();
     if (!p) continue;
     if (a === p) return true;
-    // Streaming echo of the (usually long) wrapped prompt: only when clearly a prefix.
+    // Streaming echo from the start of the wrapped prompt.
     if (p.length >= 64 && a.length >= 24 && p.startsWith(a)) return true;
+    // Mid-wrap regurgitation (e.g. only the "Conversation so far:" section).
+    if (p.length >= 64 && a.length >= 40 && p.includes(a)) return true;
   }
   return false;
 }
@@ -1057,6 +1122,8 @@ type RunOpencodeCallbacks = {
   onSessionId?: (sessionId: string) => void;
   onWorkingBranch?: (branch: string, pullRequestUrl?: string) => void;
   postEvent: (role: string, content: string, opts?: PostEventOptions) => void;
+  getCancelRequested?: () => boolean;
+  onActiveChild?: (child: ChildProcess | null) => void;
 };
 
 function buildOpencodeArgs(
@@ -1186,7 +1253,7 @@ function runOpencode(
   opencodeSessionId: string | undefined,
   callbacks: RunOpencodeCallbacks,
   attachUrl?: string,
-): Promise<{ code: number; err: string; opencodeSessionId?: string }> {
+): Promise<{ code: number; err: string; opencodeSessionId?: string; cancelled?: boolean }> {
   let activeSessionId = opencodeSessionId?.trim() || undefined;
   const baseArgs = buildOpencodeArgs(prompt, model, activeSessionId, attachUrl);
   const preview = prompt.length > 120 ? `${prompt.slice(0, 117)}...` : prompt;
@@ -1199,6 +1266,7 @@ function runOpencode(
     stdio: ["pipe", "pipe", "pipe"],
     env: childEnv,
   });
+  callbacks.onActiveChild?.(child);
   try {
     child.stdin?.end();
   } catch {
@@ -1216,6 +1284,7 @@ function runOpencode(
     let buf = "";
     let fatalError: string | null = null;
     const textByPartId = new Map<string, string>();
+    const partTypeById = new Map<string, string>();
     let sawStdout = false;
     let progressTicker: ReturnType<typeof setInterval> | null = setInterval(() => {
       if (sawStdout) {
@@ -1259,7 +1328,7 @@ function runOpencode(
         return;
       }
       // Newer OpenCode --format json uses bus shape (message.part.updated); normalize first.
-      const ev = normalizeStdoutOpencodeEvent(parsed) || parseOpencodeEvent(line);
+      const ev = normalizeStdoutOpencodeEvent(parsed, partTypeById) || parseOpencodeEvent(line);
       if (!ev?.type) return;
       noteSessionId(ev.sessionID);
 
@@ -1369,6 +1438,7 @@ function runOpencode(
     });
 
     child.on("close", (code) => {
+      callbacks.onActiveChild?.(null);
       if (progressTicker) {
         clearInterval(progressTicker);
         progressTicker = null;
@@ -1378,6 +1448,10 @@ function runOpencode(
       }
       const stderrFatal = extractOpencodeFatalError(err);
       if (stderrFatal) fatalError = stderrFatal;
+      if (callbacks.getCancelRequested?.()) {
+        resolve({ code: 0, err: "", opencodeSessionId: activeSessionId, cancelled: true });
+        return;
+      }
       if (fatalError) {
         resolve({ code: 1, err: fatalError, opencodeSessionId: activeSessionId });
         return;
@@ -1395,6 +1469,77 @@ function runOpencode(
   });
 }
 
+function normalizeWorktreeRelativePath(filePath: string): string {
+  let p = String(filePath || "").trim().replace(/\\/g, "/");
+  while (p.startsWith("/")) p = p.slice(1);
+  if (!p || p.includes("\0")) {
+    throw new Error("invalid path");
+  }
+  const segments: string[] = [];
+  for (const part of p.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (!segments.length) throw new Error("invalid path");
+      segments.pop();
+      continue;
+    }
+    segments.push(part);
+  }
+  if (!segments.length) throw new Error("invalid path");
+  return segments.join("/");
+}
+
+async function ackWorktreeFileWrite(
+  backend: string,
+  apiKey: string,
+  sessionId: string,
+  requestId: string,
+  ok: boolean,
+  errorMessage?: string,
+): Promise<void> {
+  const body: Record<string, unknown> = {
+    sessionId,
+    requestId,
+    ok,
+  };
+  if (errorMessage) body.errorMessage = errorMessage.slice(0, 2000);
+  await postJson(backend, apiKey, "/api/chimphands/ack_worktree_file_write", body).catch(
+    (err: unknown) => {
+      console.error(
+        `ChimpHands ack_worktree_file_write failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    },
+  );
+}
+
+async function applyUserFileEdit(
+  backend: string,
+  apiKey: string,
+  sessionId: string,
+  edit: { requestId: string; path: string; content: string },
+  turnActive: () => boolean,
+): Promise<void> {
+  if (turnActive()) {
+    await ackWorktreeFileWrite(backend, apiKey, sessionId, edit.requestId, false, "agent turn in progress");
+    return;
+  }
+  try {
+    const relative = normalizeWorktreeRelativePath(edit.path);
+    const root = process.cwd();
+    const full = path.resolve(root, relative);
+    const rootResolved = path.resolve(root);
+    if (full !== rootResolved && !full.startsWith(rootResolved + path.sep)) {
+      throw new Error("path outside worktree");
+    }
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, edit.content, "utf8");
+    await ackWorktreeFileWrite(backend, apiKey, sessionId, edit.requestId, true);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await ackWorktreeFileWrite(backend, apiKey, sessionId, edit.requestId, false, msg);
+  }
+}
+
 function connectInboundStream(
   backend: string,
   apiKey: string,
@@ -1402,6 +1547,8 @@ function connectInboundStream(
   handlers: {
     onUserMessage: (msg: InboundUserMessage) => void;
     onIdle: () => void;
+    onCancelTurn?: () => void;
+    onUserFileEdit?: (edit: { requestId: string; path: string; content: string }) => void;
     shouldRun: () => boolean;
   },
 ): () => void {
@@ -1450,6 +1597,39 @@ function connectInboundStream(
               const data = line.slice(5).trim();
               if (eventName === "idle") {
                 handlers.onIdle();
+              } else if (eventName === "cancel_turn") {
+                try {
+                  const payload = JSON.parse(data) as { sessionId?: string };
+                  if (payload.sessionId && payload.sessionId !== sessionId) {
+                    continue;
+                  }
+                } catch {
+                  /* ignore malformed payload */
+                }
+                handlers.onCancelTurn?.();
+              } else if (eventName === "user_file_edit") {
+                try {
+                  const edit = JSON.parse(data) as {
+                    sessionId?: string;
+                    requestId?: string;
+                    request_id?: string;
+                    path?: string;
+                    content?: string;
+                  };
+                  if (edit.sessionId && edit.sessionId !== sessionId) {
+                    continue;
+                  }
+                  const requestId = edit.requestId || edit.request_id;
+                  if (requestId && edit.path) {
+                    handlers.onUserFileEdit?.({
+                      requestId,
+                      path: edit.path,
+                      content: edit.content ?? "",
+                    });
+                  }
+                } catch {
+                  /* ignore */
+                }
               } else if (eventName === "user_message" || eventName === "message") {
                 try {
                   const msg = JSON.parse(data) as {
@@ -1657,6 +1837,16 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   let sessionActive = true;
   let lastUserActivity = Date.now();
   let exitCode: number | undefined;
+  let cancelTurnRequested = false;
+  let activeOpencodeChild: ChildProcess | null = null;
+  let agentTurnInProgress = false;
+
+  const turnControl = {
+    getCancelRequested: () => cancelTurnRequested,
+    onActiveChild: (child: ChildProcess | null) => {
+      activeOpencodeChild = child;
+    },
+  };
 
   const enqueueUserMessage = (msg: InboundUserMessage) => {
     const id = msg.id?.trim();
@@ -1737,6 +1927,20 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     onIdle: () => {
       idle = true;
     },
+    onCancelTurn: () => {
+      cancelTurnRequested = true;
+      const ch = activeOpencodeChild;
+      if (ch && !ch.killed) {
+        try {
+          ch.kill("SIGTERM");
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    onUserFileEdit: (edit) => {
+      void applyUserFileEdit(backend, apiKey, sessionId, edit, () => agentTurnInProgress);
+    },
     shouldRun: () => sessionActive,
   });
 
@@ -1815,6 +2019,8 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     });
 
   while (prompt) {
+    cancelTurnRequested = false;
+    agentTurnInProgress = true;
     let useOpencodeSessionId = opencodeSessionId;
     let isNewOpencodeSession = !useOpencodeSessionId;
     let effectivePrompt = wrapPromptWithContext(
@@ -1842,6 +2048,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       },
       onWorkingBranch: noteWorkingBranch,
       postEvent: turnPostEvent,
+      ...turnControl,
     }, attachUrl);
 
     if (
@@ -1865,8 +2072,11 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         },
         onWorkingBranch: noteWorkingBranch,
         postEvent: turnPostEvent,
+        ...turnControl,
       }, attachUrl);
     }
+
+    agentTurnInProgress = false;
 
     await poster.flush();
 
@@ -1899,7 +2109,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       }
     }
 
-    if (result.code !== 0) {
+    if (result.code !== 0 && !result.cancelled) {
       const errMsg = (result.err || "opencode failed").trim() || "opencode failed";
       console.error(`ChimpHands OpenCode failed: ${errMsg}`);
       try {
@@ -1923,7 +2133,11 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       break;
     }
 
-    postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
+    if (result.cancelled) {
+      postEvent(ROLE_STATUS, "Turn stopped", { status: STATUS_WAITING_USER });
+    } else {
+      postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
+    }
     lastUserActivity = Date.now();
     idle = false;
     prompt = (await waitForNextPrompt()) || "";
