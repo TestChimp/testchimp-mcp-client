@@ -1286,6 +1286,31 @@ function runOpencode(
     const textByPartId = new Map<string, string>();
     const partTypeById = new Map<string, string>();
     let sawStdout = false;
+    let cancelEscalationTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelWatcher: ReturnType<typeof setInterval> | null = null;
+    const clearCancelWatcher = () => {
+      if (cancelWatcher) {
+        clearInterval(cancelWatcher);
+        cancelWatcher = null;
+      }
+      if (cancelEscalationTimer) {
+        clearTimeout(cancelEscalationTimer);
+        cancelEscalationTimer = null;
+      }
+    };
+    const killActiveChild = (signal: NodeJS.Signals) => {
+      try {
+        if (!child.killed) child.kill(signal);
+      } catch {
+        /* ignore */
+      }
+    };
+    cancelWatcher = setInterval(() => {
+      if (!callbacks.getCancelRequested?.()) return;
+      clearCancelWatcher();
+      killActiveChild("SIGTERM");
+      cancelEscalationTimer = setTimeout(() => killActiveChild("SIGKILL"), 2000);
+    }, 500);
     let progressTicker: ReturnType<typeof setInterval> | null = setInterval(() => {
       if (sawStdout) {
         if (progressTicker) {
@@ -1439,6 +1464,7 @@ function runOpencode(
 
     child.on("close", (code) => {
       callbacks.onActiveChild?.(null);
+      clearCancelWatcher();
       if (progressTicker) {
         clearInterval(progressTicker);
         progressTicker = null;
@@ -1927,22 +1953,31 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   };
   if (userId) childEnv.TESTCHIMP_USER_ID = userId;
 
+  const handleCancelTurn = () => {
+    cancelTurnRequested = true;
+    const ch = activeOpencodeChild;
+    if (ch && !ch.killed) {
+      try {
+        ch.kill("SIGTERM");
+        setTimeout(() => {
+          try {
+            if (!ch.killed) ch.kill("SIGKILL");
+          } catch {
+            /* ignore */
+          }
+        }, 2000);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
   const stopInbound = connectInboundStream(backend, apiKey, sessionId, {
     onUserMessage: enqueueUserMessage,
     onIdle: () => {
       idle = true;
     },
-    onCancelTurn: () => {
-      cancelTurnRequested = true;
-      const ch = activeOpencodeChild;
-      if (ch && !ch.killed) {
-        try {
-          ch.kill("SIGTERM");
-        } catch {
-          /* ignore */
-        }
-      }
-    },
+    onCancelTurn: handleCancelTurn,
     onUserFileEdit: handleUserFileEdit,
     shouldRun: () => sessionActive,
   });
@@ -1950,6 +1985,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   if (runtimeId && attachUrl) {
     stopTunnel = startTunnelWorker(backend, apiKey, runtimeId, attachUrl, sessionId, {
       onUserFileEdit: handleUserFileEdit,
+      onCancelTurn: handleCancelTurn,
     });
   }
 
@@ -2288,6 +2324,7 @@ function startTunnelWorker(
   sessionId: string,
   handlers?: {
     onUserFileEdit?: (edit: { requestId: string; path: string; content: string }) => void;
+    onCancelTurn?: () => void;
   },
 ): () => void {
   let stopped = false;
@@ -2444,6 +2481,14 @@ function startTunnelWorker(
         if (frame.type === "pong") return;
         if (frame.type === "ping") {
           socket.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
+        if (frame.type === "inbound_event" && frame.event === "cancel_turn") {
+          const payload = frame.data as { sessionId?: string } | undefined;
+          if (payload?.sessionId && payload.sessionId !== sessionId) {
+            return;
+          }
+          handlers?.onCancelTurn?.();
           return;
         }
         if (frame.type === "inbound_event" && frame.event === "user_file_edit" && frame.data) {
