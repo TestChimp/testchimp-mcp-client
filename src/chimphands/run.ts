@@ -1786,9 +1786,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         syncLiveSse(attached);
       })
     : () => {};
-  const stopTunnel = runtimeId && attachUrl
-    ? startTunnelWorker(backend, apiKey, runtimeId, attachUrl)
-    : () => {};
+  let stopTunnel: () => void = () => {};
 
   const userId = bootStr(boot, "chimphands_service_account_user_id", "chimphandsServiceAccountUserId");
   if (userId) {
@@ -1880,6 +1878,13 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
   };
 
+  const seenWorktreeWriteRequestIds = new Set<string>();
+  const handleUserFileEdit = (edit: { requestId: string; path: string; content: string }) => {
+    if (seenWorktreeWriteRequestIds.has(edit.requestId)) return;
+    seenWorktreeWriteRequestIds.add(edit.requestId);
+    void applyUserFileEdit(backend, apiKey, sessionId, edit, () => agentTurnInProgress);
+  };
+
   const postEvent = (role: string, content: string, opts?: PostEventOptions) => {
     const bodyOpts: PostEventOptions = { ...opts };
     if (opencodeSessionId && !bodyOpts.opencodeSessionId) {
@@ -1938,11 +1943,15 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         }
       }
     },
-    onUserFileEdit: (edit) => {
-      void applyUserFileEdit(backend, apiKey, sessionId, edit, () => agentTurnInProgress);
-    },
+    onUserFileEdit: handleUserFileEdit,
     shouldRun: () => sessionActive,
   });
+
+  if (runtimeId && attachUrl) {
+    stopTunnel = startTunnelWorker(backend, apiKey, runtimeId, attachUrl, sessionId, {
+      onUserFileEdit: handleUserFileEdit,
+    });
+  }
 
   const shutdownRuntime = async () => {
     sessionActive = false;
@@ -2276,6 +2285,10 @@ function startTunnelWorker(
   apiKey: string,
   runtimeId: string,
   attachUrl: string,
+  sessionId: string,
+  handlers?: {
+    onUserFileEdit?: (edit: { requestId: string; path: string; content: string }) => void;
+  },
 ): () => void {
   let stopped = false;
   const base = attachUrl.replace(/\/$/, "");
@@ -2413,6 +2426,14 @@ function startTunnelWorker(
         const text = typeof data === "string" ? data : data.toString("utf8");
         const frame = JSON.parse(text) as {
           type?: string;
+          event?: string;
+          data?: {
+            sessionId?: string;
+            requestId?: string;
+            request_id?: string;
+            path?: string;
+            content?: string;
+          };
           requestId?: string;
           method?: string;
           path?: string;
@@ -2423,6 +2444,21 @@ function startTunnelWorker(
         if (frame.type === "pong") return;
         if (frame.type === "ping") {
           socket.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
+        if (frame.type === "inbound_event" && frame.event === "user_file_edit" && frame.data) {
+          const edit = frame.data;
+          if (edit.sessionId && edit.sessionId !== sessionId) {
+            return;
+          }
+          const requestId = edit.requestId || edit.request_id;
+          if (requestId && edit.path) {
+            handlers?.onUserFileEdit?.({
+              requestId,
+              path: edit.path,
+              content: edit.content ?? "",
+            });
+          }
           return;
         }
         if (frame.type === "http_request" || frame.requestId) {
