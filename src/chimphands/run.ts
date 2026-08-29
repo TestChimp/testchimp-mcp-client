@@ -71,7 +71,7 @@ const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. Y
 - This conversation uses ONE working branch and ONE pull request. Reuse them for all follow-up work in this chat.
 - If bootstrap lists a working branch, checkout that branch and push additional commits there — update the same PR.
 - Only create a NEW branch/PR when (a) no working branch exists yet for this conversation, or (b) the prior PR was merged/closed (verify with \`gh pr view\`).
-- Commit and push on the session working branch after meaningful edit batches. The host also commits any dirty worktree before idle teardown — keep the branch pushed so the UI can show diffs from GitHub.
+- Commit and push on the session working branch after meaningful edit batches. When \`CHIMPHANDS_UI_ATTACHED\` is \`false\` (no browser watching live), **commit and push before ending every turn** so the user can review async via PR / Files changed. The host also commits any remaining dirty worktree after each turn and before idle teardown.
 - Branch names MUST start with \`testchimp-\` or \`chimphands-\`.
 - When creating a NEW working branch: create it, then IMMEDIATELY publish it with
   \`git push -u origin <branch>\` BEFORE calling report-branch. Users open the branch URL in the UI —
@@ -1113,10 +1113,12 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
   const modelId = resolveOpencodeModelId(boot);
   const model = `${TESTCHIMP_PROVIDER_ID}/${modelId}`;
   const sessionId = bootStr(boot, "session_id", "sessionId");
+  const uiAttached = !!(boot.uiAttached ?? boot.ui_attached);
   const mcpEnv: Record<string, string> = {
     TESTCHIMP_API_KEY: apiKey,
     TESTCHIMP_BACKEND_URL: backend,
     TESTCHIMP_EXECUTION_SOURCE: "CLOUD_AGENT",
+    CHIMPHANDS_UI_ATTACHED: uiAttached ? "true" : "false",
   };
   const serviceUserId = bootStr(boot, "chimphands_service_account_user_id", "chimphandsServiceAccountUserId");
   if (serviceUserId) {
@@ -1812,6 +1814,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   const githubRunId = (process.env.GITHUB_RUN_ID || "").trim();
   const poster = new AgentEventPoster(backend, apiKey, sessionId);
   poster.uiAttached = !!(boot.uiAttached ?? boot.ui_attached);
+  process.env.CHIMPHANDS_UI_ATTACHED = poster.uiAttached ? "true" : "false";
 
   let stopLiveSse: (() => void) | null = null;
   /** Do not open localhost OpenCode /event until serve has been (re)started with config. */
@@ -1839,6 +1842,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   };
   const syncLiveSse = (attached: boolean) => {
     pendingUiAttached = attached;
+    process.env.CHIMPHANDS_UI_ATTACHED = attached ? "true" : "false";
     if (!attachUrl) {
       poster.uiAttached = attached;
       return;
@@ -2270,6 +2274,12 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       }
     }
 
+    // Async / no UI: checkpoint dirty worktree after each turn so PR + Files changed
+    // are reviewable when the user opens the session later (live VCS tunnel may be idle).
+    if (!poster.uiAttached) {
+      await commitAndPushDirtyWorktree("chimphands: commit after turn (async / no UI attached)");
+    }
+
     if (result.code !== 0 && !result.cancelled) {
       const errMsg = (result.err || "opencode failed").trim() || "opencode failed";
       console.error(`ChimpHands OpenCode failed: ${errMsg}`);
@@ -2436,7 +2446,10 @@ function opencodeProxyNeedsDirectory(path: string): boolean {
   const p = path.startsWith("/") ? path : `/${path}`;
   return (
     p.startsWith("/vcs") ||
+    p.startsWith("/api/vcs") ||
     p.startsWith("/file") ||
+    p.startsWith("/api/fs") ||
+    p.startsWith("/api/session") ||
     p.startsWith("/path") ||
     p.startsWith("/session") ||
     p.startsWith("/instance") ||
