@@ -1612,6 +1612,23 @@ export function buildCliProgram(): Command {
     });
 
   chimphands
+    .command("refresh-git-auth")
+    .description(
+      "Remint a short-lived GitHub App installation token and apply it for git/gh (never prints the token)",
+    )
+    .action(async () => {
+      const { refreshGitAuth } = await import("../chimphands/refreshGitAuth.js");
+      try {
+        const result = await refreshGitAuth();
+        console.log(JSON.stringify(result));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[testchimp chimphands refresh-git-auth] ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  chimphands
     .command("run")
     .description("Bootstrap session, configure OpenCode, and run the interactive bridge")
     .option("--session-id <id>", "ChimpHands session id (or SESSION_ID env)")

@@ -79,6 +79,7 @@ const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. Y
 - After the branch is on the remote (and after opening a PR), IMMEDIATELY run:
   \`testchimp chimphands report-branch --branch <name> [--pr-url <url>]\`
 - Tell the user which branch you are on and include the PR URL when available.
+- **GitHub auth expiry (self-fix):** Job-start App installation tokens expire after ~1 hour. On \`git push\` / \`gh\` auth failures (401/403 / Authentication failed / write access not granted), run \`testchimp chimphands refresh-git-auth\` then retry — **never** ask the user to paste or reconnect a GitHub token in chat. See skill \`references/chimphands-faq.md\`.
 
 ## TestChimp workflows (/testchimp …)
 - Load and follow the \`testchimp\` skill under \`.agents/skills/testchimp/SKILL.md\`.
@@ -206,17 +207,26 @@ function apiHeaders(apiKey: string): Record<string, string> {
   };
 }
 
+const POST_JSON_TIMEOUT_MS = 30_000;
+
 async function postJson(backend: string, apiKey: string, path: string, body: unknown): Promise<string> {
-  const res = await fetch(`${backend}${path}`, {
-    method: "POST",
-    headers: apiHeaders(apiKey),
-    body: JSON.stringify(body ?? {}),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`ChimpHands API ${res.status} ${path}: ${text}`);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), POST_JSON_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${backend}${path}`, {
+      method: "POST",
+      headers: apiHeaders(apiKey),
+      body: JSON.stringify(body ?? {}),
+      signal: ac.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`ChimpHands API ${res.status} ${path}: ${text}`);
+    }
+    return text;
+  } finally {
+    clearTimeout(timer);
   }
-  return text;
 }
 
 /** Serializes agent event posts so streaming chunks fan out in order. */
@@ -438,12 +448,31 @@ function mapToolExecutionStatus(status?: string): string | undefined {
   return undefined;
 }
 
+/** First observed start time per OpenCode tool part — progress updates must not reset the UI countdown. */
+const toolStartedAtByPartId = new Map<string, number>();
+
 function toolExecutionFromOpencodePart(part: OpencodePart): ChimpHandsToolExecutionPayload | undefined {
   const status = mapToolExecutionStatus(part.state?.status);
   if (!status) return undefined;
-  const startedAtMillis =
-    normalizeEpochMillis(part.state?.time?.start) ??
-    (status === TOOL_STATUS_RUNNING ? Date.now() : undefined);
+  const partKey = String(part.id || part.messageID || "").trim();
+  const fromOpencode = normalizeEpochMillis(part.state?.time?.start);
+  const cached = partKey ? toolStartedAtByPartId.get(partKey) : undefined;
+  const isActive =
+    status === TOOL_STATUS_PENDING || status === TOOL_STATUS_RUNNING;
+  let startedAtMillis = cached ?? fromOpencode;
+  if (startedAtMillis == null && isActive) {
+    startedAtMillis = Date.now();
+  }
+  if (partKey) {
+    if (isActive && startedAtMillis != null) {
+      toolStartedAtByPartId.set(partKey, startedAtMillis);
+    } else if (
+      status === TOOL_STATUS_COMPLETED ||
+      status === TOOL_STATUS_ERROR
+    ) {
+      toolStartedAtByPartId.delete(partKey);
+    }
+  }
   const endedAtMillis = normalizeEpochMillis(part.state?.time?.end);
   const toolName = String(part.state?.title || part.tool || "").trim() || undefined;
   const timeoutMillis = coerceTimeoutMillis(part.state?.input);
@@ -1098,9 +1127,9 @@ function detectWorkingBranchFromToolOutput(output: string): { branch?: string; p
   // Only auto-detect after a successful push to origin — local checkout -b alone would
   // report a branch URL that 404s until the remote ref exists.
   const pushMatch = text.match(
-    /push\s+(?:--set-upstream\s+|-u\s+)?origin\s+((?:testchimp-|chimphands-)[^\s'"]+)/i
+    /push\s+(?:--set-upstream\s+|-u\s+)?origin\s+((?:testchimp-|chimphands-)[^\s'"\[\]]+)/i
   );
-  const branch = pushMatch?.[1]?.replace(/[`'"]/g, "");
+  const branch = pushMatch?.[1]?.replace(/[`'"\[\]]/g, "");
   return {
     branch,
     pullRequestUrl: prMatch?.[0],
@@ -1689,6 +1718,7 @@ function connectInboundStream(
   let stopped = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelayMs = 1000;
+  let activeReq: http.ClientRequest | null = null;
 
   const scheduleReconnect = () => {
     if (stopped || !handlers.shouldRun()) return;
@@ -1702,6 +1732,14 @@ function connectInboundStream(
 
   const connect = () => {
     if (stopped || !handlers.shouldRun()) return;
+    if (activeReq) {
+      try {
+        activeReq.destroy();
+      } catch {
+        /* ignore */
+      }
+      activeReq = null;
+    }
     const req = lib.request(
       {
         hostname: url.hostname,
@@ -1779,17 +1817,35 @@ function connectInboundStream(
             }
           }
         });
-        res.on("end", () => scheduleReconnect());
+        res.on("end", () => {
+          if (activeReq === req) activeReq = null;
+          scheduleReconnect();
+        });
       },
     );
-    req.on("error", () => scheduleReconnect());
+    activeReq = req;
+    req.on("error", () => {
+      if (activeReq === req) activeReq = null;
+      scheduleReconnect();
+    });
     req.end();
   };
 
   connect();
   return () => {
     stopped = true;
-    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (activeReq) {
+      try {
+        activeReq.destroy();
+      } catch {
+        /* ignore */
+      }
+      activeReq = null;
+    }
   };
 }
 
@@ -1968,6 +2024,13 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   let cancelTurnRequested = false;
   let activeOpencodeChild: ChildProcess | null = null;
   let agentTurnInProgress = false;
+  /** Wakes waitForNextPrompt when idle is signaled (SSE) or a user message arrives. */
+  let wakeWaitForPrompt: (() => void) | null = null;
+  const wakePromptWaiter = () => {
+    const wake = wakeWaitForPrompt;
+    wakeWaitForPrompt = null;
+    wake?.();
+  };
 
   const turnControl = {
     getCancelRequested: () => cancelTurnRequested,
@@ -1987,6 +2050,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     queue.push(content);
     lastUserActivity = Date.now();
     idle = false;
+    wakePromptWaiter();
     const preview = content.length > 120 ? `${content.slice(0, 117)}...` : content;
     console.error(
       `ChimpHands queued user message (turnActive=${agentTurnInProgress}, depth=${queue.length}): ${JSON.stringify(preview)}`,
@@ -2044,13 +2108,15 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     postEvent(role, content, opts);
   };
 
-  const complete = (status: string, errorMessage?: string) => {
+  const complete = async (status: string, errorMessage?: string) => {
     const body: Record<string, unknown> = { sessionId, status };
     if (errorMessage) body.errorMessage = String(errorMessage).slice(0, 4000);
     if (githubRunId) body.githubRunId = githubRunId;
-    void postJson(backend, apiKey, "/api/chimphands/complete_session", body).catch((err: unknown) => {
+    try {
+      await postJson(backend, apiKey, "/api/chimphands/complete_session", body);
+    } catch (err: unknown) {
       console.error(`ChimpHands complete_session failed: ${err instanceof Error ? err.message : String(err)}`);
-    });
+    }
   };
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -2089,6 +2155,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     onUserMessage: enqueueUserMessage,
     onIdle: () => {
       idle = true;
+      wakePromptWaiter();
     },
     onCancelTurn: handleCancelTurn,
     onUserFileEdit: handleUserFileEdit,
@@ -2118,6 +2185,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       stopLiveSse();
       stopLiveSse = null;
     }
+    wakePromptWaiter();
     await commitAndPushDirtyWorktree("chimphands: commit before session idle/shutdown");
     await poster.flush();
     if (runtimeId) {
@@ -2153,30 +2221,44 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   const waitForNextPrompt = (): Promise<string | null> =>
     new Promise((resolve) => {
       let lastPollAt = 0;
-      const tick = () => {
+      let settled = false;
+      const finish = (value: string | null) => {
+        if (settled) return;
+        settled = true;
+        wakeWaitForPrompt = null;
+        resolve(value);
+      };
+      wakeWaitForPrompt = () => {
+        if (settled) return;
         if (queue.length) {
-          resolve(normalizeUserMessage(queue.shift()!));
+          finish(normalizeUserMessage(queue.shift()!));
+          return;
+        }
+        if (idle || Date.now() - lastUserActivity >= idleMs) {
+          finish(null);
+        }
+      };
+      const tick = () => {
+        if (settled) return;
+        if (queue.length) {
+          finish(normalizeUserMessage(queue.shift()!));
           return;
         }
         const now = Date.now();
+        if (idle || now - lastUserActivity >= idleMs) {
+          finish(null);
+          return;
+        }
+        // Never gate the idle clock on consume_pending — a hung poll used to
+        // block waitForNextPrompt forever and keep the Actions job alive.
         if (now - lastPollAt >= 1500) {
           lastPollAt = now;
           void pollPendingUserMessages().then(() => {
+            if (settled) return;
             if (queue.length) {
-              resolve(normalizeUserMessage(queue.shift()!));
-              return;
+              finish(normalizeUserMessage(queue.shift()!));
             }
-            if (idle || now - lastUserActivity >= idleMs) {
-              resolve(null);
-              return;
-            }
-            setTimeout(tick, 500);
           });
-          return;
-        }
-        if (idle || now - lastUserActivity >= idleMs) {
-          resolve(null);
-          return;
         }
         setTimeout(tick, 500);
       };
@@ -2298,7 +2380,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         const detail = reportErr instanceof Error ? reportErr.message : String(reportErr);
         console.error(`ChimpHands failed to report OpenCode error to backend: ${detail}`);
         postEvent(ROLE_STATUS, errMsg, { status: STATUS_FAILED });
-        complete(STATUS_FAILED, errMsg);
+        await complete(STATUS_FAILED, errMsg);
       }
       exitCode = result.code || 1;
       break;
@@ -2309,6 +2391,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     } else {
       postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
     }
+    await poster.flush();
     lastUserActivity = Date.now();
     idle = false;
     prompt = (await waitForNextPrompt()) || "";
@@ -2316,14 +2399,14 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
 
   if (exitCode == null) {
     console.error("ChimpHands session idle — no user input before timeout; completing.");
-    complete(STATUS_IDLE);
+    await complete(STATUS_IDLE);
   }
   } finally {
     await shutdownRuntime();
   }
-  if (exitCode != null) {
-    process.exit(exitCode);
-  }
+  // Always exit: tunnel WS / inbound SSE / heartbeat timers otherwise keep the
+  // Actions step alive after a successful idle teardown.
+  process.exit(exitCode ?? 0);
 }
 
 function startRuntimeHeartbeat(
@@ -2429,10 +2512,31 @@ async function commitAndPushDirtyWorktree(message: string): Promise<void> {
       console.error(`ChimpHands git commit: ${commit.err || commit.out}`);
       return;
     }
-    const push = await run(["push", "-u", "origin", "HEAD"]);
+    let push = await run(["push", "-u", "origin", "HEAD"]);
     if (push.code !== 0) {
+      const detail = `${push.err || ""}\n${push.out || ""}`;
       console.error(`ChimpHands git push failed: ${push.err || push.out}`);
-      return;
+      try {
+        const { looksLikeGitAuthFailure, refreshGitAuth } = await import("./refreshGitAuth.js");
+        if (looksLikeGitAuthFailure(detail)) {
+          console.error("ChimpHands reminting GitHub write token after push auth failure…");
+          await refreshGitAuth();
+          push = await run(["push", "-u", "origin", "HEAD"]);
+          if (push.code !== 0) {
+            console.error(`ChimpHands git push failed after refresh: ${push.err || push.out}`);
+            return;
+          }
+        } else {
+          return;
+        }
+      } catch (refreshErr: unknown) {
+        console.error(
+          `ChimpHands refresh-git-auth after push failure: ${
+            refreshErr instanceof Error ? refreshErr.message : String(refreshErr)
+          }`,
+        );
+        return;
+      }
     }
     console.error(`ChimpHands committed and pushed dirty worktree on ${current} before shutdown`);
   } catch (err: unknown) {
