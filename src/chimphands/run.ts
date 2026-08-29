@@ -2022,6 +2022,8 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   let lastUserActivity = Date.now();
   let exitCode: number | undefined;
   let cancelTurnRequested = false;
+  /** True when cancel was triggered by a mid-turn user message (steer), not Stop. */
+  let steerAbortRequested = false;
   let activeOpencodeChild: ChildProcess | null = null;
   let agentTurnInProgress = false;
   /** Wakes waitForNextPrompt when idle is signaled (SSE) or a user message arrives. */
@@ -2039,6 +2041,33 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     },
   };
 
+  /** Abort in-flight OpenCode turn (session HTTP abort + kill `opencode run` child). */
+  const abortActiveTurn = (reason: "cancel" | "steer") => {
+    cancelTurnRequested = true;
+    if (reason === "steer") {
+      steerAbortRequested = true;
+    }
+    const sessionToAbort = opencodeSessionId?.trim();
+    if (attachUrl && sessionToAbort) {
+      void abortOpencodeSession(attachUrl, sessionToAbort);
+    }
+    const ch = activeOpencodeChild;
+    if (ch && !ch.killed) {
+      try {
+        ch.kill("SIGTERM");
+        setTimeout(() => {
+          try {
+            if (!ch.killed) ch.kill("SIGKILL");
+          } catch {
+            /* ignore */
+          }
+        }, 2000);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
   const enqueueUserMessage = (msg: InboundUserMessage) => {
     const id = msg.id?.trim();
     if (id) {
@@ -2050,11 +2079,19 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     queue.push(content);
     lastUserActivity = Date.now();
     idle = false;
-    wakePromptWaiter();
     const preview = content.length > 120 ? `${content.slice(0, 117)}...` : content;
     console.error(
       `ChimpHands queued user message (turnActive=${agentTurnInProgress}, depth=${queue.length}): ${JSON.stringify(preview)}`,
     );
+    // OpenCode has no mid-turn inject: abort the active turn so the queued
+    // message is consumed immediately as the next prompt (course-correct).
+    if (agentTurnInProgress && !cancelTurnRequested) {
+      console.error(
+        `ChimpHands steering: aborting active turn so queued user message reaches OpenCode`,
+      );
+      abortActiveTurn("steer");
+    }
+    wakePromptWaiter();
   };
 
   const pollPendingUserMessages = async () => {
@@ -2129,26 +2166,8 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
 
   const handleCancelTurn = () => {
     console.error(`ChimpHands cancel_turn received for session ${sessionId}`);
-    cancelTurnRequested = true;
-    const sessionToAbort = opencodeSessionId?.trim();
-    if (attachUrl && sessionToAbort) {
-      void abortOpencodeSession(attachUrl, sessionToAbort);
-    }
-    const ch = activeOpencodeChild;
-    if (ch && !ch.killed) {
-      try {
-        ch.kill("SIGTERM");
-        setTimeout(() => {
-          try {
-            if (!ch.killed) ch.kill("SIGKILL");
-          } catch {
-            /* ignore */
-          }
-        }, 2000);
-      } catch {
-        /* ignore */
-      }
-    }
+    steerAbortRequested = false;
+    abortActiveTurn("cancel");
   };
 
   const stopInbound = connectInboundStream(backend, apiKey, sessionId, {
@@ -2267,19 +2286,29 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
 
   while (prompt) {
     cancelTurnRequested = false;
+    const wasSteered = steerAbortRequested;
+    steerAbortRequested = false;
     agentTurnInProgress = true;
     let useOpencodeSessionId = opencodeSessionId;
     let isNewOpencodeSession = !useOpencodeSessionId;
+    const promptForOpencode = wasSteered
+      ? [
+          "The previous agent turn was interrupted because the user sent a new message.",
+          "Stop any long-running watch/poll that no longer applies. Course-correct using this guidance:",
+          "",
+          prompt,
+        ].join("\n")
+      : prompt;
     let effectivePrompt = wrapPromptWithContext(
       conversationSummary,
-      prompt,
+      promptForOpencode,
       isNewOpencodeSession,
       workingBranch,
       pullRequestUrl,
     );
 
     const turnPostEvent: RunOpencodeCallbacks["postEvent"] = (role, content, opts) =>
-      postEventForTurn(prompt, effectivePrompt, role, content, opts);
+      postEventForTurn(promptForOpencode, effectivePrompt, role, content, opts);
 
     // Visible in chat (not filtered as routine). OpenCode may not emit text until a
     // part completes — without this the UI looks empty while the turn is running.
@@ -2386,7 +2415,10 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       break;
     }
 
-    if (result.cancelled) {
+    if (result.cancelled && (steerAbortRequested || queue.length > 0)) {
+      // Mid-turn user message aborted this turn — run the queued prompt next.
+      postEvent(ROLE_STATUS, "Incorporating your message…", { status: STATUS_RUNNING });
+    } else if (result.cancelled) {
       postEvent(ROLE_STATUS, "Turn stopped", { status: STATUS_WAITING_USER });
     } else {
       postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
