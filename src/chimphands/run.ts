@@ -184,6 +184,8 @@ type PostEventOptions = {
   opencodeSessionId?: string;
   workingBranch?: string;
   pullRequestUrl?: string;
+  /** Structured tool lifecycle for live UI countdown (not persisted to PG). */
+  toolExecution?: ChimpHandsToolExecutionPayload;
   /** When true, coalesce rapid assistant/reasoning chunks. */
   throttle?: boolean;
   /**
@@ -247,6 +249,7 @@ class AgentEventPoster {
     if (opts?.opencodeSessionId) body.opencodeSessionId = opts.opencodeSessionId;
     if (opts?.workingBranch) body.workingBranch = opts.workingBranch;
     if (opts?.pullRequestUrl) body.pullRequestUrl = opts.pullRequestUrl;
+    if (opts?.toolExecution) body.toolExecution = opts.toolExecution;
 
     const streamRole = isStreamFanoutRole(role);
 
@@ -273,6 +276,7 @@ class AgentEventPoster {
         };
         if (opts?.messageId) eph.messageId = opts.messageId;
         if (opts?.opencodeSessionId) eph.opencodeSessionId = opts.opencodeSessionId;
+        if (opts?.toolExecution) eph.toolExecution = opts.toolExecution;
         try {
           await postJson(
             this.backend,
@@ -391,9 +395,75 @@ type OpencodePart = {
     status?: string;
     title?: string;
     output?: string;
+    error?: string;
     input?: Record<string, unknown>;
+    time?: { start?: number; end?: number };
   };
 };
+
+type ChimpHandsToolExecutionPayload = {
+  status: string;
+  toolName?: string;
+  startedAtMillis?: number;
+  timeoutMillis?: number;
+  endedAtMillis?: number;
+};
+
+const TOOL_STATUS_RUNNING = "CHIMPHANDS_TOOL_EXECUTION_STATUS_RUNNING";
+const TOOL_STATUS_PENDING = "CHIMPHANDS_TOOL_EXECUTION_STATUS_PENDING";
+const TOOL_STATUS_COMPLETED = "CHIMPHANDS_TOOL_EXECUTION_STATUS_COMPLETED";
+const TOOL_STATUS_ERROR = "CHIMPHANDS_TOOL_EXECUTION_STATUS_ERROR";
+
+function normalizeEpochMillis(raw?: number): number | undefined {
+  if (raw == null || !Number.isFinite(raw) || raw <= 0) return undefined;
+  // OpenCode uses epoch millis; guard seconds.
+  return raw < 1_000_000_000_000 ? Math.round(raw * 1000) : Math.round(raw);
+}
+
+function coerceTimeoutMillis(input?: Record<string, unknown>): number | undefined {
+  if (!input) return undefined;
+  const raw = input.timeout ?? input.timeoutMs ?? input.timeout_ms;
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.round(n);
+}
+
+function mapToolExecutionStatus(status?: string): string | undefined {
+  const s = String(status || "").trim().toLowerCase();
+  if (!s) return undefined;
+  if (s === "pending") return TOOL_STATUS_PENDING;
+  if (s === "running") return TOOL_STATUS_RUNNING;
+  if (s === "completed") return TOOL_STATUS_COMPLETED;
+  if (s === "error" || s === "failed" || s === "cancelled") return TOOL_STATUS_ERROR;
+  return undefined;
+}
+
+function toolExecutionFromOpencodePart(part: OpencodePart): ChimpHandsToolExecutionPayload | undefined {
+  const status = mapToolExecutionStatus(part.state?.status);
+  if (!status) return undefined;
+  const startedAtMillis =
+    normalizeEpochMillis(part.state?.time?.start) ??
+    (status === TOOL_STATUS_RUNNING ? Date.now() : undefined);
+  const endedAtMillis = normalizeEpochMillis(part.state?.time?.end);
+  const toolName = String(part.state?.title || part.tool || "").trim() || undefined;
+  const timeoutMillis = coerceTimeoutMillis(part.state?.input);
+  return {
+    status,
+    toolName,
+    startedAtMillis,
+    timeoutMillis,
+    endedAtMillis,
+  };
+}
+
+function toolEventOptions(
+  part: OpencodePart,
+  extra?: PostEventOptions,
+): PostEventOptions {
+  const toolExecution = toolExecutionFromOpencodePart(part);
+  if (!toolExecution) return extra ?? {};
+  return { ...extra, toolExecution };
+}
 
 type OpencodeEvent = {
   type?: string;
@@ -621,9 +691,9 @@ async function reconcileOpencodeSessionMessages(
         const status = part.state?.status;
         if (!status || status === "pending" || status === "running") continue;
         const toolContent = formatToolUseContent(part);
-        postEvent(ROLE_TOOL, toolContent, {
+        postEvent(ROLE_TOOL, toolContent, toolEventOptions(part, {
           messageId: opencodeMessageId("oc_tool_", part),
-        });
+        }));
         posted += 1;
         if (status === "completed") {
           const detected = detectWorkingBranchFromToolOutput(toolContent);
@@ -812,17 +882,17 @@ function startOpencodeSseRelay(
         // Ephemeral "(running)" bubbles while UI attached (liveStream gated in poster).
         if (status === "running") {
           const toolContent = formatToolUseContent(part);
-          callbacks.postEvent(ROLE_TOOL, toolContent, liveOpts({
+          callbacks.postEvent(ROLE_TOOL, toolContent, toolEventOptions(part, liveOpts({
             messageId: opencodeMessageId("oc_tool_", part),
             throttle: false,
-          }));
+          })));
           return;
         }
         const toolContent = formatToolUseContent(part);
-        callbacks.postEvent(ROLE_TOOL, toolContent, liveOpts({
+        callbacks.postEvent(ROLE_TOOL, toolContent, toolEventOptions(part, liveOpts({
           messageId: opencodeMessageId("oc_tool_", part),
           throttle: false,
-        }));
+        })));
         if (status === "completed") {
           const detected = detectWorkingBranchFromToolOutput(toolContent);
           if (detected.branch) {
@@ -1126,6 +1196,40 @@ type RunOpencodeCallbacks = {
   onActiveChild?: (child: ChildProcess | null) => void;
 };
 
+/** Abort in-flight tool/LLM work on the local OpenCode server (attach mode). */
+async function abortOpencodeSession(attachUrl: string, opencodeSessionId: string): Promise<void> {
+  const base = attachUrl.replace(/\/$/, "");
+  const url = `${base}/session/${encodeURIComponent(opencodeSessionId)}/abort`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "x-opencode-directory": process.cwd(),
+      },
+    });
+    console.error(
+      `ChimpHands OpenCode session abort: session=${opencodeSessionId} http=${res.status}`,
+    );
+  } catch (err: unknown) {
+    console.error(
+      `ChimpHands OpenCode session abort failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function parseInboundUserMessage(data: unknown): InboundUserMessage | null {
+  if (!data || typeof data !== "object") return null;
+  const msg = data as Record<string, unknown>;
+  const content = typeof msg.content === "string" ? msg.content : "";
+  const idRaw =
+    (typeof msg.id === "string" && msg.id) ||
+    (typeof msg.message_id === "string" && msg.message_id) ||
+    (typeof msg.messageId === "string" && msg.messageId) ||
+    "";
+  return { id: idRaw || undefined, content };
+}
+
 function buildOpencodeArgs(
   prompt: string,
   model: string,
@@ -1426,9 +1530,9 @@ function runOpencode(
           const status = ev.part?.state?.status;
           if (!status || status === "pending" || status === "running") return;
           const toolContent = formatToolUseContent(ev.part!);
-          callbacks.postEvent(ROLE_TOOL, toolContent, {
+          callbacks.postEvent(ROLE_TOOL, toolContent, toolEventOptions(ev.part!, {
             messageId: opencodeMessageId("oc_tool_", ev.part),
-          });
+          }));
           if (status === "completed") {
             const detected = detectWorkingBranchFromToolOutput(toolContent);
             if (detected.branch) {
@@ -1632,6 +1736,7 @@ function connectInboundStream(
                 } catch {
                   /* ignore malformed payload */
                 }
+                console.error(`ChimpHands inbound SSE cancel_turn for session ${sessionId}`);
                 handlers.onCancelTurn?.();
               } else if (eventName === "user_file_edit") {
                 try {
@@ -1658,15 +1763,10 @@ function connectInboundStream(
                 }
               } else if (eventName === "user_message" || eventName === "message") {
                 try {
-                  const msg = JSON.parse(data) as {
-                    id?: string;
-                    message_id?: string;
-                    content?: string;
-                  };
-                  handlers.onUserMessage({
-                    id: msg.id || msg.message_id,
-                    content: msg.content || "",
-                  });
+                  const msg = parseInboundUserMessage(JSON.parse(data));
+                  if (!msg) continue;
+                  console.error(`ChimpHands inbound SSE user_message for session ${sessionId}`);
+                  handlers.onUserMessage(msg);
                 } catch {
                   /* ignore */
                 }
@@ -1883,6 +1983,10 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     queue.push(content);
     lastUserActivity = Date.now();
     idle = false;
+    const preview = content.length > 120 ? `${content.slice(0, 117)}...` : content;
+    console.error(
+      `ChimpHands queued user message (turnActive=${agentTurnInProgress}, depth=${queue.length}): ${JSON.stringify(preview)}`,
+    );
   };
 
   const pollPendingUserMessages = async () => {
@@ -1954,7 +2058,12 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   if (userId) childEnv.TESTCHIMP_USER_ID = userId;
 
   const handleCancelTurn = () => {
+    console.error(`ChimpHands cancel_turn received for session ${sessionId}`);
     cancelTurnRequested = true;
+    const sessionToAbort = opencodeSessionId?.trim();
+    if (attachUrl && sessionToAbort) {
+      void abortOpencodeSession(attachUrl, sessionToAbort);
+    }
     const ch = activeOpencodeChild;
     if (ch && !ch.killed) {
       try {
@@ -1982,15 +2091,22 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     shouldRun: () => sessionActive,
   });
 
+  const inboundPollTimer = setInterval(() => {
+    if (!sessionActive) return;
+    void pollPendingUserMessages();
+  }, 1500);
+
   if (runtimeId && attachUrl) {
     stopTunnel = startTunnelWorker(backend, apiKey, runtimeId, attachUrl, sessionId, {
       onUserFileEdit: handleUserFileEdit,
       onCancelTurn: handleCancelTurn,
+      onUserMessage: enqueueUserMessage,
     });
   }
 
   const shutdownRuntime = async () => {
     sessionActive = false;
+    clearInterval(inboundPollTimer);
     stopInbound();
     stopTunnel();
     stopHeartbeat();
@@ -2316,6 +2432,37 @@ async function commitAndPushDirtyWorktree(message: string): Promise<void> {
   }
 }
 
+function opencodeProxyNeedsDirectory(path: string): boolean {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return (
+    p.startsWith("/vcs") ||
+    p.startsWith("/file") ||
+    p.startsWith("/path") ||
+    p.startsWith("/session") ||
+    p.startsWith("/instance") ||
+    p.startsWith("/event") ||
+    p.startsWith("/global/event")
+  );
+}
+
+/** OpenCode workspace-scoped APIs require directory routing (header + query). */
+export function appendOpencodeDirectoryRouting(
+  path: string,
+  query: string | undefined,
+  headers: Record<string, string>,
+  directory: string,
+): string {
+  if (!opencodeProxyNeedsDirectory(path)) {
+    return query || "";
+  }
+  headers["x-opencode-directory"] = directory;
+  if (query?.includes("directory=")) {
+    return query;
+  }
+  const dirParam = `directory=${encodeURIComponent(directory)}`;
+  return query ? `${query}&${dirParam}` : dirParam;
+}
+
 function startTunnelWorker(
   backend: string,
   apiKey: string,
@@ -2325,10 +2472,12 @@ function startTunnelWorker(
   handlers?: {
     onUserFileEdit?: (edit: { requestId: string; path: string; content: string }) => void;
     onCancelTurn?: () => void;
+    onUserMessage?: (msg: InboundUserMessage) => void;
   },
-): () => void {
+  ): () => void {
   let stopped = false;
   const base = attachUrl.replace(/\/$/, "");
+  const workDirectory = process.cwd();
   let ws: import("ws").WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let backoffMs = 1000;
@@ -2357,8 +2506,10 @@ function startTunnelWorker(
   ) => {
     if (!req.requestId || socket.readyState !== 1) return;
     const requestId = req.requestId;
-    const target = base + (req.path || "/") + (req.query ? `?${req.query}` : "");
+    const pathPart = req.path || "/";
     const headers: Record<string, string> = { ...(req.headers || {}) };
+    const query = appendOpencodeDirectoryRouting(pathPart, req.query, headers, workDirectory);
+    const target = base + pathPart + (query ? `?${query}` : "");
     const init: RequestInit = { method: req.method || "GET", headers };
     if (req.bodyBase64) {
       init.body = Buffer.from(req.bodyBase64, "base64");
@@ -2488,7 +2639,20 @@ function startTunnelWorker(
           if (payload?.sessionId && payload.sessionId !== sessionId) {
             return;
           }
+          console.error(`ChimpHands tunnel cancel_turn for session ${sessionId}`);
           handlers?.onCancelTurn?.();
+          return;
+        }
+        if (frame.type === "inbound_event" && frame.event === "user_message" && frame.data) {
+          const payload = frame.data as { sessionId?: string } | undefined;
+          if (payload?.sessionId && payload.sessionId !== sessionId) {
+            return;
+          }
+          const msg = parseInboundUserMessage(frame.data);
+          if (msg) {
+            console.error(`ChimpHands tunnel user_message for session ${sessionId}`);
+            handlers?.onUserMessage?.(msg);
+          }
           return;
         }
         if (frame.type === "inbound_event" && frame.event === "user_file_edit" && frame.data) {
