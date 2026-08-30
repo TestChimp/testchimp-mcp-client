@@ -13,6 +13,11 @@ import https from "node:https";
 import { URL } from "node:url";
 import { getBackendUrl, requireApiKey } from "../core/client.js";
 import { isChimphandsLlmRetryEnabled, startLlmRetryProxy } from "./llmRetryProxy.js";
+import {
+  midTurnSteeringKey,
+  releaseUnansweredMidTurnMessages,
+} from "./midTurnSteering.js";
+import { runSteeringSidecarReply } from "./steeringSidecar.js";
 
 const ROLE_ASSISTANT = "CHIMPHANDS_MESSAGE_ROLE_ASSISTANT";
 const ROLE_TOOL = "CHIMPHANDS_MESSAGE_ROLE_TOOL";
@@ -25,6 +30,8 @@ const STATUS_IDLE = "CHIMPHANDS_SESSION_STATUS_IDLE";
 const STATUS_FAILED = "CHIMPHANDS_SESSION_STATUS_FAILED";
 
 const OPENCODE_AGENT_ID = "chimphands";
+const MID_TURN_DELIVERED_STATUS =
+  "Answering your question while the current step continues…";
 /** Coalesce live token fanout (~6–10 posts/s/session) while UI is attached. */
 const STREAM_POST_MIN_INTERVAL_MS = 150;
 
@@ -87,6 +94,11 @@ const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. Y
 - For any /testchimp command: use TestChimp MCP tools (preferred) or \`testchimp\` CLI — never invent API results.
 - Follow plan → explicit user approval → execute (interactive default). Do not skip MCP calls or claim done without tool evidence.
 - Export \`TESTCHIMP_EXECUTION_SOURCE=CLOUD_AGENT\` before Playwright/Mobilewright runs.
+
+## CI runner hygiene (GitHub Actions)
+- On hosted runners: load skill \`references/chimphands-ci-runner.md\` before compile, Docker builds, or large installs.
+- Never \`git fetch origin\` (full fetch) — shallow single-branch fetch only; branch names are in \`.chimphands/remote-branch-names.txt\`.
+- Reclaim disk between heavy phases (\`docker builder prune -af\` after image builds, stop compile daemons, delete temp/test artifacts). One reclaim+retry on ENOSPC — no blind loops.
 
 ## Honesty
 - If MCP/tools fail, report the error. Never narrate success without tool output or a PR link when repo changes were needed.`;
@@ -260,7 +272,7 @@ class AgentEventPoster {
     if (opts?.opencodeSessionId) body.opencodeSessionId = opts.opencodeSessionId;
     if (opts?.workingBranch) body.workingBranch = opts.workingBranch;
     if (opts?.pullRequestUrl) body.pullRequestUrl = opts.pullRequestUrl;
-    if (opts?.toolExecution) body.toolExecution = opts.toolExecution;
+    if (opts?.toolExecution) body.toolExecution = protoJsonToolExecution(opts.toolExecution);
 
     const streamRole = isStreamFanoutRole(role);
 
@@ -287,7 +299,7 @@ class AgentEventPoster {
         };
         if (opts?.messageId) eph.messageId = opts.messageId;
         if (opts?.opencodeSessionId) eph.opencodeSessionId = opts.opencodeSessionId;
-        if (opts?.toolExecution) eph.toolExecution = opts.toolExecution;
+        if (opts?.toolExecution) eph.toolExecution = protoJsonToolExecution(opts.toolExecution);
         try {
           await postJson(
             this.backend,
@@ -431,12 +443,36 @@ function normalizeEpochMillis(raw?: number): number | undefined {
   return raw < 1_000_000_000_000 ? Math.round(raw * 1000) : Math.round(raw);
 }
 
-function coerceTimeoutMillis(input?: Record<string, unknown>): number | undefined {
-  if (!input) return undefined;
-  const raw = input.timeout ?? input.timeoutMs ?? input.timeout_ms;
+function coerceTimeoutMillis(input?: Record<string, unknown> | string): number | undefined {
+  if (input == null) return undefined;
+  let obj: Record<string, unknown> | undefined;
+  if (typeof input === "string") {
+    try {
+      const parsed = JSON.parse(input) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        obj = parsed as Record<string, unknown>;
+      }
+    } catch {
+      return undefined;
+    }
+  } else {
+    obj = input;
+  }
+  if (!obj) return undefined;
+  const raw = obj.timeout ?? obj.timeoutMs ?? obj.timeout_ms;
   const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
   if (!Number.isFinite(n) || n <= 0) return undefined;
   return Math.round(n);
+}
+
+/** Protobuf JSON encodes int64 as strings; numbers can fail JsonFormat.parse. */
+function protoJsonToolExecution(payload: ChimpHandsToolExecutionPayload): Record<string, unknown> {
+  const out: Record<string, unknown> = { status: payload.status };
+  if (payload.toolName) out.toolName = payload.toolName;
+  if (payload.startedAtMillis != null) out.startedAtMillis = String(payload.startedAtMillis);
+  if (payload.timeoutMillis != null) out.timeoutMillis = String(payload.timeoutMillis);
+  if (payload.endedAtMillis != null) out.endedAtMillis = String(payload.endedAtMillis);
+  return out;
 }
 
 function mapToolExecutionStatus(status?: string): string | undefined {
@@ -1278,6 +1314,8 @@ async function injectOpencodeUserMessage(
         "x-opencode-directory": process.cwd(),
       },
       body: JSON.stringify({
+        agent: OPENCODE_AGENT_ID,
+        noReply: false,
         parts: [{ type: "text", text: content }],
       }),
     });
@@ -2079,6 +2117,10 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   const idleMs = (bootNum(boot, "idle_timeout_seconds", "idleTimeoutSeconds") || 600) * 1000;
   const queue: string[] = [];
   const seenUserMessageIds = new Set<string>();
+  /** Mid-turn prompt_async successes that may need a follow-up turn if OpenCode never answered. */
+  const midTurnInjectedById = new Map<string, string>();
+  /** Steering keys answered by the parallel child-session sidecar. */
+  const midTurnSidecarAnswered = new Set<string>();
   let idle = false;
   let sessionActive = true;
   let lastUserActivity = Date.now();
@@ -2127,17 +2169,62 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
   };
 
+  const noteMidTurnInjectSuccess = (steeringKey: string, content: string) => {
+    midTurnInjectedById.set(steeringKey, normalizeUserMessage(content));
+  };
+
+  const deliverMidTurnSteeringSidecar = (steeringKey: string, content: string) => {
+    const parentSessionId = opencodeSessionId?.trim();
+    if (!attachUrl || !parentSessionId) return;
+    void runSteeringSidecarReply({
+      attachUrl,
+      parentSessionId,
+      userQuestion: content,
+      conversationSummary,
+      model: opencodeModel,
+      agentId: OPENCODE_AGENT_ID,
+    })
+      .then((replyParts) => {
+        if (!replyParts.length) {
+          console.error(`ChimpHands steering sidecar returned no text for ${steeringKey}`);
+          return;
+        }
+        midTurnSidecarAnswered.add(steeringKey);
+        for (const text of replyParts) {
+          postEvent(ROLE_ASSISTANT, text, {
+            durable: true,
+            opencodeSessionId: parentSessionId,
+            messageId: `ch_steering_${steeringKey}_${Date.now()}`,
+          });
+        }
+        console.error(
+          `ChimpHands steering sidecar answered mid-turn message ${steeringKey} (${replyParts.length} part(s))`,
+        );
+      })
+      .catch((err: unknown) => {
+        console.error(
+          `ChimpHands steering sidecar failed for ${steeringKey}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
+  };
+
   const flushPendingMidTurnInject = () => {
     if (!attachUrl || !agentTurnInProgress) return;
     const sessionToInject = opencodeSessionId?.trim();
     if (!sessionToInject) return;
     while (pendingMidTurnInject.length) {
       const content = pendingMidTurnInject.shift()!;
+      const steeringKey = midTurnSteeringKey(undefined, content);
       void injectOpencodeUserMessage(attachUrl, sessionToInject, content).then((ok) => {
         if (!ok) {
           queue.push(content);
           wakePromptWaiter();
+          return;
         }
+        noteMidTurnInjectSuccess(steeringKey, content);
+        deliverMidTurnSteeringSidecar(steeringKey, content);
       });
     }
   };
@@ -2159,13 +2246,16 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         console.error(
           `ChimpHands delivering mid-turn user message via OpenCode prompt_async (turnActive=true): ${JSON.stringify(preview)}`,
         );
+        const steeringKey = midTurnSteeringKey(id, content);
         void injectOpencodeUserMessage(attachUrl, sessionToInject, content).then((ok) => {
           if (!ok) {
             queue.push(content);
             wakePromptWaiter();
             return;
           }
-          postEvent(ROLE_STATUS, "Message sent to agent…", { status: STATUS_RUNNING });
+          noteMidTurnInjectSuccess(steeringKey, content);
+          postEvent(ROLE_STATUS, MID_TURN_DELIVERED_STATUS, { status: STATUS_RUNNING });
+          deliverMidTurnSteeringSidecar(steeringKey, content);
         });
         return;
       }
@@ -2480,6 +2570,25 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     // are reviewable when the user opens the session later (live VCS tunnel may be idle).
     if (!poster.uiAttached) {
       await commitAndPushDirtyWorktree("chimphands: commit after turn (async / no UI attached)");
+    }
+
+    if (attachUrl && opencodeSessionId && midTurnInjectedById.size) {
+      try {
+        await releaseUnansweredMidTurnMessages(
+          attachUrl,
+          opencodeSessionId,
+          midTurnInjectedById,
+          queue,
+          wakePromptWaiter,
+          midTurnSidecarAnswered,
+        );
+      } catch (err: unknown) {
+        console.error(
+          `ChimpHands mid-turn steering release failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     if (result.code !== 0 && !result.cancelled) {
