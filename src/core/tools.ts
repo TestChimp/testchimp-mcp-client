@@ -1450,6 +1450,45 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       return postMcp("/api/mcp/list_api_operation_interactions", body);
     },
   },
+  {
+    kebab: "upload-attachment",
+    description:
+      "Upload a file (e.g. agent screenshot evidence) to explore-snaps and return a stable view URL. " +
+      "Pass --file <path>; optional --filename and --content-type. Response includes viewUrl to paste in chat.",
+    inputSchema: S.uploadAttachmentInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.uploadAttachmentInput>;
+      const { readFile, stat } = await import("node:fs/promises");
+      const { basename } = await import("node:path");
+      const fileStat = await stat(a.file);
+      if (fileStat.size > S.MAX_AGENT_ATTACHMENT_BYTES) {
+        throw new Error(
+          `File exceeds maximum size of ${S.MAX_AGENT_ATTACHMENT_BYTES} bytes (${fileStat.size} bytes)`
+        );
+      }
+      const bytes = await readFile(a.file);
+      const body: Record<string, unknown> = {
+        fileBase64: bytes.toString("base64"),
+      };
+      const filename = a.filename?.trim() || basename(a.file);
+      if (filename) body.filename = filename;
+      if (a.contentType?.trim()) body.contentType = a.contentType.trim();
+      return postMcp("/api/mcp/upload_attachment", body);
+    },
+  },
+  {
+    kebab: "get-batch-view-url",
+    description:
+      "Resolve the TestChimp batch execution viewer deeplink for the authenticated project. " +
+      "Pass --batch-invocation-id. Returns batchViewUrl for messaging back to the user.",
+    inputSchema: S.getBatchViewUrlInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getBatchViewUrlInput>;
+      return postMcp("/api/mcp/get_batch_view_url", {
+        batchInvocationId: a.batchInvocationId.trim(),
+      });
+    },
+  },
 ];
 
 const TOOL_BY_KEBAB = new Map(TOOL_DEFINITIONS.map((t) => [t.kebab, t]));

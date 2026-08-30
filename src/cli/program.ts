@@ -259,6 +259,58 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
+  program
+    .command("upload-attachment")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upload-attachment")!.description)
+    .addOption(jsonInputOption())
+    .option("--file <path>", "Path to file to upload (e.g. screenshot PNG)")
+    .option("--filename <name>", "Original filename for extension inference")
+    .option("--content-type <type>", "MIME type (default application/octet-stream)")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.file) body.file = String(opts.file);
+      if (opts.filename) body.filename = String(opts.filename);
+      if (opts.contentType) body.contentType = String(opts.contentType);
+      const merged = mergeBodies(body, opts.jsonInput) as {
+        file?: string;
+        filename?: string;
+        contentType?: string;
+      };
+      if (!merged.file || String(merged.file).trim() === "") {
+        throw new Error("file is required (--file)");
+      }
+      const out = await runTool(
+        "upload-attachment",
+        {
+          file: String(merged.file).trim(),
+          ...(merged.filename ? { filename: String(merged.filename) } : {}),
+          ...(merged.contentType ? { contentType: String(merged.contentType) } : {}),
+        },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
+    .command("get-batch-view-url")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-batch-view-url")!.description)
+    .addOption(jsonInputOption())
+    .option("--batch-invocation-id <id>", "Batch invocation id")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.batchInvocationId) body.batchInvocationId = String(opts.batchInvocationId);
+      const merged = mergeBodies(body, opts.jsonInput) as { batchInvocationId?: string };
+      if (!merged.batchInvocationId || String(merged.batchInvocationId).trim() === "") {
+        throw new Error("batchInvocationId is required (--batch-invocation-id)");
+      }
+      const out = await runTool(
+        "get-batch-view-url",
+        { batchInvocationId: String(merged.batchInvocationId).trim() },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
   addAgentTraceabilityOptions(
     program
       .command("create-user-story")

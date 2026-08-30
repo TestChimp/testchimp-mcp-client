@@ -1114,3 +1114,16 @@ export const listApiOperationInteractionsInput = z
       });
     }
   });
+
+/** Max decoded upload size for agent evidence (matches backend ExploreSnapsPathUtil). */
+export const MAX_AGENT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+export const uploadAttachmentInput = z.object({
+  file: z.string().min(1),
+  filename: z.string().min(1).optional(),
+  contentType: z.string().min(1).optional(),
+});
+
+export const getBatchViewUrlInput = z.object({
+  batchInvocationId: z.string().min(1),
+});

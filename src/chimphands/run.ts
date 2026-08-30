@@ -12,6 +12,7 @@ import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
 import { getBackendUrl, requireApiKey } from "../core/client.js";
+import { isChimphandsLlmRetryEnabled, startLlmRetryProxy } from "./llmRetryProxy.js";
 
 const ROLE_ASSISTANT = "CHIMPHANDS_MESSAGE_ROLE_ASSISTANT";
 const ROLE_TOOL = "CHIMPHANDS_MESSAGE_ROLE_TOOL";
@@ -1136,8 +1137,17 @@ function detectWorkingBranchFromToolOutput(output: string): { branch?: string; p
   };
 }
 
-function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapResponse): string {
-  const llmBase = (bootStr(boot, "llm_base_url", "llmBaseUrl") || `${backend}/v1`).replace(/\/$/, "");
+function writeOpencodeConfig(
+  backend: string,
+  apiKey: string,
+  boot: BootstrapResponse,
+  llmBaseOverride?: string,
+): string {
+  const llmBase = (
+    llmBaseOverride ||
+    bootStr(boot, "llm_base_url", "llmBaseUrl") ||
+    `${backend}/v1`
+  ).replace(/\/$/, "");
   const llmKey = apiKey || bootStr(boot, "llm_api_key", "llmApiKey");
   const modelId = resolveOpencodeModelId(boot);
   const model = `${TESTCHIMP_PROVIDER_ID}/${modelId}`;
@@ -1156,6 +1166,8 @@ function writeOpencodeConfig(backend: string, apiKey: string, boot: BootstrapRes
   const providerOptions: Record<string, unknown> = {
     apiKey: llmKey,
     baseURL: llmBase,
+    // Retry proxy may wait up to 5 min; allow long completions after upstream is healthy.
+    timeout: 900_000,
   };
   if (sessionId) {
     providerOptions.headers = {
@@ -1246,6 +1258,45 @@ async function abortOpencodeSession(attachUrl: string, opencodeSessionId: string
     console.error(
       `ChimpHands OpenCode session abort failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+}
+
+/** Deliver a user message into an active OpenCode turn without aborting it. */
+async function injectOpencodeUserMessage(
+  attachUrl: string,
+  opencodeSessionId: string,
+  content: string,
+): Promise<boolean> {
+  const base = attachUrl.replace(/\/$/, "");
+  const url = `${base}/session/${encodeURIComponent(opencodeSessionId)}/prompt_async`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "x-opencode-directory": process.cwd(),
+      },
+      body: JSON.stringify({
+        parts: [{ type: "text", text: content }],
+      }),
+    });
+    if (res.status === 204 || res.ok) {
+      const preview = content.length > 120 ? `${content.slice(0, 117)}...` : content;
+      console.error(
+        `ChimpHands injected mid-turn user message into OpenCode session ${opencodeSessionId}: ${JSON.stringify(preview)}`,
+      );
+      return true;
+    }
+    console.error(
+      `ChimpHands mid-turn inject HTTP ${res.status} for session ${opencodeSessionId}`,
+    );
+    return false;
+  } catch (err: unknown) {
+    console.error(
+      `ChimpHands mid-turn inject failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
   }
 }
 
@@ -1980,7 +2031,18 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   }
 
   mkdirSync(".opencode", { recursive: true });
-  const opencodeModel = writeOpencodeConfig(backend, apiKey, boot);
+  const upstreamLlmBase = (
+    bootStr(boot, "llm_base_url", "llmBaseUrl") || `${backend}/v1`
+  ).replace(/\/$/, "");
+  let llmBaseForOpencode = upstreamLlmBase;
+  let stopLlmProxy: (() => Promise<void>) | null = null;
+  if (isChimphandsLlmRetryEnabled()) {
+    const proxy = await startLlmRetryProxy(upstreamLlmBase);
+    llmBaseForOpencode = proxy.baseUrl;
+    stopLlmProxy = proxy.stop;
+    console.error(`ChimpHands LLM retry proxy: ${llmBaseForOpencode} -> ${upstreamLlmBase}`);
+  }
+  const opencodeModel = writeOpencodeConfig(backend, apiKey, boot, llmBaseForOpencode);
   console.error(`ChimpHands OpenCode model: ${opencodeModel}`);
   if (attachUrl) {
     console.error(`ChimpHands OpenCode attach: ${attachUrl}`);
@@ -2022,10 +2084,10 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   let lastUserActivity = Date.now();
   let exitCode: number | undefined;
   let cancelTurnRequested = false;
-  /** True when cancel was triggered by a mid-turn user message (steer), not Stop. */
-  let steerAbortRequested = false;
   let activeOpencodeChild: ChildProcess | null = null;
   let agentTurnInProgress = false;
+  /** Mid-turn messages waiting for an OpenCode session id before prompt_async inject. */
+  const pendingMidTurnInject: string[] = [];
   /** Wakes waitForNextPrompt when idle is signaled (SSE) or a user message arrives. */
   let wakeWaitForPrompt: (() => void) | null = null;
   const wakePromptWaiter = () => {
@@ -2042,11 +2104,8 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   };
 
   /** Abort in-flight OpenCode turn (session HTTP abort + kill `opencode run` child). */
-  const abortActiveTurn = (reason: "cancel" | "steer") => {
+  const abortActiveTurn = () => {
     cancelTurnRequested = true;
-    if (reason === "steer") {
-      steerAbortRequested = true;
-    }
     const sessionToAbort = opencodeSessionId?.trim();
     if (attachUrl && sessionToAbort) {
       void abortOpencodeSession(attachUrl, sessionToAbort);
@@ -2068,6 +2127,21 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
   };
 
+  const flushPendingMidTurnInject = () => {
+    if (!attachUrl || !agentTurnInProgress) return;
+    const sessionToInject = opencodeSessionId?.trim();
+    if (!sessionToInject) return;
+    while (pendingMidTurnInject.length) {
+      const content = pendingMidTurnInject.shift()!;
+      void injectOpencodeUserMessage(attachUrl, sessionToInject, content).then((ok) => {
+        if (!ok) {
+          queue.push(content);
+          wakePromptWaiter();
+        }
+      });
+    }
+  };
+
   const enqueueUserMessage = (msg: InboundUserMessage) => {
     const id = msg.id?.trim();
     if (id) {
@@ -2076,21 +2150,35 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
     const content = normalizeUserMessage(msg.content || "");
     if (!content) return;
-    queue.push(content);
     lastUserActivity = Date.now();
     idle = false;
     const preview = content.length > 120 ? `${content.slice(0, 117)}...` : content;
+    if (agentTurnInProgress && attachUrl) {
+      const sessionToInject = opencodeSessionId?.trim();
+      if (sessionToInject) {
+        console.error(
+          `ChimpHands delivering mid-turn user message via OpenCode prompt_async (turnActive=true): ${JSON.stringify(preview)}`,
+        );
+        void injectOpencodeUserMessage(attachUrl, sessionToInject, content).then((ok) => {
+          if (!ok) {
+            queue.push(content);
+            wakePromptWaiter();
+            return;
+          }
+          postEvent(ROLE_STATUS, "Message sent to agent…", { status: STATUS_RUNNING });
+        });
+        return;
+      }
+      pendingMidTurnInject.push(content);
+      console.error(
+        `ChimpHands holding mid-turn user message until OpenCode session id is available: ${JSON.stringify(preview)}`,
+      );
+      return;
+    }
+    queue.push(content);
     console.error(
       `ChimpHands queued user message (turnActive=${agentTurnInProgress}, depth=${queue.length}): ${JSON.stringify(preview)}`,
     );
-    // OpenCode has no mid-turn inject: abort the active turn so the queued
-    // message is consumed immediately as the next prompt (course-correct).
-    if (agentTurnInProgress && !cancelTurnRequested) {
-      console.error(
-        `ChimpHands steering: aborting active turn so queued user message reaches OpenCode`,
-      );
-      abortActiveTurn("steer");
-    }
     wakePromptWaiter();
   };
 
@@ -2166,8 +2254,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
 
   const handleCancelTurn = () => {
     console.error(`ChimpHands cancel_turn received for session ${sessionId}`);
-    steerAbortRequested = false;
-    abortActiveTurn("cancel");
+    abortActiveTurn();
   };
 
   const stopInbound = connectInboundStream(backend, apiKey, sessionId, {
@@ -2207,6 +2294,14 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     wakePromptWaiter();
     await commitAndPushDirtyWorktree("chimphands: commit before session idle/shutdown");
     await poster.flush();
+    if (stopLlmProxy) {
+      await stopLlmProxy().catch((err: unknown) => {
+        console.error(
+          `ChimpHands LLM retry proxy stop failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+      stopLlmProxy = null;
+    }
     if (runtimeId) {
       await postJson(backend, apiKey, "/api/chimphands/complete_runtime", {
         runtimeId,
@@ -2286,29 +2381,20 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
 
   while (prompt) {
     cancelTurnRequested = false;
-    const wasSteered = steerAbortRequested;
-    steerAbortRequested = false;
     agentTurnInProgress = true;
+    flushPendingMidTurnInject();
     let useOpencodeSessionId = opencodeSessionId;
     let isNewOpencodeSession = !useOpencodeSessionId;
-    const promptForOpencode = wasSteered
-      ? [
-          "The previous agent turn was interrupted because the user sent a new message.",
-          "Stop any long-running watch/poll that no longer applies. Course-correct using this guidance:",
-          "",
-          prompt,
-        ].join("\n")
-      : prompt;
     let effectivePrompt = wrapPromptWithContext(
       conversationSummary,
-      promptForOpencode,
+      prompt,
       isNewOpencodeSession,
       workingBranch,
       pullRequestUrl,
     );
 
     const turnPostEvent: RunOpencodeCallbacks["postEvent"] = (role, content, opts) =>
-      postEventForTurn(promptForOpencode, effectivePrompt, role, content, opts);
+      postEventForTurn(prompt, effectivePrompt, role, content, opts);
 
     // Visible in chat (not filtered as routine). OpenCode may not emit text until a
     // part completes — without this the UI looks empty while the turn is running.
@@ -2321,6 +2407,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
           sessionId,
           opencodeSessionId: id,
         }).catch(() => {});
+        flushPendingMidTurnInject();
       },
       onWorkingBranch: noteWorkingBranch,
       postEvent: turnPostEvent,
@@ -2345,6 +2432,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
             sessionId,
             opencodeSessionId: id,
           }).catch(() => {});
+          flushPendingMidTurnInject();
         },
         onWorkingBranch: noteWorkingBranch,
         postEvent: turnPostEvent,
@@ -2353,6 +2441,9 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     }
 
     agentTurnInProgress = false;
+    while (pendingMidTurnInject.length) {
+      queue.push(pendingMidTurnInject.shift()!);
+    }
 
     await poster.flush();
 
@@ -2415,10 +2506,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       break;
     }
 
-    if (result.cancelled && (steerAbortRequested || queue.length > 0)) {
-      // Mid-turn user message aborted this turn — run the queued prompt next.
-      postEvent(ROLE_STATUS, "Incorporating your message…", { status: STATUS_RUNNING });
-    } else if (result.cancelled) {
+    if (result.cancelled) {
       postEvent(ROLE_STATUS, "Turn stopped", { status: STATUS_WAITING_USER });
     } else {
       postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
