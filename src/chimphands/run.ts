@@ -1783,6 +1783,18 @@ async function applyUserFileEdit(
     }
     await fs.mkdir(path.dirname(full), { recursive: true });
     await fs.writeFile(full, edit.content, "utf8");
+    const pushed = await commitAndPushDirtyWorktree("User Update");
+    if (!pushed.ok) {
+      await ackWorktreeFileWrite(
+        backend,
+        apiKey,
+        sessionId,
+        edit.requestId,
+        false,
+        pushed.error || "commit/push failed",
+      );
+      return;
+    }
     await ackWorktreeFileWrite(backend, apiKey, sessionId, edit.requestId, true);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -2682,7 +2694,9 @@ function startRuntimeHeartbeat(
 }
 
 /** Commit+push dirty worktree on the session branch before idle/teardown (no default-branch writes). */
-async function commitAndPushDirtyWorktree(message: string): Promise<void> {
+async function commitAndPushDirtyWorktree(
+  message: string,
+): Promise<{ ok: boolean; error?: string }> {
   const run = (args: string[], env?: NodeJS.ProcessEnv) =>
     new Promise<{ code: number; out: string; err: string }>((resolve) => {
       const child = spawn("git", args, {
@@ -2703,29 +2717,31 @@ async function commitAndPushDirtyWorktree(message: string): Promise<void> {
   try {
     const branch = await run(["rev-parse", "--abbrev-ref", "HEAD"]);
     if (branch.code !== 0) {
-      console.error(`ChimpHands git rev-parse failed: ${branch.err || branch.out}`);
-      return;
+      const error = branch.err || branch.out || "git rev-parse failed";
+      console.error(`ChimpHands git rev-parse failed: ${error}`);
+      return { ok: false, error };
     }
     const current = branch.out.trim();
     if (!current || current === "HEAD" || /^(main|master)$/i.test(current)) {
-      console.error(
-        `ChimpHands skip commit-before-idle: refusing branch "${current || "(unknown)"}"`,
-      );
-      return;
+      const error = `refusing branch "${current || "(unknown)"}"`;
+      console.error(`ChimpHands skip commit-before-idle: ${error}`);
+      return { ok: false, error };
     }
 
     const status = await run(["status", "--porcelain"]);
     if (status.code !== 0) {
-      console.error(`ChimpHands git status failed: ${status.err || status.out}`);
-      return;
+      const error = status.err || status.out || "git status failed";
+      console.error(`ChimpHands git status failed: ${error}`);
+      return { ok: false, error };
     }
     if (!status.out.trim()) {
-      return;
+      return { ok: true };
     }
     const add = await run(["add", "-A"]);
     if (add.code !== 0) {
-      console.error(`ChimpHands git add failed: ${add.err || add.out}`);
-      return;
+      const error = add.err || add.out || "git add failed";
+      console.error(`ChimpHands git add failed: ${error}`);
+      return { ok: false, error };
     }
     const commitEnv = {
       GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "ChimpHands",
@@ -2738,8 +2754,9 @@ async function commitAndPushDirtyWorktree(message: string): Promise<void> {
       commitEnv,
     );
     if (commit.code !== 0) {
-      console.error(`ChimpHands git commit: ${commit.err || commit.out}`);
-      return;
+      const error = commit.err || commit.out || "git commit failed";
+      console.error(`ChimpHands git commit: ${error}`);
+      return { ok: false, error };
     }
     let push = await run(["push", "-u", "origin", "HEAD"]);
     if (push.code !== 0) {
@@ -2752,26 +2769,26 @@ async function commitAndPushDirtyWorktree(message: string): Promise<void> {
           await refreshGitAuth();
           push = await run(["push", "-u", "origin", "HEAD"]);
           if (push.code !== 0) {
-            console.error(`ChimpHands git push failed after refresh: ${push.err || push.out}`);
-            return;
+            const error = push.err || push.out || "git push failed after refresh";
+            console.error(`ChimpHands git push failed after refresh: ${error}`);
+            return { ok: false, error };
           }
         } else {
-          return;
+          return { ok: false, error: push.err || push.out || "git push failed" };
         }
       } catch (refreshErr: unknown) {
-        console.error(
-          `ChimpHands refresh-git-auth after push failure: ${
-            refreshErr instanceof Error ? refreshErr.message : String(refreshErr)
-          }`,
-        );
-        return;
+        const error =
+          refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+        console.error(`ChimpHands refresh-git-auth after push failure: ${error}`);
+        return { ok: false, error };
       }
     }
     console.error(`ChimpHands committed and pushed dirty worktree on ${current} before shutdown`);
+    return { ok: true };
   } catch (err: unknown) {
-    console.error(
-      `ChimpHands commit-before-idle failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(`ChimpHands commit-before-idle failed: ${error}`);
+    return { ok: false, error };
   }
 }
 
