@@ -1644,7 +1644,7 @@ export function buildCliProgram(): Command {
   chimphands
     .command("report-branch")
     .description("Report the conversation working branch (and optional PR URL) to TestChimp")
-    .requiredOption("--branch <name>", "Feature branch name (testchimp-* or chimphands-*)")
+    .requiredOption("--branch <name>", "Agent feature branch name (testchimp-* only)")
     .option("--pr-url <url>", "Open pull request URL")
     .option("--session-id <id>", "ChimpHands session id (or SESSION_ID env)")
     .action(async (opts) => {

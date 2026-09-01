@@ -1,6 +1,6 @@
 {
   "name": "@testchimp/cli",
-  "version": "0.1.69",
+  "version": "0.1.70",
   "description": "TestChimp CLI and MCP server — coverage, plans, EaaS, TrueCoverage, API operations (calls /api/mcp/*)",
   "type": "module",
   "main": "dist/bin/testchimp.js",
@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test dist/chimphands/llmRetryProxy.test.js dist/chimphands/midTurnSteering.test.js dist/chimphands/steeringSidecar.test.js",
+    "test": "npm run build && node --test dist/chimphands/llmRetryProxy.test.js dist/chimphands/midTurnSteering.test.js dist/chimphands/steeringSidecar.test.js dist/chimphands/agentBranch.test.js",
     "watch": "tsc --watch",
     "start": "node dist/bin/testchimp.js",
     "prepublishOnly": "npm run build"

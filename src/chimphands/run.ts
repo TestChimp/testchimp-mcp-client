@@ -18,6 +18,14 @@ import {
   releaseUnansweredMidTurnMessages,
 } from "./midTurnSteering.js";
 import { runSteeringSidecarReply } from "./steeringSidecar.js";
+import {
+  ensureAgentSessionBranch,
+  ensurePullRequest,
+  isAgentBranchName,
+  isPrOnlyMode,
+  resolveSessionBaseBranch,
+  runGit,
+} from "./agentBranch.js";
 
 const ROLE_ASSISTANT = "CHIMPHANDS_MESSAGE_ROLE_ASSISTANT";
 const ROLE_TOOL = "CHIMPHANDS_MESSAGE_ROLE_TOOL";
@@ -34,6 +42,14 @@ const MID_TURN_DELIVERED_STATUS =
   "Answering your question while the current step continues…";
 /** Coalesce live token fanout (~6–10 posts/s/session) while UI is attached. */
 const STREAM_POST_MIN_INTERVAL_MS = 150;
+
+/** Set for the active ChimpHands session (PR base branch + callbacks). */
+let activeSessionGitContext: {
+  baseBranch?: string;
+  agentBranch?: string;
+  pullRequestUrl?: string;
+  onPullRequest?: (url: string) => void;
+} | null = null;
 
 function isStreamFanoutRole(role: string): boolean {
   return role === ROLE_ASSISTANT || role === ROLE_TOOL || role === ROLE_REASONING;
@@ -75,17 +91,18 @@ const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. Y
 - Prefer a short numbered list of concrete questions over a long monologue. One decision gate at a time when possible (especially \`/testchimp project init\` Phase 1).
 
 ## Repo changes (mandatory)
-- NEVER commit or push directly to the default branch (main/master).
-- This conversation uses ONE working branch and ONE pull request. Reuse them for all follow-up work in this chat.
-- If bootstrap lists a working branch, checkout that branch and push additional commits there — update the same PR.
-- Only create a NEW branch/PR when (a) no working branch exists yet for this conversation, or (b) the prior PR was merged/closed (verify with \`gh pr view\`).
-- Commit and push on the session working branch after meaningful edit batches. When \`CHIMPHANDS_UI_ATTACHED\` is \`false\` (no browser watching live), **commit and push before ending every turn** so the user can review async via PR / Files changed. The host also commits any remaining dirty worktree after each turn and before idle teardown.
-- Branch names MUST start with \`testchimp-\` or \`chimphands-\`.
-- When creating a NEW working branch: create it, then IMMEDIATELY publish it with
+- NEVER commit or push directly to the default branch (main/master) or to a user **base branch** (the \`Base branch:\` line in the prompt is the parent to branch *from*, not where you commit).
+- This conversation uses ONE **agent branch** (\`testchimp-*\` only) and ONE pull request targeting the base branch. Reuse them for all follow-up work in this chat.
+- If bootstrap lists an agent branch (\`testchimp-*\`), checkout that branch and push additional commits there — update the same PR.
+- Only create a NEW agent branch/PR when (a) no \`testchimp-*\` branch exists yet for this conversation, or (b) the prior PR was merged/closed (verify with \`gh pr view\`).
+- Commit and push on the session agent branch after meaningful edit batches. When \`CHIMPHANDS_UI_ATTACHED\` is \`false\` (no browser watching live), **commit and push before ending every turn** so the user can review async via PR / Files changed. The host also commits any remaining dirty worktree after each turn and before idle teardown.
+- Branch names for commits and PRs MUST start with \`testchimp-\` (never \`chimphands-*\` or the base branch name).
+- When the prompt includes \`Base branch: <name>\`: the workflow may already have that branch checked out (\`CHIMPHANDS_WORK_BRANCH\`). Create \`git checkout -b testchimp-<scope>\` from it, push, then work only on the \`testchimp-*\` branch. Open PRs with \`gh pr create --base <base-branch> --head <testchimp-branch>\`.
+- When creating a NEW agent branch: create it, then IMMEDIATELY publish it with
   \`git push -u origin <branch>\` BEFORE calling report-branch. Users open the branch URL in the UI —
   do not report a branch that only exists locally (that causes GitHub 404).
 - After the branch is on the remote (and after opening a PR), IMMEDIATELY run:
-  \`testchimp chimphands report-branch --branch <name> [--pr-url <url>]\`
+  \`testchimp chimphands report-branch --branch <testchimp-branch> [--pr-url <url>]\`
 - Tell the user which branch you are on and include the PR URL when available.
 - **GitHub auth expiry (self-fix):** Job-start App installation tokens expire after ~1 hour. On \`git push\` / \`gh\` auth failures (401/403 / Authentication failed / write access not granted), run \`testchimp chimphands refresh-git-auth\` then retry — **never** ask the user to paste or reconnect a GitHub token in chat. See skill \`references/chimphands-faq.md\`.
 
@@ -173,6 +190,9 @@ export async function reportWorkingBranch(opts: ReportWorkingBranchOptions): Pro
   const branch = opts.branch.trim();
   if (!branch) {
     throw new Error("branch is required");
+  }
+  if (!isAgentBranchName(branch)) {
+    throw new Error("branch must start with testchimp- (agent feature branch, not the base branch)");
   }
   const body: Record<string, unknown> = {
     sessionId: opts.sessionId.trim(),
@@ -1131,14 +1151,23 @@ function wrapPromptWithContext(
   isNewOpencodeSession: boolean,
   workingBranch?: string,
   pullRequestUrl?: string,
+  baseBranch?: string,
 ): string {
   const parts: string[] = [];
-  if (workingBranch?.trim()) {
+  if (baseBranch?.trim()) {
     parts.push(
-      "## Conversation working branch (reuse for this thread)",
+      "## Base branch (parent — do NOT commit here)",
+      `Base branch: \`${baseBranch.trim()}\``,
+      "Create a `testchimp-*` branch from this parent before any file edits. PRs must target this base branch.",
+      "",
+    );
+  }
+  if (workingBranch?.trim() && isAgentBranchName(workingBranch)) {
+    parts.push(
+      "## Conversation agent branch (reuse for this thread)",
       `Branch: \`${workingBranch.trim()}\``,
       pullRequestUrl?.trim() ? `PR: ${pullRequestUrl.trim()}` : "",
-      "Checkout this branch, commit and push here. Do NOT open a new PR unless the one above was merged/closed.",
+      "Checkout this testchimp-* branch, commit and push here. Do NOT open a new PR unless the one above was merged/closed.",
       "",
     );
   }
@@ -1164,7 +1193,7 @@ function detectWorkingBranchFromToolOutput(output: string): { branch?: string; p
   // Only auto-detect after a successful push to origin — local checkout -b alone would
   // report a branch URL that 404s until the remote ref exists.
   const pushMatch = text.match(
-    /push\s+(?:--set-upstream\s+|-u\s+)?origin\s+((?:testchimp-|chimphands-)[^\s'"\[\]]+)/i
+    /push\s+(?:--set-upstream\s+|-u\s+)?origin\s+((?:testchimp-)[^\s'"\[\]]+)/i
   );
   const branch = pushMatch?.[1]?.replace(/[`'"\[\]]/g, "");
   return {
@@ -2116,8 +2145,13 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     const nextPr = prUrl?.trim() || pullRequestUrl;
     const prIsNew = !!prUrl?.trim() && prUrl.trim() !== pullRequestUrl;
     if (workingBranch === normalizedBranch && !prIsNew) return;
+    if (!isAgentBranchName(normalizedBranch)) return;
     workingBranch = normalizedBranch;
     if (prUrl?.trim()) pullRequestUrl = prUrl.trim();
+    if (activeSessionGitContext) {
+      activeSessionGitContext.agentBranch = normalizedBranch;
+      if (pullRequestUrl) activeSessionGitContext.pullRequestUrl = pullRequestUrl;
+    }
     if (branchIsNew || prIsNew) {
       poster.reportWorkingBranch(normalizedBranch, nextPr);
     }
@@ -2410,6 +2444,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         status: "CHIMPHANDS_RUNTIME_STATUS_TERMINATED",
       }).catch(() => {});
     }
+    activeSessionGitContext = null;
   };
 
   try {
@@ -2432,6 +2467,37 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       ("messageId" in m && m.messageId) ||
       undefined;
     enqueueUserMessage({ id: id || undefined, content });
+  }
+
+  let sessionBaseBranch = resolveSessionBaseBranch(
+    prompt,
+    process.env.CHIMPHANDS_WORK_BRANCH,
+  );
+  activeSessionGitContext = {
+    baseBranch: sessionBaseBranch,
+    agentBranch: workingBranch && isAgentBranchName(workingBranch) ? workingBranch : undefined,
+    pullRequestUrl,
+    onPullRequest: (url) => {
+      if (workingBranch) noteWorkingBranch(workingBranch, url);
+    },
+  };
+  try {
+    const branchSetup = await ensureAgentSessionBranch({
+      sessionId,
+      baseBranch: sessionBaseBranch,
+      existingAgentBranch:
+        workingBranch && isAgentBranchName(workingBranch) ? workingBranch : undefined,
+    });
+    sessionBaseBranch = branchSetup.baseBranch || sessionBaseBranch;
+    activeSessionGitContext.baseBranch = sessionBaseBranch;
+    activeSessionGitContext.agentBranch = branchSetup.agentBranch;
+    if (!workingBranch || workingBranch !== branchSetup.agentBranch) {
+      noteWorkingBranch(branchSetup.agentBranch);
+    }
+  } catch (err: unknown) {
+    console.error(
+      `ChimpHands ensure agent branch failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   const waitForNextPrompt = (): Promise<string | null> =>
@@ -2493,6 +2559,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       isNewOpencodeSession,
       workingBranch,
       pullRequestUrl,
+      sessionBaseBranch,
     );
 
     const turnPostEvent: RunOpencodeCallbacks["postEvent"] = (role, content, opts) =>
@@ -2526,7 +2593,7 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       );
       opencodeSessionId = undefined;
       isNewOpencodeSession = true;
-      effectivePrompt = wrapPromptWithContext(conversationSummary, prompt, true, workingBranch, pullRequestUrl);
+      effectivePrompt = wrapPromptWithContext(conversationSummary, prompt, true, workingBranch, pullRequestUrl, sessionBaseBranch);
       result = await runOpencode(effectivePrompt, opencodeModel, childEnv, undefined, {
         onSessionId: (id) => {
           opencodeSessionId = id;
@@ -2693,26 +2760,11 @@ function startRuntimeHeartbeat(
   };
 }
 
-/** Commit+push dirty worktree on the session branch before idle/teardown (no default-branch writes). */
+/** Commit+push dirty worktree on the session agent branch before idle/teardown. */
 async function commitAndPushDirtyWorktree(
   message: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const run = (args: string[], env?: NodeJS.ProcessEnv) =>
-    new Promise<{ code: number; out: string; err: string }>((resolve) => {
-      const child = spawn("git", args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: env ? { ...process.env, ...env } : process.env,
-      });
-      let out = "";
-      let err = "";
-      child.stdout.on("data", (d: Buffer) => {
-        out += d.toString();
-      });
-      child.stderr.on("data", (d: Buffer) => {
-        err += d.toString();
-      });
-      child.on("close", (code) => resolve({ code: code ?? 1, out, err }));
-    });
+  const run = (args: string[], env?: NodeJS.ProcessEnv) => runGit(args, env);
 
   try {
     const branch = await run(["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -2722,10 +2774,13 @@ async function commitAndPushDirtyWorktree(
       return { ok: false, error };
     }
     const current = branch.out.trim();
-    if (!current || current === "HEAD" || /^(main|master)$/i.test(current)) {
-      const error = `refusing branch "${current || "(unknown)"}"`;
+    if (!current || current === "HEAD" || !isAgentBranchName(current)) {
+      const error = `refusing non-agent branch "${current || "(unknown)"}" (expected testchimp-*)`;
       console.error(`ChimpHands skip commit-before-idle: ${error}`);
       return { ok: false, error };
+    }
+    if (activeSessionGitContext) {
+      activeSessionGitContext.agentBranch = current;
     }
 
     const status = await run(["status", "--porcelain"]);
@@ -2784,6 +2839,24 @@ async function commitAndPushDirtyWorktree(
       }
     }
     console.error(`ChimpHands committed and pushed dirty worktree on ${current} before shutdown`);
+    const ctx = activeSessionGitContext;
+    if (
+      ctx &&
+      isPrOnlyMode() &&
+      !ctx.pullRequestUrl &&
+      ctx.baseBranch &&
+      isAgentBranchName(current)
+    ) {
+      const prUrl = await ensurePullRequest({
+        agentBranch: current,
+        baseBranch: ctx.baseBranch,
+      });
+      if (prUrl) {
+        ctx.pullRequestUrl = prUrl;
+        ctx.onPullRequest?.(prUrl);
+        console.error(`ChimpHands opened PR: ${prUrl}`);
+      }
+    }
     return { ok: true };
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : String(err);
