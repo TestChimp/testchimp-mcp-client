@@ -1904,10 +1904,8 @@ async function applyUserFileEdit(
   edit: { requestId: string; path: string; content: string },
   turnActive: () => boolean,
 ): Promise<void> {
-  if (turnActive()) {
-    await ackWorktreeFileWrite(backend, apiKey, sessionId, edit.requestId, false, "agent turn in progress");
-    return;
-  }
+  // Never hard-nack mid-turn: write to disk immediately so the next agent prompt
+  // sees the edit. Defer commit/push while a turn is active — post-turn always commits.
   try {
     const relative = normalizeWorktreeRelativePath(edit.path);
     const root = process.cwd();
@@ -1918,6 +1916,13 @@ async function applyUserFileEdit(
     }
     await fs.mkdir(path.dirname(full), { recursive: true });
     await fs.writeFile(full, edit.content, "utf8");
+    if (turnActive()) {
+      console.error(
+        `ChimpHands applied user_file_edit mid-turn (deferred commit): ${relative}`,
+      );
+      await ackWorktreeFileWrite(backend, apiKey, sessionId, edit.requestId, true);
+      return;
+    }
     const pushed = await commitAndPushDirtyWorktree("User Update");
     if (!pushed.ok) {
       await ackWorktreeFileWrite(
@@ -2756,11 +2761,9 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       }
     }
 
-    // Async / no UI: checkpoint dirty worktree after each turn so PR + Files changed
-    // are reviewable when the user opens the session later (live VCS tunnel may be idle).
-    if (!poster.uiAttached) {
-      await commitAndPushDirtyWorktree("chimphands: commit after turn (async / no UI attached)");
-    }
+    // Always checkpoint dirty worktree after each turn so PR + Files pane
+    // (GitHub compare) stay current whether or not a browser UI is attached.
+    await commitAndPushDirtyWorktree("chimphands: commit after turn");
 
     if (attachUrl && opencodeSessionId && midTurnInjectedById.size) {
       try {
