@@ -40,8 +40,8 @@ const STATUS_FAILED = "CHIMPHANDS_SESSION_STATUS_FAILED";
 const OPENCODE_AGENT_ID = "chimphands";
 const MID_TURN_DELIVERED_STATUS =
   "Answering your question while the current step continues…";
-/** Coalesce live token fanout (~6–10 posts/s/session) while UI is attached. */
-const STREAM_POST_MIN_INTERVAL_MS = 150;
+/** Coalesce live token fanout (~30fps) on tunnel WS / HTTP fallback while UI is attached. */
+const STREAM_FANOUT_MIN_INTERVAL_MS = 33;
 
 /** Set for the active ChimpHands session (PR base branch + callbacks). */
 let activeSessionGitContext: {
@@ -89,6 +89,11 @@ const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. Y
 - Only treat the run as non-interactive when the **user prompt** literally includes \`--mode=non-interactive\` (or \`mode=non-interactive\`), or the resolved skill policy explicitly sets \`allow-execute-without-approval\`.
 - When you need clarification (e.g. import plans/tests, env strategy, CI choices) or plan approval: write the questions / plan summary as assistant text, then **stop this turn**. Do not invent answers or continue into Execute. The host will wait for the next chat message and revive you.
 - Prefer a short numbered list of concrete questions over a long monologue. One decision gate at a time when possible (especially \`/testchimp project init\` Phase 1).
+
+## Paths (mandatory)
+- Process cwd **is** the git worktree root. On GitHub Actions that is \`$GITHUB_WORKSPACE\`, which looks like \`/home/runner/work/<repo>/<repo>\` — the repeated folder name is the normal Actions layout, **not** a nested second checkout.
+- User \`ref:\` paths are **repo-relative to cwd** (e.g. \`ref: ui/plans/foo.md\` → open \`ui/plans/foo.md\` from cwd). Never prepend the repository name. Never open or create \`<repo>/<repo>/…\` under cwd. Never treat \`/home/runner/work\` (the parent of the twin) as the worktree root.
+- If a tool returns an absolute path under cwd, relativize with the worktree root before reusing it. Do **not** strip a leading \`/\` and re-join under cwd — that nests the workspace path inside itself.
 
 ## Repo changes (mandatory)
 - NEVER commit or push directly to the default branch (main/master) or to a user **base branch** (the \`Base branch:\` line in the prompt is the parent to branch *from*, not where you commit).
@@ -220,7 +225,7 @@ type PostEventOptions = {
   pullRequestUrl?: string;
   /** Structured tool lifecycle for live UI countdown (not persisted to PG). */
   toolExecution?: ChimpHandsToolExecutionPayload;
-  /** When true, coalesce rapid assistant/reasoning chunks. */
+  /** When true, coalesce rapid assistant/reasoning chunks (~33ms) on the live path. */
   throttle?: boolean;
   /**
    * Live OpenCode /event deltas. Dropped when UI is detached.
@@ -262,14 +267,26 @@ async function postJson(backend: string, apiKey: string, path: string, body: unk
   }
 }
 
-/** Serializes agent event posts so streaming chunks fan out in order. */
+/** Serializes durable agent event posts; live mid-turn tokens prefer the agent tunnel WS. */
 class AgentEventPoster {
   private chain: Promise<void> = Promise.resolve();
-  private lastStreamPostAt = 0;
+  private lastLiveFanoutAt = 0;
   /** When false, liveStream tokens are dropped; completed events still persist. */
   uiAttached = false;
+  /**
+   * Prefer agent tunnel WS for live tokens. Returns true when the frame was queued on an open socket.
+   * Set by {@link startTunnelWorker} once the runtime tunnel is connected.
+   */
+  sendUiMessage: ((frame: Record<string, unknown>) => boolean) | null = null;
   private ephemeralFailLogAt = 0;
   private ephemeralFailCount = 0;
+  /** Latest pending live snapshot per messageId (coalesce-to-latest). */
+  private pendingLive = new Map<
+    string,
+    { role: string; content: string; opts?: PostEventOptions }
+  >();
+  private liveFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private liveFlushInFlight = false;
 
   constructor(
     private readonly backend: string,
@@ -282,6 +299,18 @@ class AgentEventPoster {
     content: string,
     opts?: PostEventOptions,
   ): Promise<void> {
+    const streamRole = isStreamFanoutRole(role);
+    const live = !!opts?.liveStream && !opts?.durable;
+
+    // Mid-turn tokens: coalesce + WS (HTTP fallback). Never hit the durable chain.
+    if (live && streamRole) {
+      if (!this.uiAttached) {
+        return Promise.resolve();
+      }
+      this.enqueueLive(role, content, opts);
+      return Promise.resolve();
+    }
+
     const body: Record<string, unknown> = {
       sessionId: this.sessionId,
       role,
@@ -294,53 +323,100 @@ class AgentEventPoster {
     if (opts?.pullRequestUrl) body.pullRequestUrl = opts.pullRequestUrl;
     if (opts?.toolExecution) body.toolExecution = protoJsonToolExecution(opts.toolExecution);
 
-    const streamRole = isStreamFanoutRole(role);
-
     this.chain = this.chain.then(async () => {
-      const live = !!opts?.liveStream && !opts?.durable;
-      // Mid-turn tokens never hit PG. Async / detached: drop. Attached: ephemeral only.
-      if (live && !this.uiAttached) {
-        return;
-      }
-
-      if (opts?.throttle || (streamRole && live)) {
-        const now = Date.now();
-        const wait = STREAM_POST_MIN_INTERVAL_MS - (now - this.lastStreamPostAt);
-        if (wait > 0) await sleep(wait);
-        this.lastStreamPostAt = Date.now();
-      }
-
-      const tryEphemeral = live && streamRole && this.uiAttached;
-      if (tryEphemeral) {
-        const eph: Record<string, unknown> = {
-          sessionId: this.sessionId,
-          role,
-          content: body.content,
-        };
-        if (opts?.messageId) eph.messageId = opts.messageId;
-        if (opts?.opencodeSessionId) eph.opencodeSessionId = opts.opencodeSessionId;
-        if (opts?.toolExecution) eph.toolExecution = protoJsonToolExecution(opts.toolExecution);
-        try {
-          await postJson(
-            this.backend,
-            this.apiKey,
-            "/api/chimphands/post_ephemeral_agent_event",
-            eph,
-          );
-          this.ephemeralFailCount = 0;
-        } catch (err: unknown) {
-          const detail = err instanceof Error ? err.message : String(err);
-          this.logEphemeralIssue(`ephemeral post failed — not persisting liveStream: ${detail}`);
-        }
-        return;
-      }
-
       await postJson(this.backend, this.apiKey, "/api/chimphands/post_agent_event", body);
     });
     return this.chain;
   }
 
-  /** Avoid flooding GHA logs when ephemeral 500s every ~150ms. */
+  private enqueueLive(role: string, content: string, opts?: PostEventOptions): void {
+    const key = (opts?.messageId || "").trim() || `${role}:default`;
+    this.pendingLive.set(key, { role, content: String(content || "").slice(0, 20000), opts });
+    this.scheduleLiveFlush();
+  }
+
+  private scheduleLiveFlush(): void {
+    if (this.liveFlushInFlight || this.liveFlushTimer) return;
+    const wait = Math.max(0, STREAM_FANOUT_MIN_INTERVAL_MS - (Date.now() - this.lastLiveFanoutAt));
+    this.liveFlushTimer = setTimeout(() => {
+      this.liveFlushTimer = null;
+      void this.flushLivePending();
+    }, wait);
+  }
+
+  private async flushLivePending(): Promise<void> {
+    if (this.liveFlushInFlight) return;
+    if (this.pendingLive.size === 0) return;
+    if (!this.uiAttached) {
+      this.pendingLive.clear();
+      return;
+    }
+    this.liveFlushInFlight = true;
+    try {
+      const batch = [...this.pendingLive.values()];
+      this.pendingLive.clear();
+      this.lastLiveFanoutAt = Date.now();
+      for (const item of batch) {
+        await this.deliverLive(item.role, item.content, item.opts);
+      }
+    } finally {
+      this.liveFlushInFlight = false;
+      if (this.pendingLive.size > 0 && this.uiAttached) {
+        this.scheduleLiveFlush();
+      }
+    }
+  }
+
+  private async deliverLive(
+    role: string,
+    content: string,
+    opts?: PostEventOptions,
+  ): Promise<void> {
+    const frame: Record<string, unknown> = {
+      type: "ui_message",
+      sessionId: this.sessionId,
+      role,
+      content,
+    };
+    if (opts?.messageId) frame.messageId = opts.messageId;
+    if (opts?.toolExecution) frame.toolExecution = protoJsonToolExecution(opts.toolExecution);
+
+    if (this.sendUiMessage) {
+      try {
+        if (this.sendUiMessage(frame)) {
+          this.ephemeralFailCount = 0;
+          return;
+        }
+      } catch (err: unknown) {
+        const detail = err instanceof Error ? err.message : String(err);
+        this.logEphemeralIssue(`tunnel ui_message send failed — falling back to HTTP: ${detail}`);
+      }
+    }
+
+    // HTTP ephemeral fallback when tunnel is down / unavailable.
+    const eph: Record<string, unknown> = {
+      sessionId: this.sessionId,
+      role,
+      content,
+    };
+    if (opts?.messageId) eph.messageId = opts.messageId;
+    if (opts?.opencodeSessionId) eph.opencodeSessionId = opts.opencodeSessionId;
+    if (opts?.toolExecution) eph.toolExecution = protoJsonToolExecution(opts.toolExecution);
+    try {
+      await postJson(
+        this.backend,
+        this.apiKey,
+        "/api/chimphands/post_ephemeral_agent_event",
+        eph,
+      );
+      this.ephemeralFailCount = 0;
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logEphemeralIssue(`ephemeral post failed — not persisting liveStream: ${detail}`);
+    }
+  }
+
+  /** Avoid flooding GHA logs when live fanout fails repeatedly. */
   private logEphemeralIssue(message: string): void {
     this.ephemeralFailCount += 1;
     const now = Date.now();
@@ -360,7 +436,11 @@ class AgentEventPoster {
   }
 
   flush(): Promise<void> {
-    return this.chain;
+    if (this.liveFlushTimer) {
+      clearTimeout(this.liveFlushTimer);
+      this.liveFlushTimer = null;
+    }
+    return this.flushLivePending().then(() => this.chain);
   }
 
   reportWorkingBranch(branch: string, pullRequestUrl?: string): void {
@@ -1748,12 +1828,38 @@ function runOpencode(
   });
 }
 
-function normalizeWorktreeRelativePath(filePath: string): string {
-  let p = String(filePath || "").trim().replace(/\\/g, "/");
-  while (p.startsWith("/")) p = p.slice(1);
-  if (!p || p.includes("\0")) {
+function normalizeWorktreeRelativePath(filePath: string, worktreeRoot = process.cwd()): string {
+  const rootResolved = path.resolve(worktreeRoot);
+  const rawInput = String(filePath || "").trim();
+  if (!rawInput || rawInput.includes("\0")) {
     throw new Error("invalid path");
   }
+
+  // Absolute path under the worktree → repo-relative (never strip "/" then re-join).
+  if (path.isAbsolute(rawInput)) {
+    const abs = path.resolve(rawInput);
+    if (abs === rootResolved) {
+      throw new Error("invalid path");
+    }
+    if (abs.startsWith(rootResolved + path.sep)) {
+      return path.relative(rootResolved, abs).split(path.sep).join("/");
+    }
+  }
+
+  let p = rawInput.replace(/\\/g, "/");
+  while (p.startsWith("/")) p = p.slice(1);
+
+  // GHA workspace is /home/runner/work/<repo>/<repo>. Strip twin prefixes that agents/OpenCode
+  // sometimes emit as if relative to /home/runner/work.
+  const base = path.basename(rootResolved);
+  const parentBase = path.basename(path.dirname(rootResolved));
+  if (base && base === parentBase) {
+    const twin = `${base}/${base}/`;
+    const gha = `home/runner/work/${base}/${base}/`;
+    if (p.startsWith(gha)) p = p.slice(gha.length);
+    else if (p.startsWith(twin)) p = p.slice(twin.length);
+  }
+
   const segments: string[] = [];
   for (const part of p.split("/")) {
     if (!part || part === ".") continue;
@@ -2410,11 +2516,16 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
   }, 1500);
 
   if (runtimeId && attachUrl) {
-    stopTunnel = startTunnelWorker(backend, apiKey, runtimeId, attachUrl, sessionId, {
+    const tunnel = startTunnelWorker(backend, apiKey, runtimeId, attachUrl, sessionId, {
       onUserFileEdit: handleUserFileEdit,
       onCancelTurn: handleCancelTurn,
       onUserMessage: enqueueUserMessage,
     });
+    poster.sendUiMessage = (frame) => tunnel.sendUiMessage(frame);
+    stopTunnel = () => {
+      poster.sendUiMessage = null;
+      tunnel.stop();
+    };
   }
 
   const shutdownRuntime = async () => {
@@ -2899,6 +3010,12 @@ export function appendOpencodeDirectoryRouting(
   return query ? `${query}&${dirParam}` : dirParam;
 }
 
+type TunnelHandle = {
+  stop: () => void;
+  /** Send a live ui_message frame. Returns true when the tunnel socket accepted it. */
+  sendUiMessage: (frame: Record<string, unknown>) => boolean;
+};
+
 function startTunnelWorker(
   backend: string,
   apiKey: string,
@@ -2910,7 +3027,7 @@ function startTunnelWorker(
     onCancelTurn?: () => void;
     onUserMessage?: (msg: InboundUserMessage) => void;
   },
-  ): () => void {
+): TunnelHandle {
   let stopped = false;
   const base = attachUrl.replace(/\/$/, "");
   const workDirectory = process.cwd();
@@ -2926,6 +3043,17 @@ function startTunnelWorker(
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
+    }
+  };
+
+  const sendUiMessage = (frame: Record<string, unknown>): boolean => {
+    const socket = ws;
+    if (!socket || socket.readyState !== 1) return false;
+    try {
+      socket.send(JSON.stringify(frame));
+      return true;
+    } catch {
+      return false;
     }
   };
 
@@ -3137,17 +3265,20 @@ function startTunnelWorker(
   };
 
   void connect();
-  return () => {
-    stopped = true;
-    clearReconnect();
-    if (ws) {
-      try {
-        ws.close();
-      } catch {
-        // ignore
+  return {
+    sendUiMessage,
+    stop: () => {
+      stopped = true;
+      clearReconnect();
+      if (ws) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+        ws = null;
       }
-      ws = null;
-    }
+    },
   };
 }
 
