@@ -3105,11 +3105,36 @@ function startTunnelWorker(
     };
 
     try {
+      // Prefer JSON for workspace-scoped APIs — OpenCode SPA fallback is text/html.
+      if (opencodeProxyNeedsDirectory(pathPart) && !headers.Accept && !headers.accept) {
+        headers.Accept = "application/json";
+      }
       const upstream = await fetch(target, init);
       const respHeaders: Record<string, string> = {};
       upstream.headers.forEach((v, k) => {
         respHeaders[k] = v;
       });
+      const contentType = String(
+        respHeaders["content-type"] || respHeaders["Content-Type"] || "",
+      ).toLowerCase();
+      // Root-cause: never tunnel OpenCode SPA HTML as a successful VCS/API response.
+      if (
+        opencodeProxyNeedsDirectory(pathPart) &&
+        contentType.includes("text/html")
+      ) {
+        const msg =
+          `OpenCode returned HTML SPA shell for ${pathPart} ` +
+          "(expected JSON API; check directory routing / API path)";
+        console.error(`ChimpHands ${msg}`);
+        send({
+          type: "http_response",
+          requestId,
+          status: 502,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          bodyBase64: Buffer.from(msg, "utf8").toString("base64"),
+        });
+        return;
+      }
       send({
         type: "http_response_start",
         requestId,
