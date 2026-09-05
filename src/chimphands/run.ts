@@ -7,6 +7,7 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, openSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import http from "node:http";
 import https from "node:https";
@@ -26,6 +27,13 @@ import {
   resolveSessionBaseBranch,
   runGit,
 } from "./agentBranch.js";
+import {
+  isChimpHandsInternalCommitPath,
+  resolveCommitPaths,
+} from "./worktreeCommitPaths.js";
+
+/** Runner logs live outside the git worktree so they never enter commit status. */
+const OPENCODE_SERVER_LOG_PATH = path.join(tmpdir(), "chimphands-opencode-server.log");
 
 const ROLE_ASSISTANT = "CHIMPHANDS_MESSAGE_ROLE_ASSISTANT";
 const ROLE_TOOL = "CHIMPHANDS_MESSAGE_ROLE_TOOL";
@@ -119,7 +127,7 @@ const CHIMPHANDS_AGENT_PROMPT = `You are ChimpHands, TestChimp's coding agent. Y
 
 ## CI runner hygiene (GitHub Actions)
 - On hosted runners: load skill \`references/chimphands-ci-runner.md\` before compile, Docker builds, or large installs.
-- Never \`git fetch origin\` (full fetch) — shallow single-branch fetch only; branch names are in \`.chimphands/remote-branch-names.txt\`.
+- Never \`git fetch origin\` (full fetch) — shallow single-branch fetch only; branch names are in \`/tmp/chimphands/remote-branch-names.txt\` (or \`$CHIMPHANDS_REMOTE_BRANCH_NAMES\`).
 - Reclaim disk between heavy phases (\`docker builder prune -af\` after image builds, stop compile daemons, delete temp/test artifacts). One reclaim+retry on ENOSPC — no blind loops.
 
 ## Honesty
@@ -1560,7 +1568,7 @@ async function restartLocalOpencodeServer(attachUrl: string): Promise<void> {
   killListenersOnPort(port);
   await sleep(300);
 
-  const logFd = openSync("opencode-server.log", "a");
+  const logFd = openSync(OPENCODE_SERVER_LOG_PATH, "a");
   const child = spawn(
     "opencode",
     ["serve", "--port", port, "--hostname", hostname],
@@ -1578,6 +1586,7 @@ async function restartLocalOpencodeServer(attachUrl: string): Promise<void> {
       /* best effort */
     }
   }
+  console.error(`ChimpHands opencode serve log: ${OPENCODE_SERVER_LOG_PATH}`);
   console.error(`ChimpHands restarted OpenCode serve on ${hostname}:${port} (pid ${child.pid ?? "?"})`);
   await waitForOpencodeHttp(attachUrl, 60_000);
 }
@@ -1890,7 +1899,13 @@ async function ackWorktreeFileWrite(
     requestId,
     ok,
   };
-  if (errorMessage) body.errorMessage = errorMessage.slice(0, 2000);
+  if (errorMessage) {
+    body.errorMessage = errorMessage
+      .replace(/[\r\n\t]+/g, " ")
+      .replace(/ +/g, " ")
+      .trim()
+      .slice(0, 2000);
+  }
   await postJson(backend, apiKey, "/api/chimphands/ack_worktree_file_write", body).catch(
     (err: unknown) => {
       console.error(
@@ -1926,7 +1941,9 @@ async function applyUserFileEdit(
       await ackWorktreeFileWrite(backend, apiKey, sessionId, edit.requestId, true);
       return;
     }
-    const pushed = await commitAndPushDirtyWorktree("User Update");
+    const pushed = await commitAndPushDirtyWorktree("User Update", {
+      paths: [relative],
+    });
     if (!pushed.ok) {
       await ackWorktreeFileWrite(
         backend,
@@ -2886,47 +2903,17 @@ function startRuntimeHeartbeat(
   };
 }
 
-/** Paths ChimpHands writes on the runner — never commit into the agent branch. */
-const CHIMPHANDS_COMMIT_EXCLUDE_PATHSPECS = [
-  ":(exclude)opencode.json",
-  ":(exclude)opencode-server.log",
-  ":(exclude)chimphands-run.log",
-  ":(exclude)remote-branches.txt",
-  ":(exclude)remote-branch-names.txt",
-  ":(exclude)gha-creds*",
-  ":(exclude)**/gha-creds*",
-  ":(exclude).chimphands",
-  ":(exclude).chimphands/**",
-  ":(exclude).agents",
-  ":(exclude).agents/**",
-];
-
-function isChimpHandsInternalCommitPath(filePath: string): boolean {
-  let normalized = filePath.replace(/\\/g, "/").toLowerCase();
-  while (normalized.startsWith("./")) normalized = normalized.slice(2);
-  const slash = normalized.lastIndexOf("/");
-  const name = slash >= 0 ? normalized.slice(slash + 1) : normalized;
-  if (
-    name === "opencode.json" ||
-    name === "opencode-server.log" ||
-    name === "chimphands-run.log" ||
-    name === "remote-branches.txt" ||
-    name === "remote-branch-names.txt" ||
-    name.startsWith("gha-creds")
-  ) {
-    return true;
-  }
-  return (
-    normalized === ".chimphands" ||
-    normalized.startsWith(".chimphands/") ||
-    normalized === ".agents" ||
-    normalized.startsWith(".agents/")
-  );
-}
-
-/** Commit+push dirty worktree on the session agent branch before idle/teardown. */
+/**
+ * Commit+push product changes on the session agent branch.
+ *
+ * Policy: allowlist staging from `git status` (never `git add -A` / exclude pathspecs).
+ * Runner scaffolding is filtered out; anything already staged by the agent that is
+ * scaffolding is unstaged before commit. Session logs are written under os.tmpdir(),
+ * not the worktree.
+ */
 async function commitAndPushDirtyWorktree(
   message: string,
+  opts?: { paths?: string[] },
 ): Promise<{ ok: boolean; error?: string }> {
   const run = (args: string[], env?: NodeJS.ProcessEnv) => runGit(args, env);
 
@@ -2953,35 +2940,18 @@ async function commitAndPushDirtyWorktree(
       console.error(`ChimpHands git status failed: ${error}`);
       return { ok: false, error };
     }
-    if (!status.out.trim()) {
-      return { ok: true };
+
+    const toStage = resolveCommitPaths(status.out, opts?.paths);
+    if (toStage.length) {
+      const add = await run(["add", "--", ...toStage]);
+      if (add.code !== 0) {
+        const error = add.err || add.out || "git add failed";
+        console.error(`ChimpHands git add failed: ${error}`);
+        return { ok: false, error };
+      }
     }
-    const add = await run([
-      "add",
-      "-A",
-      "--",
-      ".",
-      ...CHIMPHANDS_COMMIT_EXCLUDE_PATHSPECS,
-    ]);
-    if (add.code !== 0) {
-      const error = add.err || add.out || "git add failed";
-      console.error(`ChimpHands git add failed: ${error}`);
-      return { ok: false, error };
-    }
-    // Drop already-tracked scaffolding that may still be staged from older commits.
-    await run([
-      "reset",
-      "-q",
-      "HEAD",
-      "--",
-      "opencode.json",
-      "opencode-server.log",
-      "chimphands-run.log",
-      "remote-branches.txt",
-      "remote-branch-names.txt",
-      ".chimphands",
-      ".agents",
-    ]);
+
+    // Drop scaffolding the agent may have staged (git add -A, etc.).
     const staged = await run(["diff", "--cached", "--name-only"]);
     if (staged.code !== 0) {
       const error = staged.err || staged.out || "git diff --cached failed";
@@ -2996,20 +2966,47 @@ async function commitAndPushDirtyWorktree(
     if (internalStaged.length) {
       await run(["reset", "-q", "HEAD", "--", ...internalStaged]);
     }
+
     const keepStaged = stagedPaths.filter((p) => !isChimpHandsInternalCommitPath(p));
-    if (!keepStaged.length) {
+    const pathScoped = !!opts?.paths?.length;
+    if (pathScoped) {
+      if (!toStage.length) {
+        return { ok: true };
+      }
+    } else if (!keepStaged.length) {
       return { ok: true };
     }
+
     const commitEnv = {
       GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "ChimpHands",
       GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "chimphands@testchimp.io",
       GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "ChimpHands",
       GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "chimphands@testchimp.io",
     };
-    const commit = await run(
-      ["-c", "user.name=ChimpHands", "-c", "user.email=chimphands@testchimp.io", "commit", "-m", message],
-      commitEnv,
-    );
+    // Pathspec form is `git commit --only` — commits just those paths even if
+    // the index has other staged product files.
+    const commitArgs = pathScoped
+      ? [
+          "-c",
+          "user.name=ChimpHands",
+          "-c",
+          "user.email=chimphands@testchimp.io",
+          "commit",
+          "-m",
+          message,
+          "--",
+          ...toStage,
+        ]
+      : [
+          "-c",
+          "user.name=ChimpHands",
+          "-c",
+          "user.email=chimphands@testchimp.io",
+          "commit",
+          "-m",
+          message,
+        ];
+    const commit = await run(commitArgs, commitEnv);
     if (commit.code !== 0) {
       const error = commit.err || commit.out || "git commit failed";
       console.error(`ChimpHands git commit: ${error}`);
