@@ -1315,6 +1315,10 @@ function writeOpencodeConfig(
     TESTCHIMP_EXECUTION_SOURCE: "CLOUD_AGENT",
     CHIMPHANDS_UI_ATTACHED: uiAttached ? "true" : "false",
   };
+  if (sessionId) {
+    mcpEnv.SESSION_ID = sessionId;
+    mcpEnv.CHIMPHANDS_SESSION_ID = sessionId;
+  }
   const serviceUserId = bootStr(boot, "chimphands_service_account_user_id", "chimphandsServiceAccountUserId");
   if (serviceUserId) {
     mcpEnv.TESTCHIMP_USER_ID = serviceUserId;
@@ -2516,6 +2520,8 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
     TESTCHIMP_API_KEY: apiKey,
     TESTCHIMP_BACKEND_URL: backend,
     TESTCHIMP_EXECUTION_SOURCE: "CLOUD_AGENT",
+    SESSION_ID: sessionId,
+    CHIMPHANDS_SESSION_ID: sessionId,
   };
   if (userId) childEnv.TESTCHIMP_USER_ID = userId;
 

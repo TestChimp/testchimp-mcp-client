@@ -1070,9 +1070,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: S.reportAgentActionInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.reportAgentActionInput>;
-      const actorRaw = (a.actorType ?? "local-agent").toString();
+      const sessionId = (
+        process.env.SESSION_ID ||
+        process.env.CHIMPHANDS_SESSION_ID ||
+        ""
+      ).trim();
+      const actorRaw = (a.actorType ?? (sessionId ? "cloud-agent" : "local-agent")).toString();
       const actorType =
-        actorRaw.toUpperCase().replace(/-/g, "_") === "CLOUD_AGENT" ? "CLOUD_AGENT" : "LOCAL_AGENT";
+        actorRaw.toUpperCase().replace(/-/g, "_") === "CLOUD_AGENT" || sessionId
+          ? "CLOUD_AGENT"
+          : "LOCAL_AGENT";
       const actionNorm = a.actionType.toString().toUpperCase().replace(/-/g, "_");
       let actionType = actionNorm;
       if (actionNorm === "COMPLETED" || actionNorm === "ACTION_COMPLETED") {
@@ -1087,12 +1094,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         actorType,
         entityType: a.entityType,
       };
+      if (sessionId) body.chimphandsSessionId = sessionId;
       if (a.policyFile) body.policyFile = a.policyFile;
       if (a.policyVersion) body.policyVersion = a.policyVersion;
       const gitSha = resolveGitHeadSha(a.gitSha);
       if (gitSha) body.gitSha = gitSha;
       if (a.userId) body.userId = a.userId;
-      else if (process.env.TESTCHIMP_USER_ID) body.userId = process.env.TESTCHIMP_USER_ID;
+      else if (!sessionId && process.env.TESTCHIMP_USER_ID) {
+        // ChimpHands: server resolves responsible user from SESSION_ID; do not stamp service account.
+        body.userId = process.env.TESTCHIMP_USER_ID;
+      }
       if (a.branchName) body.branchName = a.branchName;
       // Nested traceability wins for agentModel / skillVersion / cliVersion;
       // fill from flat/env/package when nested omits them.
