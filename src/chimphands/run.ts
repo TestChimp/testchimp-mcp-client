@@ -1225,6 +1225,9 @@ function isAssistantEchoOfSentPrompt(assistant: string, ...sentPrompts: string[]
   return false;
 }
 
+/** First line of host-injected OpenCode prompts — UI filters on this marker. */
+const HOST_PROMPT_WRAPPER_MARKER = "[[[chimphands.host_prompt.v1]]]";
+
 function wrapPromptWithContext(
   conversationSummary: string,
   userPrompt: string,
@@ -1233,7 +1236,7 @@ function wrapPromptWithContext(
   pullRequestUrl?: string,
   baseBranch?: string,
 ): string {
-  const parts: string[] = [];
+  const parts: string[] = [HOST_PROMPT_WRAPPER_MARKER];
   if (baseBranch?.trim()) {
     parts.push(
       "## Base branch (parent — do NOT commit here)",
@@ -1257,11 +1260,11 @@ function wrapPromptWithContext(
   // user message and the UI shows host control text in chat.
   if (isNewOpencodeSession && conversationSummary.trim()) {
     parts.push(`Conversation so far:\n${conversationSummary.trim()}`, "", `Current task:\n${task}`);
-    return parts.filter(Boolean).join("\n");
+    return parts.filter((p) => p !== "").join("\n");
   }
-  if (parts.length) {
+  if (parts.length > 1) {
     parts.push(`Current task:\n${task}`);
-    return parts.filter(Boolean).join("\n");
+    return parts.filter((p) => p !== "").join("\n");
   }
   return task;
 }
@@ -2736,33 +2739,8 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       opencodeSessionId = result.opencodeSessionId;
     }
 
-    // Turn-end durable reconcile into PG (idempotent messageIds). Mid-turn was
-    // ephemeral-only when UI attached; async runs get their transcript here.
-    // Also reconcile on failure so partial assistant/tool output is not lost.
-    if (attachUrl && opencodeSessionId) {
-      try {
-        await reconcileOpencodeSessionMessages(
-          attachUrl,
-          opencodeSessionId,
-          (role, content, opts) => {
-            turnPostEvent(role, content, {
-              ...opts,
-              opencodeSessionId,
-              durable: true,
-            });
-          },
-          noteWorkingBranch,
-        );
-        await poster.flush();
-      } catch (err: unknown) {
-        console.error(
-          `ChimpHands turn-end reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-
-    // Always checkpoint dirty worktree after each turn so PR + Files pane
-    // (GitHub compare) stay current whether or not a browser UI is attached.
+    // Checkpoint dirty worktree before unlocking the UI so Files (GitHub tip
+    // of workingBranch) matches what the user sees when WAITING_USER lands.
     await commitAndPushDirtyWorktree("chimphands: commit after turn");
 
     if (attachUrl && opencodeSessionId && midTurnInjectedById.size) {
@@ -2784,6 +2762,29 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
       }
     }
 
+    const reconcileTurn = async () => {
+      if (!attachUrl || !opencodeSessionId) return;
+      try {
+        await reconcileOpencodeSessionMessages(
+          attachUrl,
+          opencodeSessionId,
+          (role, content, opts) => {
+            turnPostEvent(role, content, {
+              ...opts,
+              opencodeSessionId,
+              durable: true,
+            });
+          },
+          noteWorkingBranch,
+        );
+        await poster.flush();
+      } catch (err: unknown) {
+        console.error(
+          `ChimpHands turn-end reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
+
     if (result.code !== 0 && !result.cancelled) {
       const errMsg = (result.err || "opencode failed").trim() || "opencode failed";
       console.error(`ChimpHands OpenCode failed: ${errMsg}`);
@@ -2804,16 +2805,27 @@ export async function runChimphands(opts: RunOptions): Promise<void> {
         postEvent(ROLE_STATUS, errMsg, { status: STATUS_FAILED });
         await complete(STATUS_FAILED, errMsg);
       }
+      // Persist partial transcript even on failure (after push / status report).
+      await reconcileTurn();
       exitCode = result.code || 1;
       break;
     }
 
+    const waitingOpts: PostEventOptions = {
+      status: STATUS_WAITING_USER,
+      ...(workingBranch ? { workingBranch } : {}),
+      ...(pullRequestUrl ? { pullRequestUrl } : {}),
+    };
     if (result.cancelled) {
-      postEvent(ROLE_STATUS, "Turn stopped", { status: STATUS_WAITING_USER });
+      postEvent(ROLE_STATUS, "Turn stopped", waitingOpts);
     } else {
-      postEvent(ROLE_STATUS, "Waiting for user input", { status: STATUS_WAITING_USER });
+      postEvent(ROLE_STATUS, "Waiting for user input", waitingOpts);
     }
     await poster.flush();
+
+    // Durable reconcile after unlock so Interrupt→Send is not blocked on PG writes.
+    await reconcileTurn();
+
     lastUserActivity = Date.now();
     idle = false;
     prompt = (await waitForNextPrompt()) || "";
@@ -2874,6 +2886,44 @@ function startRuntimeHeartbeat(
   };
 }
 
+/** Paths ChimpHands writes on the runner — never commit into the agent branch. */
+const CHIMPHANDS_COMMIT_EXCLUDE_PATHSPECS = [
+  ":(exclude)opencode.json",
+  ":(exclude)opencode-server.log",
+  ":(exclude)chimphands-run.log",
+  ":(exclude)remote-branches.txt",
+  ":(exclude)remote-branch-names.txt",
+  ":(exclude)gha-creds*",
+  ":(exclude)**/gha-creds*",
+  ":(exclude).chimphands",
+  ":(exclude).chimphands/**",
+  ":(exclude).agents",
+  ":(exclude).agents/**",
+];
+
+function isChimpHandsInternalCommitPath(filePath: string): boolean {
+  let normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  while (normalized.startsWith("./")) normalized = normalized.slice(2);
+  const slash = normalized.lastIndexOf("/");
+  const name = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+  if (
+    name === "opencode.json" ||
+    name === "opencode-server.log" ||
+    name === "chimphands-run.log" ||
+    name === "remote-branches.txt" ||
+    name === "remote-branch-names.txt" ||
+    name.startsWith("gha-creds")
+  ) {
+    return true;
+  }
+  return (
+    normalized === ".chimphands" ||
+    normalized.startsWith(".chimphands/") ||
+    normalized === ".agents" ||
+    normalized.startsWith(".agents/")
+  );
+}
+
 /** Commit+push dirty worktree on the session agent branch before idle/teardown. */
 async function commitAndPushDirtyWorktree(
   message: string,
@@ -2906,11 +2956,49 @@ async function commitAndPushDirtyWorktree(
     if (!status.out.trim()) {
       return { ok: true };
     }
-    const add = await run(["add", "-A"]);
+    const add = await run([
+      "add",
+      "-A",
+      "--",
+      ".",
+      ...CHIMPHANDS_COMMIT_EXCLUDE_PATHSPECS,
+    ]);
     if (add.code !== 0) {
       const error = add.err || add.out || "git add failed";
       console.error(`ChimpHands git add failed: ${error}`);
       return { ok: false, error };
+    }
+    // Drop already-tracked scaffolding that may still be staged from older commits.
+    await run([
+      "reset",
+      "-q",
+      "HEAD",
+      "--",
+      "opencode.json",
+      "opencode-server.log",
+      "chimphands-run.log",
+      "remote-branches.txt",
+      "remote-branch-names.txt",
+      ".chimphands",
+      ".agents",
+    ]);
+    const staged = await run(["diff", "--cached", "--name-only"]);
+    if (staged.code !== 0) {
+      const error = staged.err || staged.out || "git diff --cached failed";
+      console.error(`ChimpHands git staged check failed: ${error}`);
+      return { ok: false, error };
+    }
+    const stagedPaths = staged.out
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const internalStaged = stagedPaths.filter(isChimpHandsInternalCommitPath);
+    if (internalStaged.length) {
+      await run(["reset", "-q", "HEAD", "--", ...internalStaged]);
+    }
+    const keepStaged = stagedPaths.filter((p) => !isChimpHandsInternalCommitPath(p));
+    if (!keepStaged.length) {
+      return { ok: true };
     }
     const commitEnv = {
       GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "ChimpHands",
