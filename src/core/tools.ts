@@ -381,6 +381,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "list-test-scenarios-for-scope",
+    description:
+      "List in-scope test scenarios (ordinalId + title only) for exactly one locator: " +
+      "a named test run, a release label, or a platform plans folder/file path. " +
+      "Does not return markdown — use get-test-scenarios for detail by known ordinal. " +
+      "Use when executing tests for a plans path, release, or named test run.",
+    inputSchema: S.listTestScenariosForScopeInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listTestScenariosForScopeInput>;
+      const body: Record<string, unknown> = {};
+      const namedTestRunId = a.namedTestRunId?.trim();
+      const release = a.release?.trim();
+      const plansPath = a.plansPath?.trim();
+      if (namedTestRunId) body.namedTestRunId = namedTestRunId;
+      if (release) body.release = release;
+      if (plansPath) body.plansPath = plansPath;
+      return postMcp("/api/mcp/list_test_scenarios_for_scope", body);
+    },
+  },
+  {
     kebab: "get-manual-session-details",
     description:
       "Fetch a manual test session by id. Returns project id, title, environment, steps " +

@@ -185,6 +185,20 @@ export const getTestScenariosInput = z
     { message: "Provide scenarioOrdinalIds and/or externalIds (non-empty)" },
   );
 
+export const listTestScenariosForScopeInput = z
+  .object({
+    namedTestRunId: z.string().min(1).optional(),
+    release: z.string().min(1).optional(),
+    plansPath: z.string().min(1).optional(),
+  })
+  .refine(
+    (v) =>
+      [v.namedTestRunId, v.release, v.plansPath].filter(
+        (x) => x != null && String(x).trim() !== "",
+      ).length === 1,
+    { message: "Provide exactly one of namedTestRunId, release, or plansPath" },
+  );
+
 export const getManualSessionDetailsInput = z.object({
   manualSessionId: z.string().min(1),
 });

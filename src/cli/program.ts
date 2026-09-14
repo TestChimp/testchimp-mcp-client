@@ -422,6 +422,38 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("list-test-scenarios-for-scope")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-test-scenarios-for-scope")!.description)
+    .addOption(jsonInputOption())
+    .option("--named-test-run-id <id>", "named test run id")
+    .option("--release <label>", "release catalog version / label")
+    .option(
+      "--plans-path <path>",
+      "platform plans folder or .md file (e.g. plans/scenarios/checkout or plans/scenarios/checkout/login.md)",
+    )
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.namedTestRunId) body.namedTestRunId = String(opts.namedTestRunId).trim();
+      if (opts.release) body.release = String(opts.release).trim();
+      if (opts.plansPath) body.plansPath = String(opts.plansPath).trim();
+      const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+      for (const key of ["namedTestRunId", "release", "plansPath"] as const) {
+        const value = merged[key];
+        if (typeof value !== "string") {
+          continue;
+        }
+        const trimmed = value.trim();
+        if (!trimmed) {
+          delete merged[key];
+        } else {
+          merged[key] = trimmed;
+        }
+      }
+      const out = await runTool("list-test-scenarios-for-scope", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("get-manual-session-details")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-manual-session-details")!.description)
     .addOption(jsonInputOption())
