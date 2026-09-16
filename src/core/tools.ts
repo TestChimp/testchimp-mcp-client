@@ -1292,8 +1292,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "list-api-operations",
     description:
-      "List API operations for a service resource with covering-test previews and coverageSummary scores " +
-      "(same payload as the Operations list UI). Prefer --root-file-path (repo-relative OpenAPI root).",
+      "List API operations for a service resource with covering-test previews, coverageSummary scores, " +
+      "observability mapping state, and runtimeObservation from the latest finalized production daily summary " +
+      "(with latest-hour fallback). runtimeObservation may include window bounds, requestCount/rpm, errorCount/errorRate, " +
+      "p50/p95/p99LatencyMs, status-class counts, and syncStatus. Missing observability is unknown/not configured, not zero. " +
+      "Use these signals to prioritize uncovered high-volume/high-error operations; prefer --root-file-path.",
     inputSchema: S.listApiOperationsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.listApiOperationsInput>;
@@ -1309,7 +1312,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "get-api-operation-detail",
     description:
       "Fetch detailed API operation coverage (request/query/response fields, response codes, covering tests) — " +
-      "same payload as the Operation detail UI. Prefer TestChimp operation id (--id ULID); " +
+      "the operation also carries obsMappingState and the latest runtimeObservation daily summary when available. " +
+      "Use request volume/error rate to rank coverage risk and p95/p99 latency to prioritize performance-test work; " +
+      "do not treat absent observations as zero or production latency as a test threshold. Prefer TestChimp operation id (--id ULID); " +
       "or rootFilePath + oasOperationId; or rootFilePath + httpMethod + pathTemplate.",
     inputSchema: S.getApiOperationDetailInput,
     execute: async (args, { postMcp }) => {
