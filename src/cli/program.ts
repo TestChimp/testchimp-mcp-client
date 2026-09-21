@@ -469,6 +469,31 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-meeting-transcript")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-meeting-transcript")!.description)
+    .addOption(jsonInputOption())
+    .option(
+      "--meeting-id <id>",
+      "meeting id (calendar event id, or URL hash for ad-hoc; same as Studio folder under ~/.testchimp/data/meetings/)",
+    )
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.meetingId) {
+        body.meetingId = String(opts.meetingId).trim();
+      }
+      const merged = mergeBodies(body, opts.jsonInput) as { meetingId?: string };
+      if (!merged.meetingId || String(merged.meetingId).trim() === "") {
+        throw new Error("meetingId is required (--meeting-id)");
+      }
+      const out = await runTool(
+        "get-meeting-transcript",
+        { meetingId: String(merged.meetingId).trim() },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
     .command("get-issue-details")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-issue-details")!.description)
     .addOption(jsonInputOption())

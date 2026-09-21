@@ -203,6 +203,11 @@ export const getManualSessionDetailsInput = z.object({
   manualSessionId: z.string().min(1),
 });
 
+export const getMeetingTranscriptInput = z.object({
+  /** Calendar event id, or URL hash for ad-hoc meetings */
+  meetingId: z.string().min(1),
+});
+
 export const getIssueDetailsInput = z.object({
   /** Accepts #B-123, B-123, #B123, B123, or plain 123 */
   issueId: z.string().min(1),

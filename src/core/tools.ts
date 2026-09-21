@@ -415,6 +415,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-meeting-transcript",
+    description:
+      "Fetch a cloud-synced Meeting Bots transcript by meeting id (calendar event id, or URL hash " +
+      "for ad-hoc meetings). Prefer local ~/.testchimp/data/meetings/<meeting-id>/transcript.md " +
+      "when present on Studio / the recording machine.",
+    inputSchema: S.getMeetingTranscriptInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getMeetingTranscriptInput>;
+      return postMcp("/api/mcp/get_meeting_transcript", {
+        meetingId: a.meetingId,
+      });
+    },
+  },
+  {
     kebab: "get-issue-details",
     description:
       "Fetch a TestChimp issue (bug) by ordinal id. Accepts flexible issueId formats: " +

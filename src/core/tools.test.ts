@@ -72,3 +72,30 @@ describe("API operation observability", () => {
     );
   });
 });
+
+describe("get-meeting-transcript", () => {
+  it("posts meetingId to get_meeting_transcript", async () => {
+    const response = JSON.stringify({
+      meetingId: "evt-123",
+      transcriptMarkdown: "# Meeting\n\nP1: hello",
+    });
+    let request: { path: string; body: unknown } | undefined;
+
+    const result = await runTool(
+      "get-meeting-transcript",
+      { meetingId: "evt-123" },
+      {
+        postMcp: async (path, body) => {
+          request = { path, body };
+          return response;
+        },
+      },
+    );
+
+    assert.deepEqual(request, {
+      path: "/api/mcp/get_meeting_transcript",
+      body: { meetingId: "evt-123" },
+    });
+    assert.deepEqual(JSON.parse(result), JSON.parse(response));
+  });
+});
