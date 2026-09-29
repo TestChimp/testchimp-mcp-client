@@ -206,6 +206,13 @@ export const getManualSessionDetailsInput = z.object({
 export const getMeetingTranscriptInput = z.object({
   /** Calendar event id, or URL hash for ad-hoc meetings */
   meetingId: z.string().min(1),
+  /** Return only the post-meeting summary (transcript body omitted). */
+  summaryOnly: z.boolean().optional(),
+});
+
+export const getMeetingSetInput = z.object({
+  /** ULID from `/testchimp using meeting-set context <id>` (Meetings page → Start Chat) */
+  meetingSetId: z.string().min(1),
 });
 
 export const getIssueDetailsInput = z.object({

@@ -418,13 +418,31 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "get-meeting-transcript",
     description:
       "Fetch a cloud-synced Meeting Bots transcript by meeting id (calendar event id, or URL hash " +
-      "for ad-hoc meetings). Prefer local ~/.testchimp/data/meetings/<meeting-id>/transcript.md " +
+      "for ad-hoc meetings). Returns title, start time, post-meeting summary, and transcript. " +
+      "Use summaryOnly to fetch just the summary (much smaller) and pull the full transcript only " +
+      "when the summary is not enough. Prefer local ~/.testchimp/data/meetings/<meeting-id>/transcript.md " +
       "when present on Studio / the recording machine.",
     inputSchema: S.getMeetingTranscriptInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getMeetingTranscriptInput>;
       return postMcp("/api/mcp/get_meeting_transcript", {
         meetingId: a.meetingId,
+        ...(a.summaryOnly ? { summaryOnly: true } : {}),
+      });
+    },
+  },
+  {
+    kebab: "get-meeting-set",
+    description:
+      "Fetch a meeting-set context by id (ULID from `/testchimp using meeting-set context <id>`, " +
+      "created on the Meetings page via Start Chat). Returns the filters / search text applied and " +
+      "the meetings in scope (id, title, start). Fetch each meeting with get-meeting-transcript " +
+      "(summaryOnly first). Sets expire after 7 days.",
+    inputSchema: S.getMeetingSetInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getMeetingSetInput>;
+      return postMcp("/api/mcp/get_meeting_set", {
+        meetingSetId: a.meetingSetId,
       });
     },
   },

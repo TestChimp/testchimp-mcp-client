@@ -98,4 +98,39 @@ describe("get-meeting-transcript", () => {
     });
     assert.deepEqual(JSON.parse(result), JSON.parse(response));
   });
+
+  it("passes summaryOnly when requested", async () => {
+    let body: unknown;
+    await runTool(
+      "get-meeting-transcript",
+      { meetingId: "evt-123", summaryOnly: true },
+      {
+        postMcp: async (_path, b) => {
+          body = b;
+          return "{}";
+        },
+      },
+    );
+    assert.deepEqual(body, { meetingId: "evt-123", summaryOnly: true });
+  });
+});
+
+describe("get-meeting-set", () => {
+  it("posts meetingSetId to get_meeting_set", async () => {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool(
+      "get-meeting-set",
+      { meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
+      {
+        postMcp: async (path, body) => {
+          request = { path, body };
+          return "{}";
+        },
+      },
+    );
+    assert.deepEqual(request, {
+      path: "/api/mcp/get_meeting_set",
+      body: { meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
+    });
+  });
 });

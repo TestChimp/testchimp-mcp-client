@@ -476,18 +476,47 @@ export function buildCliProgram(): Command {
       "--meeting-id <id>",
       "meeting id (calendar event id, or URL hash for ad-hoc; same as Studio folder under ~/.testchimp/data/meetings/)",
     )
+    .option("--summary-only", "return only the post-meeting summary (omit the transcript body)")
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
       if (opts.meetingId) {
         body.meetingId = String(opts.meetingId).trim();
       }
-      const merged = mergeBodies(body, opts.jsonInput) as { meetingId?: string };
+      if (opts.summaryOnly) {
+        body.summaryOnly = true;
+      }
+      const merged = mergeBodies(body, opts.jsonInput) as { meetingId?: string; summaryOnly?: boolean };
       if (!merged.meetingId || String(merged.meetingId).trim() === "") {
         throw new Error("meetingId is required (--meeting-id)");
       }
       const out = await runTool(
         "get-meeting-transcript",
-        { meetingId: String(merged.meetingId).trim() },
+        {
+          meetingId: String(merged.meetingId).trim(),
+          ...(merged.summaryOnly ? { summaryOnly: true } : {}),
+        },
+        { postMcp },
+      );
+      console.log(out);
+    });
+
+  program
+    .command("get-meeting-set")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-meeting-set")!.description)
+    .addOption(jsonInputOption())
+    .option("--meeting-set-id <id>", "meeting-set ULID (from `/testchimp using meeting-set context <id>`)")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.meetingSetId) {
+        body.meetingSetId = String(opts.meetingSetId).trim();
+      }
+      const merged = mergeBodies(body, opts.jsonInput) as { meetingSetId?: string };
+      if (!merged.meetingSetId || String(merged.meetingSetId).trim() === "") {
+        throw new Error("meetingSetId is required (--meeting-set-id)");
+      }
+      const out = await runTool(
+        "get-meeting-set",
+        { meetingSetId: String(merged.meetingSetId).trim() },
         { postMcp },
       );
       console.log(out);
