@@ -522,6 +522,54 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
+  const collectRepeatable = (value: string, previous: string[] = []): string[] => [
+    ...previous,
+    ...value.split(",").map((s) => s.trim()).filter(Boolean),
+  ];
+
+  program
+    .command("list-meetings")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-meetings")!.description)
+    .addOption(jsonInputOption())
+    .option("--from <date>", "inclusive start: YYYY-MM-DD (local start of day), ISO datetime, or epoch millis")
+    .option("--to <date>", "inclusive end: YYYY-MM-DD (local end of day), ISO datetime, or epoch millis")
+    .option("--label <label>", "label filter (repeatable or comma-separated; OR, case-insensitive)", collectRepeatable)
+    .option(
+      "--participant <emailOrUserId>",
+      "participant filter by email or user id (repeatable or comma-separated; OR)",
+      collectRepeatable,
+    )
+    .option("--domain <domain>", "participant email domain filter (repeatable or comma-separated; OR)", collectRepeatable)
+    .option("--search <text>", "full-text search over title + transcript")
+    .option("--page-size <n>", "page size (default 50, max 200; max 25 when searching)")
+    .option("--page-token <token>", "nextPageToken from the previous page")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.from) body.from = String(opts.from).trim();
+      if (opts.to) body.to = String(opts.to).trim();
+      if (opts.label?.length) body.labels = opts.label;
+      if (opts.participant?.length) body.participantKeys = opts.participant;
+      if (opts.domain?.length) body.participantDomains = opts.domain;
+      if (opts.search) body.searchText = String(opts.search);
+      if (opts.pageSize) {
+        const n = Number(opts.pageSize);
+        if (!Number.isInteger(n) || n <= 0) throw new Error("--page-size must be a positive integer");
+        body.pageSize = n;
+      }
+      if (opts.pageToken) body.pageToken = String(opts.pageToken).trim();
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("list-meetings", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
+    .command("list-meeting-filter-options")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-meeting-filter-options")!.description)
+    .action(async () => {
+      const out = await runTool("list-meeting-filter-options", {}, { postMcp });
+      console.log(out);
+    });
+
   program
     .command("get-issue-details")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-issue-details")!.description)

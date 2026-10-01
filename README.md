@@ -48,11 +48,15 @@ testchimp promote-perf-baseline --run-id 01ABC --env-class CI
 testchimp compare-perf-to-baseline --run-id 01ABC --max-p95-regression-percent 10
 testchimp list-related-perf-tests --scenario-titles "Checkout,Refund"
 testchimp list-api-operation-interactions --operation-id 01XYZ --interaction-type REAL --limit 100
+testchimp list-meeting-filter-options
+testchimp list-meetings --from 2026-09-01 --to 2026-09-30 --domain customer.com --label Sales --search "pricing"
+testchimp get-meeting-transcript --meeting-id <meeting-id> --summary-only
 ```
 
 - **stdout:** API response JSON.
 - **stderr:** progress for `provision-ephemeral-environment-and-wait` (“still waiting…” polls).
 - **performance gate:** `compare-perf-to-baseline` still prints its JSON response but exits nonzero when `regressed` is `true` (top-level or under `comparison`).
+- **Meetings:** `list-meetings` / `list-meeting-filter-options` cover team-wide Meeting Bots meetings only (same filters as the Meetings page). `--from` / `--to` take `YYYY-MM-DD` (inclusive local days), ISO datetimes, or epoch millis; `--label`, `--participant`, `--domain` are repeatable or comma-separated.
 - **Flags:** default for each subcommand; **`--json-input '<json>'`** or **`--json-input @file.json`** merges over flags (JSON wins on conflicts). Use JSON for nested bodies (e.g. TrueCoverage scopes).
 
 ## Migration from `testchimp-mcp-client`
