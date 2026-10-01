@@ -203,6 +203,43 @@ export const getManualSessionDetailsInput = z.object({
   manualSessionId: z.string().min(1),
 });
 
+export const getMeetingTranscriptInput = z.object({
+  /** Calendar event id, or URL hash for ad-hoc meetings */
+  meetingId: z.string().min(1),
+  /** Return only the post-meeting summary (transcript body omitted). */
+  summaryOnly: z.boolean().optional(),
+});
+
+export const getMeetingSetInput = z.object({
+  /** ULID from `/testchimp using meeting-set context <id>` (Meetings page → Start Chat) */
+  meetingSetId: z.string().min(1),
+});
+
+export const listMeetingsInput = z.object({
+  /** Inclusive start bound: YYYY-MM-DD (local start of day), ISO datetime, or epoch millis. */
+  from: z.union([z.string().min(1), z.number()]).optional(),
+  /** Inclusive end bound: YYYY-MM-DD (local end of day), ISO datetime, or epoch millis. */
+  to: z.union([z.string().min(1), z.number()]).optional(),
+  /** Raw inclusive start (epoch millis); `from` wins when both are set. */
+  startDateMillis: z.union([z.string().min(1), z.number()]).optional(),
+  /** Raw inclusive end (epoch millis); `to` wins when both are set. */
+  endDateMillis: z.union([z.string().min(1), z.number()]).optional(),
+  /** OR filter, case-insensitive (exact values from list-meeting-filter-options). */
+  labels: z.array(z.string().min(1)).optional(),
+  /** OR filter: participant user ids or emails (keys from list-meeting-filter-options). */
+  participantKeys: z.array(z.string().min(1)).optional(),
+  /** OR filter: participant email domains (e.g. customer.com). */
+  participantDomains: z.array(z.string().min(1)).optional(),
+  /** Full-text search over title + transcript (web-search syntax: quotes, OR, -exclude). */
+  searchText: z.string().optional(),
+  /** Default 50, max 200 (max 25 when searchText is set). */
+  pageSize: z.number().int().positive().optional(),
+  /** nextPageToken from the previous page. */
+  pageToken: z.string().min(1).optional(),
+});
+
+export const listMeetingFilterOptionsInput = z.object({});
+
 export const getIssueDetailsInput = z.object({
   /** Accepts #B-123, B-123, #B123, B123, or plain 123 */
   issueId: z.string().min(1),

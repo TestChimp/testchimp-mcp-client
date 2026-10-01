@@ -4,6 +4,7 @@ import type { PostMcpFn } from "./client.js";
 import { runProvisionEphemeralEnvironmentAndWait, type ProgressLog } from "./ephemeralWait.js";
 import * as S from "./schemas.js";
 import { resolveGitHeadSha } from "./gitSha.js";
+import { parseDateBoundToMillis } from "./dates.js";
 import { buildAgentTraceabilityPayload, resolveToolchainVersions } from "./agentTraceability.js";
 
 export interface ToolContext {
@@ -412,6 +413,78 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       return postMcp("/api/mcp/get_manual_session_details", {
         manualSessionId: a.manualSessionId,
       });
+    },
+  },
+  {
+    kebab: "get-meeting-transcript",
+    description:
+      "Fetch a cloud-synced Meeting Bots transcript by meeting id (calendar event id, or URL hash " +
+      "for ad-hoc meetings). Returns title, start time, post-meeting summary, and transcript. " +
+      "Use summaryOnly to fetch just the summary (much smaller) and pull the full transcript only " +
+      "when the summary is not enough. Prefer local ~/.testchimp/data/meetings/<meeting-id>/transcript.md " +
+      "when present on Studio / the recording machine.",
+    inputSchema: S.getMeetingTranscriptInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getMeetingTranscriptInput>;
+      return postMcp("/api/mcp/get_meeting_transcript", {
+        meetingId: a.meetingId,
+        ...(a.summaryOnly ? { summaryOnly: true } : {}),
+      });
+    },
+  },
+  {
+    kebab: "get-meeting-set",
+    description:
+      "Fetch a meeting-set context by id (ULID from `/testchimp using meeting-set context <id>`, " +
+      "created on the Meetings page via Start Chat). Returns the filters / search text applied and " +
+      "the meetings in scope (id, title, start). Fetch each meeting with get-meeting-transcript " +
+      "(summaryOnly first). Sets expire after 7 days.",
+    inputSchema: S.getMeetingSetInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getMeetingSetInput>;
+      return postMcp("/api/mcp/get_meeting_set", {
+        meetingSetId: a.meetingSetId,
+      });
+    },
+  },
+  {
+    kebab: "list-meetings",
+    description:
+      "List / search cloud-synced Meeting Bots meetings, newest first, like the Meetings page " +
+      "filters + search. Team-wide meetings only (visibility: all team members). Filters: from / to " +
+      "(YYYY-MM-DD, ISO datetime, or epoch millis; inclusive), labels, participantKeys (user id or " +
+      "email), participantDomains, searchText (full-text over title + transcript; hits include a " +
+      "searchSnippet with matches wrapped in ⟦ ⟧). Returns meetingId, title, startMillis, labels, " +
+      "participants, summaryStatus; page with nextPageToken. Use list-meeting-filter-options for exact " +
+      "label / domain / participant values, then get-meeting-transcript (summaryOnly first) per hit.",
+    inputSchema: S.listMeetingsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listMeetingsInput>;
+      const body: Record<string, unknown> = {};
+      const start = a.from ?? a.startDateMillis;
+      const end = a.to ?? a.endDateMillis;
+      if (start != null) body.startDateMillis = String(parseDateBoundToMillis(start));
+      if (end != null) body.endDateMillis = String(parseDateBoundToMillis(end, true));
+      if (a.labels?.length) body.labels = a.labels.map((v) => v.trim());
+      if (a.participantKeys?.length) body.participantKeys = a.participantKeys.map((v) => v.trim());
+      if (a.participantDomains?.length) {
+        body.participantDomains = a.participantDomains.map((v) => v.trim().replace(/^@/, ""));
+      }
+      if (a.searchText?.trim()) body.searchText = a.searchText.trim();
+      if (a.pageSize != null) body.pageSize = a.pageSize;
+      if (a.pageToken) body.pageToken = a.pageToken;
+      return postMcp("/api/mcp/list_meetings", body);
+    },
+  },
+  {
+    kebab: "list-meeting-filter-options",
+    description:
+      "List the labels, participants (key = user id or email, with display name), and participant " +
+      "email domains that appear on team-wide Meeting Bots meetings. Use the exact values as " +
+      "list-meetings filters (labels, participantKeys, participantDomains).",
+    inputSchema: S.listMeetingFilterOptionsInput,
+    execute: async (_args, { postMcp }) => {
+      return postMcp("/api/mcp/list_meeting_filter_options", {});
     },
   },
   {

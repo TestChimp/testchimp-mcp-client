@@ -72,3 +72,134 @@ describe("API operation observability", () => {
     );
   });
 });
+
+describe("get-meeting-transcript", () => {
+  it("posts meetingId to get_meeting_transcript", async () => {
+    const response = JSON.stringify({
+      meetingId: "evt-123",
+      transcriptMarkdown: "# Meeting\n\nP1: hello",
+    });
+    let request: { path: string; body: unknown } | undefined;
+
+    const result = await runTool(
+      "get-meeting-transcript",
+      { meetingId: "evt-123" },
+      {
+        postMcp: async (path, body) => {
+          request = { path, body };
+          return response;
+        },
+      },
+    );
+
+    assert.deepEqual(request, {
+      path: "/api/mcp/get_meeting_transcript",
+      body: { meetingId: "evt-123" },
+    });
+    assert.deepEqual(JSON.parse(result), JSON.parse(response));
+  });
+
+  it("passes summaryOnly when requested", async () => {
+    let body: unknown;
+    await runTool(
+      "get-meeting-transcript",
+      { meetingId: "evt-123", summaryOnly: true },
+      {
+        postMcp: async (_path, b) => {
+          body = b;
+          return "{}";
+        },
+      },
+    );
+    assert.deepEqual(body, { meetingId: "evt-123", summaryOnly: true });
+  });
+});
+
+describe("get-meeting-set", () => {
+  it("posts meetingSetId to get_meeting_set", async () => {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool(
+      "get-meeting-set",
+      { meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
+      {
+        postMcp: async (path, body) => {
+          request = { path, body };
+          return "{}";
+        },
+      },
+    );
+    assert.deepEqual(request, {
+      path: "/api/mcp/get_meeting_set",
+      body: { meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
+    });
+  });
+});
+
+describe("list-meetings", () => {
+  async function capture(args: Record<string, unknown>) {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool("list-meetings", args, {
+      postMcp: async (path, body) => {
+        request = { path, body };
+        return "{}";
+      },
+    });
+    return request;
+  }
+
+  it("maps filters and converts date-only bounds to inclusive local-day millis", async () => {
+    const request = await capture({
+      from: "2026-09-01",
+      to: "2026-09-30",
+      labels: ["Sales "],
+      participantKeys: ["buyer@customer.com"],
+      participantDomains: ["@customer.com"],
+      searchText: " pricing ",
+      pageSize: 10,
+      pageToken: "tok",
+    });
+    assert.deepEqual(request, {
+      path: "/api/mcp/list_meetings",
+      body: {
+        startDateMillis: String(new Date(2026, 8, 1, 0, 0, 0, 0).getTime()),
+        endDateMillis: String(new Date(2026, 8, 30, 23, 59, 59, 999).getTime()),
+        labels: ["Sales"],
+        participantKeys: ["buyer@customer.com"],
+        participantDomains: ["customer.com"],
+        searchText: "pricing",
+        pageSize: 10,
+        pageToken: "tok",
+      },
+    });
+  });
+
+  it("accepts ISO datetimes and raw epoch millis, and omits empty filters", async () => {
+    const request = await capture({ from: "2026-09-01T10:00:00Z", endDateMillis: "1790000000000" });
+    assert.deepEqual(request, {
+      path: "/api/mcp/list_meetings",
+      body: {
+        startDateMillis: String(Date.parse("2026-09-01T10:00:00Z")),
+        endDateMillis: "1790000000000",
+      },
+    });
+    assert.deepEqual(await capture({}), { path: "/api/mcp/list_meetings", body: {} });
+  });
+
+  it("rejects unparseable dates", async () => {
+    await assert.rejects(() => capture({ from: "last tuesday" }), /Invalid date/);
+    await assert.rejects(() => capture({ to: "2026-02-30" }), /Invalid date/);
+  });
+});
+
+describe("list-meeting-filter-options", () => {
+  it("posts an empty body to list_meeting_filter_options", async () => {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool("list-meeting-filter-options", {}, {
+      postMcp: async (path, body) => {
+        request = { path, body };
+        return "{}";
+      },
+    });
+    assert.deepEqual(request, { path: "/api/mcp/list_meeting_filter_options", body: {} });
+  });
+});
