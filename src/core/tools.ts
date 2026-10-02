@@ -1505,14 +1505,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     kebab: "get-git-folder-mapping",
-    description: "Return git provider, repository, and mapped plans/tests folder paths for the project.",
+    description: "Return git provider, repository, mapped plans/tests folder paths, and plans branch (empty = repository default) for the project.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_git_folder_mapping", {}),
   },
   {
     kebab: "update-git-folder-mapping",
     description:
-      "Update mapped plans/tests folder paths (and optional repository) on the platform. Agent scaffolds folders in a PR; this records platform mapping.",
+      "Update mapped plans/tests folder paths (and optional repository / plans branch) on the platform. Agent scaffolds folders in a PR; this records platform mapping.",
     inputSchema: S.updateGitFolderMappingInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updateGitFolderMappingInput>;
@@ -1523,6 +1523,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (tests) body.tests_folder_path = tests;
       if (plans) body.plans_folder_path = plans;
       if (repo) body.repository_full_name = repo;
+      if (a.plansBranch !== undefined) body.plansBranch = a.plansBranch.trim();
       return postMcp("/api/mcp/update_git_folder_mapping", body);
     },
   },

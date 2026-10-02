@@ -372,6 +372,10 @@ export const updateGitFolderMappingInput = z.object({
   testsFolderPath: z.string().min(1).optional(),
   plansFolderPath: z.string().min(1).optional(),
   repositoryFullName: z.string().optional(),
+  plansBranch: z
+    .string()
+    .optional()
+    .describe("Branch plans sync against. Empty string resets to the repository default branch."),
   tests_folder_path: z.string().min(1).optional(),
   plans_folder_path: z.string().min(1).optional(),
   repository_full_name: z.string().optional(),

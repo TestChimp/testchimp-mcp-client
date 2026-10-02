@@ -856,8 +856,10 @@ export function buildCliProgram(): Command {
     .option("--tests-folder-path <path>")
     .option("--plans-folder-path <path>")
     .option("--repository-full-name <name>")
+    .option("--plans-branch <branch>", "Branch plans sync against (empty string = repository default)")
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
+      if (opts.plansBranch !== undefined) body.plansBranch = opts.plansBranch;
       if (opts.testsFolderPath) body.tests_folder_path = opts.testsFolderPath;
       if (opts.plansFolderPath) body.plans_folder_path = opts.plansFolderPath;
       if (opts.repositoryFullName) body.repository_full_name = opts.repositoryFullName;
