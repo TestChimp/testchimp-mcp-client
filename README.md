@@ -108,11 +108,20 @@ testchimp bot compat --skill-version 1.0.53
 
 ```bash
 testchimp bot connect --project-id <id>       # browser approval (OAuth, "agentwatch" scope)
+testchimp bot connect --pair --project-id <id> # or: no browser, your QA bot approves (see below)
 npx -y @testchimp/agentwatch query --project-id <id>
 testchimp bot disconnect --project-id <id>    # forget the stored keys
 ```
 
 Headless AgentWatch acts as the user, so it needs their user id, personal access key and the project API key. `bot connect` runs an OAuth 2.1 PKCE login with a loopback redirect, asks for the opt-in `agentwatch` scope (the consent page warns that keys will be stored locally), fetches the keys from `/bots/get_agentwatch_credentials`, and writes them to `~/.testchimp/agentwatch/credentials.json` (mode `0600`, keyed by project) with the backend and ingress URLs. It revokes the OAuth refresh token straight away and never prints the keys. Approving also opts the project in to AgentWatch.
+
+**Pairing (no second browser consent).** When a QA bot is already connected with **Let this bot set up AgentWatch** allowed on its consent page (`agentwatch_pair` scope), the keys can reach the user's computer without another browser login, and without passing through the bot:
+
+1. On the user's computer: `testchimp bot connect --pair [--project-id <id>]` keeps a random verifier in `~/.testchimp/agentwatch/pairing.json` (`0600`) and prints `{pairingCode, expiresAtMillis}`; the code is the verifier's SHA-256 (base64url).
+2. The bot approves it with its own token: MCP tool `approve-agentwatch-pairing` (or `testchimp bot approve-pairing <code>`).
+3. On the user's computer: `testchimp bot connect --finish-pair` redeems with the verifier (polls up to `--timeout-ms`, default 60 s), stores the keys like above and deletes the pending file.
+
+Pairings are single use and expire after 10 minutes. The bot only ever sees the pairing code, which is useless without the verifier.
 
 ## Remote MCP (Streamable HTTP)
 

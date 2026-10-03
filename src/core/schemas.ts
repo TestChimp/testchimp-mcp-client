@@ -1231,6 +1231,14 @@ export const listTestsAwaitingVerificationInput = z.object({
   limit: z.number().int().positive().max(500).optional(),
 });
 
+export const approveAgentwatchPairingInput = z.object({
+  /** Printed by `testchimp bot connect --pair` on the user's computer: BASE64URL(SHA-256(verifier)). */
+  pairingCode: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{43}$/, "pairingCode must be the 43-character code printed by testchimp bot connect --pair"),
+});
+
 export const MAX_BOT_ACK_EVENT_IDS = 100;
 
 export const ackBotEventsInput = z.object({

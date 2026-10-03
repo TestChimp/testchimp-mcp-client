@@ -313,4 +313,13 @@ describe("bot tools", () => {
     );
     await assert.rejects(capture("register-bot-profile", { role: "CEO" }), /Invalid input/);
   });
+
+  it("approves an AgentWatch pairing code", async () => {
+    const pairingCode = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    assert.deepEqual(await capture("approve-agentwatch-pairing", { pairingCode: ` ${pairingCode} ` }), {
+      path: "/bots/approve_agentwatch_pairing",
+      body: { pairingCode },
+    });
+    await assert.rejects(capture("approve-agentwatch-pairing", { pairingCode: "short" }), /Invalid input/);
+  });
 });
