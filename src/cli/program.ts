@@ -1,7 +1,7 @@
 import { Command, Option } from "commander";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { DEFAULT_BACKEND, postMcp } from "../core/client.js";
+import { DEFAULT_BACKEND, DEFAULT_INGRESS, postIngress, postMcp } from "../core/client.js";
 import { deepMerge } from "../core/merge.js";
 import { runTool } from "../core/tools.js";
 import { TOOL_DEFINITIONS } from "../core/tools.js";
@@ -15,6 +15,25 @@ function isPerfComparisonRegressed(parsed: unknown): boolean {
   if (!parsed || typeof parsed !== "object") return false;
   const body = parsed as { regressed?: unknown; comparison?: { regressed?: unknown } };
   return body.regressed === true || body.comparison?.regressed === true;
+}
+
+/** Ack statuses that mean the id or bot identity is wrong (exit non-zero). */
+const BOT_ACK_FAILURE_STATUSES = new Set([
+  "BOT_ACK_UNKNOWN_EVENT",
+  "BOT_ACK_NOT_A_TARGET",
+  "BOT_ACK_MISSING_BOT_ID",
+]);
+
+/** Numeric x.y.z comparison; prerelease / build suffixes are ignored. */
+export function compareSemver(a: string, b: string): number {
+  const parts = (v: string) => v.trim().replace(/^v/, "").split(/[-+]/)[0].split(".").map((p) => parseInt(p, 10) || 0);
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
 }
 
 type CoverageRecordTypeAlias = "smart_test" | "manual" | "perf_test";
@@ -96,8 +115,18 @@ export function buildCliProgram(): Command {
 
   program
     .command("mcp")
-    .description("Start the TestChimp MCP server (stdio transport)")
-    .action(async () => {
+    .description("Start the TestChimp MCP server (stdio transport; --http for remote Streamable HTTP with OAuth bearer auth)")
+    .option("--http", "Serve MCP over Streamable HTTP (stateless) at /mcp instead of stdio")
+    .option("--port <n>", "HTTP port (default: PORT env or 8080)", (v) => parseInt(v, 10))
+    .option("--host <h>", "HTTP bind host", "0.0.0.0")
+    .action(async (opts) => {
+      if (opts.http) {
+        const port = opts.port ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : 8080);
+        if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`Invalid port: ${port}`);
+        const { runMcpHttpServer } = await import("../mcp/httpServer.js");
+        await runMcpHttpServer({ port, host: String(opts.host) });
+        return;
+      }
       const { runMcpServer } = await import("../mcp/server.js");
       await runMcpServer();
     });
@@ -1776,6 +1805,271 @@ export function buildCliProgram(): Command {
       );
     });
 
+  for (const kebab of ["get-qa-posture", "get-bot-compat"] as const) {
+    program
+      .command(kebab)
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === kebab)!.description)
+      .addOption(jsonInputOption())
+      .action(async (opts) => {
+        console.log(await runTool(kebab, mergeBodies({}, opts.jsonInput), { postMcp }));
+      });
+  }
+
+  program
+    .command("get-my-tasks")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-my-tasks")!.description)
+    .addOption(jsonInputOption())
+    .option("--user-id <id>", "Team member user id (required with an API key; OAuth tokens imply the user)")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.userId) body.userId = String(opts.userId);
+      console.log(await runTool("get-my-tasks", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
+    .command("list-tests-awaiting-verification")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-tests-awaiting-verification")!.description)
+    .addOption(jsonInputOption())
+    .option("--user-id <id>", "Team member user id")
+    .option("--limit <n>", "Maximum results", (v) => parseInt(v, 10))
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.userId) body.userId = String(opts.userId);
+      if (opts.limit != null && !Number.isNaN(opts.limit)) body.limit = opts.limit;
+      console.log(
+        await runTool("list-tests-awaiting-verification", mergeBodies(body, opts.jsonInput), { postMcp }),
+      );
+    });
+
+  program
+    .command("get-bot-profile")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-bot-profile")!.description)
+    .addOption(jsonInputOption())
+    .option("--bot-id <id>", "Bot id (defaults to TESTCHIMP_BOT_ID / OAuth token)")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.botId) body.botId = String(opts.botId);
+      console.log(await runTool("get-bot-profile", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  const bot = program.command("bot").description("TestChimp QA-bot helpers (profile, event acks, compatibility)");
+  bot
+    .command("ack")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "ack-bot-events")!.description)
+    .argument("<eventIds...>", "Event ids from the webhook delivery (max 100)")
+    .option("--ack-url <url>", "Delivery ackUrl (default: TESTCHIMP_INGRESS_URL + /bot/events/ack)")
+    .action(async (eventIds: string[], opts) => {
+      const body: Record<string, unknown> = { eventIds };
+      if (opts.ackUrl) body.ackUrl = String(opts.ackUrl);
+      const out = await runTool("ack-bot-events", body, { postMcp, postIngress });
+      let results: Array<{ eventId?: string; status?: string }> = [];
+      try {
+        const parsed = JSON.parse(out) as { results?: Array<{ eventId?: string; status?: string }> };
+        results = Array.isArray(parsed.results) ? parsed.results : [];
+      } catch {
+        console.log(out);
+        process.exitCode = 1;
+        return;
+      }
+      let failed = results.length === 0;
+      for (const r of results) {
+        const status = String(r.status ?? "UNKNOWN");
+        console.log(`${r.eventId ?? "?"}\t${status}`);
+        if (BOT_ACK_FAILURE_STATUSES.has(status)) failed = true;
+      }
+      if (failed) process.exitCode = 1;
+    });
+
+  bot
+    .command("register-profile")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "register-bot-profile")!.description)
+    .addOption(jsonInputOption())
+    .option("--bot-id <id>", "Bot id (defaults to TESTCHIMP_BOT_ID / OAuth token)")
+    .option("--role <role>", "QA_LEAD | PM | QA_ENGINEER | DEVELOPER")
+    .option("--responsibilities <text>", "Free-text responsibilities in the user's words")
+    .option(
+      "--capability <name>",
+      "Capability (repeatable): REQUIREMENTS_UPDATE, E2E_AUTHORING, ISSUE_FIX, MANUAL_TEST_COORDINATION, TEST_BATCH_FIX, QA_POSTURE",
+      (v: string, prev: string[] = []) => [...prev, ...v.split(",").map((s) => s.trim()).filter(Boolean)],
+    )
+    .option("--subscriptions-json <json>", "Subscriptions array JSON or @file: [{eventType, filters:[{field, op, value}]}]")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.botId) body.botId = String(opts.botId);
+      if (opts.role) body.role = String(opts.role).trim().toUpperCase();
+      if (opts.responsibilities != null) body.responsibilities = String(opts.responsibilities);
+      if (opts.capability?.length) body.capabilities = (opts.capability as string[]).map((c) => c.toUpperCase());
+      if (opts.subscriptionsJson) {
+        const raw = String(opts.subscriptionsJson).trim();
+        const text = raw.startsWith("@") ? readFileSync(raw.slice(1), "utf8") : raw;
+        const parsed = JSON.parse(text) as unknown;
+        body.subscriptions = Array.isArray(parsed)
+          ? parsed
+          : (parsed as { subscriptions?: unknown }).subscriptions ?? parsed;
+      }
+      console.log(await runTool("register-bot-profile", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  bot
+    .command("get-profile")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-bot-profile")!.description)
+    .addOption(jsonInputOption())
+    .option("--bot-id <id>", "Bot id (defaults to TESTCHIMP_BOT_ID / OAuth token)")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.botId) body.botId = String(opts.botId);
+      console.log(await runTool("get-bot-profile", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  bot
+    .command("compat")
+    .description("Check this CLI (and optionally the testchimp skill) against the deployment's minimum bot versions")
+    .option("--skill-version <semver>", "Installed testchimp skill version (SKILL.md frontmatter) to check too")
+    .action(async (opts) => {
+      const out = await runTool("get-bot-compat", {}, { postMcp });
+      const compat = JSON.parse(out) as { minSkillVersion?: string; minCliVersion?: string; eventSchemaVersion?: number };
+      const cliUpgradeRequired = !!compat.minCliVersion && compareSemver(PACKAGE_VERSION, compat.minCliVersion) < 0;
+      const skillVersion = opts.skillVersion ? String(opts.skillVersion).trim() : undefined;
+      const skillUpgradeRequired =
+        skillVersion != null && !!compat.minSkillVersion && compareSemver(skillVersion, compat.minSkillVersion) < 0;
+      console.log(
+        JSON.stringify(
+          {
+            ...compat,
+            cliVersion: PACKAGE_VERSION,
+            cliUpgradeRequired,
+            ...(skillVersion != null ? { skillVersion, skillUpgradeRequired } : {}),
+          },
+          null,
+          2,
+        ),
+      );
+      if (cliUpgradeRequired) {
+        console.error(
+          `[testchimp] CLI ${PACKAGE_VERSION} is older than required ${compat.minCliVersion}; run: npm i -g @testchimp/cli@latest`,
+        );
+      } else {
+        console.error(`[testchimp] CLI ${PACKAGE_VERSION} meets minimum ${compat.minCliVersion ?? "(none)"}; no upgrade required.`);
+      }
+      if (skillUpgradeRequired) {
+        console.error(
+          `[testchimp] testchimp skill ${skillVersion} is older than required ${compat.minSkillVersion}; reinstall the skill.`,
+        );
+      }
+    });
+
+  bot
+    .command("connect")
+    .description(
+      "Sign in through the browser (OAuth) and store this user's id, PAT and the project API key for headless AgentWatch (no TestChimp Studio needed)",
+    )
+    .option("--project-id <id>", "Fail unless the project approved on the consent page is this one")
+    .option("--port <n>", "Loopback port for the OAuth redirect (default: a free port)")
+    .option("--no-browser", "Only print the approval URL")
+    .option("--timeout-ms <n>", "How long to wait for approval (default 300000)")
+    .action(async (opts) => {
+      const { connectAgentWatch, ingressUrlForBackend } = await import("../agentwatch/connect.js");
+      const { getBackendUrl, getIngressUrl } = await import("../core/client.js");
+      try {
+        const backendUrl = getBackendUrl();
+        const result = await connectAgentWatch({
+          backendUrl,
+          ingressUrl: process.env.TESTCHIMP_INGRESS_URL?.trim() ? getIngressUrl() : ingressUrlForBackend(backendUrl),
+          expectedProjectId: opts.projectId ? String(opts.projectId).trim() : undefined,
+          port: opts.port != null ? Number(opts.port) : undefined,
+          timeoutMs: opts.timeoutMs != null ? Number(opts.timeoutMs) : undefined,
+          openUrl: opts.browser === false ? () => undefined : undefined,
+          log: stderrProgress,
+        });
+        stderrProgress(
+          `Saved AgentWatch credentials for project ${result.projectId} in ${result.credentialsPath}` +
+            (result.botId ? `; set TESTCHIMP_BOT_ID=${result.botId} for this bot` : ""),
+        );
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        console.error(`[testchimp bot connect] ${e instanceof Error ? e.message : String(e)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  bot
+    .command("disconnect")
+    .description("Remove the stored AgentWatch credentials for a project")
+    .requiredOption("--project-id <id>", "TestChimp project id")
+    .action(async (opts) => {
+      const { removeProjectCredentials, agentwatchCredentialsPath } = await import("../agentwatch/credentialsFile.js");
+      const projectId = String(opts.projectId).trim();
+      const removed = removeProjectCredentials(projectId);
+      console.log(JSON.stringify({ projectId, removed, credentialsPath: agentwatchCredentialsPath() }));
+    });
+
+  const workspace = program
+    .command("workspace")
+    .description("Per-user local folder ↔ TestChimp project mapping (~/.testchimp/projects.json, shared with TestChimp Studio)");
+  workspace
+    .command("map")
+    .description("Map a local git repo folder to a TestChimp project (same rules as Studio folder mapping)")
+    .requiredOption("--project-id <id>", "TestChimp project id")
+    .requiredOption("--folder <path>", "Local repository folder (must be a git repo)")
+    .option("--project-name <name>", "Project display name stored with the mapping")
+    .option("--reassign", "Move the folder from another project's mapping to this project")
+    .option("--skip-repo-check", "Do not compare the git remote with the project's connected repository")
+    .action(async (opts) => {
+      const { upsertWorkspaceFolder, projectsRegistryPath } = await import("../workspace/projectsRegistry.js");
+      const { assertFolderMatchesRepo, inspectLocalGitRepo } = await import("../workspace/gitRepo.js");
+      const projectId = String(opts.projectId).trim();
+      try {
+        if (!projectId) throw new Error("INVALID_PAYLOAD: --project-id");
+        const inspection = inspectLocalGitRepo(String(opts.folder));
+        let expectedRepo: string | null = null;
+        if (opts.skipRepoCheck) {
+          stderrProgress("Skipping connected-repository check (--skip-repo-check).");
+        } else if (!process.env.TESTCHIMP_API_KEY?.trim() && !process.env.TESTCHIMP_OAUTH_TOKEN?.trim()) {
+          stderrProgress("No TESTCHIMP_API_KEY / TESTCHIMP_OAUTH_TOKEN set; skipping connected-repository check.");
+        } else {
+          try {
+            const out = await runTool("get-git-folder-mapping", {}, { postMcp });
+            const parsed = JSON.parse(out) as { repositoryFullName?: string };
+            expectedRepo = parsed.repositoryFullName?.trim() || null;
+            if (!expectedRepo) stderrProgress("Project has no connected repository; skipping remote check.");
+          } catch (e: unknown) {
+            stderrProgress(`Could not load the project's connected repository (${e instanceof Error ? e.message : String(e)}); skipping remote check.`);
+          }
+        }
+        assertFolderMatchesRepo(inspection, expectedRepo);
+        const mapping = upsertWorkspaceFolder({
+          projectId,
+          projectName: opts.projectName != null ? String(opts.projectName).trim() || undefined : undefined,
+          rootPath: inspection.selectedPath,
+          reassign: opts.reassign === true,
+        });
+        stderrProgress(`Mapped ${inspection.selectedPath} → project ${projectId} in ${projectsRegistryPath()}`);
+        console.log(JSON.stringify(mapping, null, 2));
+      } catch (e: unknown) {
+        console.error(`[testchimp workspace map] ${e instanceof Error ? e.message : String(e)}`);
+        process.exitCode = 1;
+      }
+    });
+  workspace
+    .command("get")
+    .description("Print the folder mapping JSON for a project (exit 1 when unmapped)")
+    .requiredOption("--project-id <id>", "TestChimp project id")
+    .action(async (opts) => {
+      const { findWorkspaceMapping } = await import("../workspace/projectsRegistry.js");
+      try {
+        const mapping = findWorkspaceMapping(String(opts.projectId).trim());
+        if (!mapping) {
+          console.error(`[testchimp workspace get] project ${opts.projectId} is not mapped to a local folder; run: testchimp workspace map --project-id ${opts.projectId} --folder <path>`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(JSON.stringify(mapping, null, 2));
+      } catch (e: unknown) {
+        console.error(`[testchimp workspace get] ${e instanceof Error ? e.message : String(e)}`);
+        process.exitCode = 1;
+      }
+    });
+
   const chimphands = program.command("chimphands").description("ChimpHands GitHub Actions agent bridge");
   chimphands
     .command("report-branch")
@@ -1864,7 +2158,7 @@ export function buildCliProgram(): Command {
 
   program.addHelpText(
     "after",
-    `\nEnvironment:\n  TESTCHIMP_API_KEY          required\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n\nOutput:\n  Response JSON on stdout.\n  provision-ephemeral-environment-and-wait progress on stderr.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
+    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  provision-ephemeral-environment-and-wait progress on stderr.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
   );
 
   return program;

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
-import { getBackendUrl, postMcp } from "./client.js";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import {
+  getBackendUrl,
+  isValidBotId,
+  postIngress,
+  postMcp,
+  resetClientWarningsForTests,
+  runWithRequestAuth,
+} from "./client.js";
 
 const originalBackendUrl = process.env.TESTCHIMP_BACKEND_URL;
 const originalApiKey = process.env.TESTCHIMP_API_KEY;
@@ -59,5 +66,150 @@ describe("postMcp", () => {
     );
     assert.equal(requestInit?.method, "POST");
     assert.equal(requestInit?.redirect, "manual");
+  });
+});
+
+describe("request headers", () => {
+  const originalBotId = process.env.TESTCHIMP_BOT_ID;
+  const originalOauthToken = process.env.TESTCHIMP_OAUTH_TOKEN;
+  const originalIngressUrl = process.env.TESTCHIMP_INGRESS_URL;
+  const originalConsoleError = console.error;
+
+  beforeEach(() => {
+    process.env.TESTCHIMP_BACKEND_URL = "https://featureservice.example.com";
+    delete process.env.TESTCHIMP_API_KEY;
+    delete process.env.TESTCHIMP_BOT_ID;
+    delete process.env.TESTCHIMP_OAUTH_TOKEN;
+    delete process.env.TESTCHIMP_INGRESS_URL;
+    resetClientWarningsForTests();
+  });
+
+  afterEach(() => {
+    for (const [key, value] of [
+      ["TESTCHIMP_BOT_ID", originalBotId],
+      ["TESTCHIMP_OAUTH_TOKEN", originalOauthToken],
+      ["TESTCHIMP_INGRESS_URL", originalIngressUrl],
+    ] as const) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+    console.error = originalConsoleError;
+  });
+
+  function captureFetch(): { calls: Array<{ url: string; init?: RequestInit }> } {
+    const capture = { calls: [] as Array<{ url: string; init?: RequestInit }> };
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      capture.calls.push({ url: String(input), init });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    return capture;
+  }
+
+  it("sends exactly the legacy header set with an API key and no bot env", async () => {
+    process.env.TESTCHIMP_API_KEY = "test-key";
+    const capture = captureFetch();
+    await postMcp("/api/mcp/example", { a: 1 });
+    assert.equal(capture.calls[0].url, "https://featureservice.example.com/api/mcp/example");
+    assert.deepEqual(capture.calls[0].init?.headers, {
+      "Content-Type": "application/json",
+      "TestChimp-Api-Key": "test-key",
+    });
+    assert.equal(capture.calls[0].init?.body, JSON.stringify({ a: 1 }));
+  });
+
+  it("keeps the missing API key error when no credentials are set", async () => {
+    captureFetch();
+    await assert.rejects(postMcp("/api/mcp/example", {}), /TESTCHIMP_API_KEY is required/);
+  });
+
+  it("adds a valid bot-id header", async () => {
+    process.env.TESTCHIMP_API_KEY = "test-key";
+    process.env.TESTCHIMP_BOT_ID = "grok-bot_01";
+    const capture = captureFetch();
+    await postMcp("/api/mcp/example", {});
+    assert.deepEqual(capture.calls[0].init?.headers, {
+      "Content-Type": "application/json",
+      "TestChimp-Api-Key": "test-key",
+      "bot-id": "grok-bot_01",
+    });
+  });
+
+  it("drops an invalid bot id and warns once", async () => {
+    process.env.TESTCHIMP_API_KEY = "test-key";
+    process.env.TESTCHIMP_BOT_ID = "bad bot id";
+    const warnings: string[] = [];
+    console.error = (msg: unknown) => warnings.push(String(msg));
+    const capture = captureFetch();
+    await postMcp("/api/mcp/example", {});
+    await postMcp("/api/mcp/example", {});
+    assert.deepEqual(capture.calls[0].init?.headers, {
+      "Content-Type": "application/json",
+      "TestChimp-Api-Key": "test-key",
+    });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /TESTCHIMP_BOT_ID/);
+
+    assert.equal(isValidBotId("x".repeat(64)), true);
+    assert.equal(isValidBotId("x".repeat(65)), false);
+    assert.equal(isValidBotId("bot\u0007"), false);
+  });
+
+  it("uses the OAuth token without requiring an API key", async () => {
+    process.env.TESTCHIMP_OAUTH_TOKEN = "jwt-token";
+    const capture = captureFetch();
+    await postMcp("/api/mcp/example", {});
+    assert.deepEqual(capture.calls[0].init?.headers, {
+      "Content-Type": "application/json",
+      Authorization: "Bearer jwt-token",
+    });
+  });
+
+  it("sends both the API key and the bearer when both are set", async () => {
+    process.env.TESTCHIMP_API_KEY = "test-key";
+    process.env.TESTCHIMP_OAUTH_TOKEN = "jwt-token";
+    process.env.TESTCHIMP_BOT_ID = "bot-1";
+    const capture = captureFetch();
+    await postMcp("/api/mcp/example", {});
+    assert.deepEqual(capture.calls[0].init?.headers, {
+      "Content-Type": "application/json",
+      "TestChimp-Api-Key": "test-key",
+      Authorization: "Bearer jwt-token",
+      "bot-id": "bot-1",
+    });
+  });
+
+  it("isolated request auth ignores env credentials", async () => {
+    process.env.TESTCHIMP_API_KEY = "server-key";
+    process.env.TESTCHIMP_BOT_ID = "server-bot";
+    const capture = captureFetch();
+    await runWithRequestAuth({ bearerToken: "caller-token", isolated: true }, () =>
+      postMcp("/api/mcp/example", {}),
+    );
+    assert.deepEqual(capture.calls[0].init?.headers, {
+      "Content-Type": "application/json",
+      Authorization: "Bearer caller-token",
+    });
+  });
+
+  it("posts to the ingress base or a trusted absolute URL", async () => {
+    process.env.TESTCHIMP_API_KEY = "test-key";
+    const capture = captureFetch();
+    await postIngress("/bot/events/ack", { eventIds: ["e1"] });
+    assert.equal(capture.calls[0].url, "https://ingress.testchimp.io/bot/events/ack");
+    assert.equal(capture.calls[0].init?.redirect, "manual");
+
+    await postIngress("https://ingress-staging.testchimp.io/bot/events/ack", {});
+    assert.equal(capture.calls[1].url, "https://ingress-staging.testchimp.io/bot/events/ack");
+
+    await postIngress("http://localhost:4302/bot/events/ack", {});
+    assert.equal(capture.calls[2].url, "http://localhost:4302/bot/events/ack");
+
+    await assert.rejects(postIngress("http://ingress.testchimp.io/bot/events/ack", {}), /must use https/);
+    await assert.rejects(postIngress("https://evil.example.com/bot/events/ack", {}), /untrusted ingress host/);
+    assert.equal(capture.calls.length, 3);
+
+    process.env.TESTCHIMP_INGRESS_URL = "https://ingress.customer.example/";
+    await postIngress("https://ingress.customer.example/bot/events/ack", {});
+    assert.equal(capture.calls[3].url, "https://ingress.customer.example/bot/events/ack");
   });
 });

@@ -1182,3 +1182,62 @@ export const uploadAttachmentInput = z.object({
 export const getBatchViewUrlInput = z.object({
   batchInvocationId: z.string().min(1),
 });
+
+export const botRoleSchema = z.enum(["QA_LEAD", "PM", "QA_ENGINEER", "DEVELOPER"]);
+
+export const botCapabilitySchema = z.enum([
+  "REQUIREMENTS_UPDATE",
+  "E2E_AUTHORING",
+  "ISSUE_FIX",
+  "MANUAL_TEST_COORDINATION",
+  "TEST_BATCH_FIX",
+  "QA_POSTURE",
+]);
+
+export const botSubscriptionFilterSchema = z.object({
+  /** Payload filter field, e.g. author / assignee / adder. */
+  field: z.string().min(1),
+  op: z.literal("eq").default("eq"),
+  /** Literal value, or the token `me` (resolved to the bot's user). */
+  value: z.string().min(1),
+});
+
+export const botSubscriptionSchema = z.object({
+  /** Wire event type, e.g. git-push, issue-assigned, e2e-batch-completed. */
+  eventType: z.string().min(1),
+  filters: z.array(botSubscriptionFilterSchema).optional(),
+});
+
+export const registerBotProfileInput = z.object({
+  /** Defaults to the bot-id header (TESTCHIMP_BOT_ID) or the OAuth token's bot. */
+  botId: z.string().min(1).max(64).optional(),
+  role: botRoleSchema,
+  responsibilities: z.string().optional(),
+  capabilities: z.array(botCapabilitySchema).default([]),
+  subscriptions: z.array(botSubscriptionSchema).default([]),
+});
+
+export const getBotProfileInput = z.object({
+  botId: z.string().min(1).max(64).optional(),
+});
+
+export const getMyTasksInput = z.object({
+  /** Required with an API key; ignored with an OAuth token (the token's user is used). */
+  userId: z.string().min(1).optional(),
+});
+
+export const listTestsAwaitingVerificationInput = z.object({
+  userId: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(500).optional(),
+});
+
+export const MAX_BOT_ACK_EVENT_IDS = 100;
+
+export const ackBotEventsInput = z.object({
+  eventIds: z
+    .array(z.string().regex(/^[\x20-\x7e]+$/, "eventIds must be printable ASCII").min(1))
+    .min(1)
+    .max(MAX_BOT_ACK_EVENT_IDS),
+  /** Webhook delivery ackUrl; defaults to ${TESTCHIMP_INGRESS_URL}/bot/events/ack. */
+  ackUrl: z.string().min(1).optional(),
+});

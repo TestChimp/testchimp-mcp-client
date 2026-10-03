@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { postMcp } from "../core/client.js";
+import { postIngress, postMcp } from "../core/client.js";
 import { TOOL_DEFINITIONS, runTool } from "../core/tools.js";
 import { PACKAGE_VERSION } from "../core/version.js";
 
@@ -10,7 +10,8 @@ function textResult(json: string) {
   };
 }
 
-export async function runMcpServer(): Promise<void> {
+/** McpServer with every TestChimp tool registered (shared by stdio and HTTP transports). */
+export function createMcpServer(): McpServer {
   const server = new McpServer(
     { name: "testchimp", version: PACKAGE_VERSION },
     { capabilities: { tools: {}, logging: {} } }
@@ -36,13 +37,18 @@ export async function runMcpServer(): Promise<void> {
             : undefined;
         const json = await runTool(def.kebab, args ?? {}, {
           postMcp,
+          postIngress,
           onProgress,
         });
         return textResult(json);
       }
     );
   }
+  return server;
+}
 
+export async function runMcpServer(): Promise<void> {
+  const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

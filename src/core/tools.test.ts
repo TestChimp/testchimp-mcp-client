@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { TestChimpHttpError } from "./client.js";
 import { getToolDefinition, runTool } from "./tools.js";
 
 const runtimeObservation = {
@@ -201,5 +202,115 @@ describe("list-meeting-filter-options", () => {
       },
     });
     assert.deepEqual(request, { path: "/api/mcp/list_meeting_filter_options", body: {} });
+  });
+});
+
+describe("ack-bot-events", () => {
+  it("posts deduped eventIds to the delivery ackUrl", async () => {
+    let request: { pathOrUrl: string; body: unknown } | undefined;
+    const response = JSON.stringify({ results: [{ eventId: "e1", status: "BOT_ACK_ACKED" }] });
+    const result = await runTool(
+      "ack-bot-events",
+      { eventIds: ["e1", "e1", "e2"], ackUrl: "https://ingress.testchimp.io/bot/events/ack" },
+      {
+        postMcp: async () => assert.fail("ack must not go to featureservice"),
+        postIngress: async (pathOrUrl, body) => {
+          request = { pathOrUrl, body };
+          return response;
+        },
+      },
+    );
+    assert.deepEqual(request, {
+      pathOrUrl: "https://ingress.testchimp.io/bot/events/ack",
+      body: { eventIds: ["e1", "e2"] },
+    });
+    assert.equal(result, response);
+  });
+
+  it("defaults to the ingress ack path", async () => {
+    let target: string | undefined;
+    await runTool("ack-bot-events", { eventIds: ["e1"] }, {
+      postMcp: async () => "{}",
+      postIngress: async (pathOrUrl) => {
+        target = pathOrUrl;
+        return "{}";
+      },
+    });
+    assert.equal(target, "/bot/events/ack");
+  });
+
+  it("explains a 404 from an older backend", async () => {
+    await assert.rejects(
+      runTool("ack-bot-events", { eventIds: ["e1"] }, {
+        postMcp: async () => "{}",
+        postIngress: async () => {
+          throw new TestChimpHttpError(404, "Not Found", "");
+        },
+      }),
+      /does not support bot acks yet/,
+    );
+  });
+
+  it("validates eventIds count and characters", async () => {
+    const ctx = { postMcp: async () => "{}", postIngress: async () => "{}" };
+    await assert.rejects(runTool("ack-bot-events", { eventIds: [] }, ctx), /Invalid input/);
+    const tooMany = Array.from({ length: 101 }, (_, i) => `e${i}`);
+    await assert.rejects(runTool("ack-bot-events", { eventIds: tooMany }, ctx), /Invalid input/);
+    await assert.rejects(runTool("ack-bot-events", { eventIds: ["é"] }, ctx), /Invalid input/);
+  });
+});
+
+describe("bot tools", () => {
+  async function capture(kebab: string, args: Record<string, unknown>) {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool(kebab, args, {
+      postMcp: async (path, body) => {
+        request = { path, body };
+        return "{}";
+      },
+    });
+    return request;
+  }
+
+  it("maps read tools to their endpoints", async () => {
+    assert.deepEqual(await capture("get-my-tasks", { userId: "u1" }), {
+      path: "/api/mcp/get_my_tasks",
+      body: { userId: "u1" },
+    });
+    assert.deepEqual(await capture("get-my-tasks", {}), { path: "/api/mcp/get_my_tasks", body: {} });
+    assert.deepEqual(await capture("list-tests-awaiting-verification", { limit: 5 }), {
+      path: "/api/mcp/list_tests_awaiting_verification",
+      body: { limit: 5 },
+    });
+    assert.deepEqual(await capture("get-qa-posture", {}), { path: "/api/mcp/get_qa_posture", body: {} });
+    assert.deepEqual(await capture("get-bot-compat", {}), { path: "/api/mcp/get_bot_compat", body: {} });
+    assert.deepEqual(await capture("get-bot-profile", {}), { path: "/api/mcp/get_bot_profile", body: {} });
+  });
+
+  it("registers a bot profile with default filter op", async () => {
+    assert.deepEqual(
+      await capture("register-bot-profile", {
+        role: "QA_ENGINEER",
+        responsibilities: " checkout flows ",
+        capabilities: ["E2E_AUTHORING", "TEST_BATCH_FIX"],
+        subscriptions: [
+          { eventType: "git-push", filters: [{ field: "author", value: "me" }] },
+          { eventType: "e2e-batch-completed" },
+        ],
+      }),
+      {
+        path: "/bots/register_profile",
+        body: {
+          role: "QA_ENGINEER",
+          responsibilities: "checkout flows",
+          capabilities: ["E2E_AUTHORING", "TEST_BATCH_FIX"],
+          subscriptions: [
+            { eventType: "git-push", filters: [{ field: "author", op: "eq", value: "me" }] },
+            { eventType: "e2e-batch-completed", filters: [] },
+          ],
+        },
+      },
+    );
+    await assert.rejects(capture("register-bot-profile", { role: "CEO" }), /Invalid input/);
   });
 });

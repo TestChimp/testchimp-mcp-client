@@ -1,6 +1,6 @@
 import { type z, type ZodTypeAny } from "zod";
 import { normalizeScope } from "./normalize.js";
-import type { PostMcpFn } from "./client.js";
+import { postIngress, TestChimpHttpError, type PostIngressFn, type PostMcpFn } from "./client.js";
 import { runProvisionEphemeralEnvironmentAndWait, type ProgressLog } from "./ephemeralWait.js";
 import * as S from "./schemas.js";
 import { resolveGitHeadSha } from "./gitSha.js";
@@ -9,8 +9,16 @@ import { buildAgentTraceabilityPayload, resolveToolchainVersions } from "./agent
 
 export interface ToolContext {
   postMcp: PostMcpFn;
+  /** Ingress poster (bot acks); defaults to the env-configured ingress client. */
+  postIngress?: PostIngressFn;
   onProgress?: ProgressLog;
 }
+
+export const BOT_ACK_PATH = "/bot/events/ack";
+
+export const BOT_ACK_UNSUPPORTED_MESSAGE =
+  "This TestChimp deployment does not support bot acks yet (ingress returned 404 for /bot/events/ack). " +
+  "Upgrade the TestChimp platform, or ask your admin to enable QA bots.";
 
 export interface ToolDefinition {
   kebab: string;
@@ -1597,6 +1605,114 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       return postMcp("/api/mcp/get_batch_view_url", {
         batchInvocationId: a.batchInvocationId.trim(),
       });
+    },
+  },
+  {
+    kebab: "get-my-tasks",
+    description:
+      "List a team member's open QA work in this project: manual test scenarios assigned to them in test runs " +
+      "(with testRunUrl), issues assigned to them (status, severity, due date, issueUrl), and SmartTests they " +
+      "authored that still await verification. With an OAuth token the user is the token's user; with an API key " +
+      "pass userId. Use for daily reminders and 'what should I work on' questions.",
+    inputSchema: S.getMyTasksInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getMyTasksInput>;
+      return postMcp("/api/mcp/get_my_tasks", a.userId ? { userId: a.userId.trim() } : {});
+    },
+  },
+  {
+    kebab: "list-tests-awaiting-verification",
+    description:
+      "List SmartTests whose latest executions still need human verification before they earn a verified badge " +
+      "(testId, testName, filePath, scenarioId / scenarioOrdinalId / scenarioTitle, verificationStatus NOT_VERIFIED " +
+      "or VERIFIED_STALE, reportedAtMillis, workflowExecutionId). " +
+      "Optional userId narrows to tests authored for that user (defaults to the OAuth token's user); optional limit. " +
+      "Use after writing E2E tests to prompt the user to verify the executions.",
+    inputSchema: S.listTestsAwaitingVerificationInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listTestsAwaitingVerificationInput>;
+      const body: Record<string, unknown> = {};
+      if (a.userId) body.userId = a.userId.trim();
+      if (a.limit != null) body.limit = a.limit;
+      return postMcp("/api/mcp/list_tests_awaiting_verification", body);
+    },
+  },
+  {
+    kebab: "get-qa-posture",
+    description:
+      "Project-wide QA posture snapshot: releases (version, lifecycleStatus, due date, passed / failed / blocked / " +
+      "not-attempted counts), issues (active, inProgress, blocked, openBySeverity), activeTestRuns with result " +
+      "counts, and testsAwaitingVerificationCount. Use for weekly " +
+      "QA digests and release-health questions; summarise for the reader's role rather than dumping raw JSON.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_qa_posture", {}),
+  },
+  {
+    kebab: "get-bot-compat",
+    description:
+      "Return the minimum testchimp skill version, minimum @testchimp/cli version, and the bot event schema " +
+      "version this TestChimp deployment requires from QA bots. Call on bot startup / daily; if the local skill or " +
+      "CLI is older, ask the user to approve an upgrade.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_bot_compat", {}),
+  },
+  {
+    kebab: "get-bot-profile",
+    description:
+      "Fetch this QA bot's registration: botId, project, the team member it represents (userId), platform, status, " +
+      "role, responsibilities, capabilities, event subscriptions, paused flag, and webhook health. botId defaults to " +
+      "the bot-id header (TESTCHIMP_BOT_ID) or the OAuth token's bot. Use to confirm identity before onboarding and " +
+      "to check paused / capabilities before running routines.",
+    inputSchema: S.getBotProfileInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getBotProfileInput>;
+      return postMcp("/api/mcp/get_bot_profile", a.botId ? { botId: a.botId } : {});
+    },
+  },
+  {
+    kebab: "register-bot-profile",
+    description:
+      "Register or replace this QA bot's profile and event subscriptions atomically (mutating — confirm with the user " +
+      "first). role: QA_LEAD | PM | QA_ENGINEER | DEVELOPER. responsibilities: the user's own words. capabilities: " +
+      "REQUIREMENTS_UPDATE, E2E_AUTHORING, ISSUE_FIX, MANUAL_TEST_COORDINATION, TEST_BATCH_FIX, QA_POSTURE. " +
+      "subscriptions: [{eventType, filters:[{field, op:'eq', value}]}] where value may be 'me' (e.g. git-push " +
+      "author=me, issue-assigned assignee=me, e2e-batch-completed). Derive subscriptions from capabilities per the " +
+      "testchimp skill's bot onboarding guide. botId defaults to the bot-id header / OAuth token.",
+    inputSchema: S.registerBotProfileInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.registerBotProfileInput>;
+      const body: Record<string, unknown> = {
+        role: a.role,
+        responsibilities: a.responsibilities?.trim() ?? "",
+        capabilities: a.capabilities,
+        subscriptions: a.subscriptions.map((s) => ({
+          eventType: s.eventType.trim(),
+          filters: (s.filters ?? []).map((f) => ({ field: f.field.trim(), op: f.op, value: f.value.trim() })),
+        })),
+      };
+      if (a.botId) body.botId = a.botId;
+      return postMcp("/bots/register_profile", body);
+    },
+  },
+  {
+    kebab: "ack-bot-events",
+    description:
+      "Acknowledge QA-bot webhook events by eventId (1-100 per call) so TestChimp stops redelivering them. Ack every " +
+      "event you handled or decided to ignore (including expired / irrelevant ones); re-acking is safe. Pass the " +
+      "delivery's ackUrl when present (defaults to the ingress /bot/events/ack). Returns per-id status: " +
+      "BOT_ACK_ACCEPTED / BOT_ACK_ACKED / BOT_ACK_ALREADY_ACKED / BOT_ACK_EXPIRED_RECORDED are fine; " +
+      "BOT_ACK_UNKNOWN_EVENT / BOT_ACK_NOT_A_TARGET / BOT_ACK_MISSING_BOT_ID indicate a wrong id or bot identity.",
+    inputSchema: S.ackBotEventsInput,
+    execute: async (args, ctx) => {
+      const a = args as z.infer<typeof S.ackBotEventsInput>;
+      const post = ctx.postIngress ?? postIngress;
+      const eventIds = Array.from(new Set(a.eventIds));
+      try {
+        return await post(a.ackUrl?.trim() || BOT_ACK_PATH, { eventIds });
+      } catch (e) {
+        if (e instanceof TestChimpHttpError && e.status === 404) throw new Error(BOT_ACK_UNSUPPORTED_MESSAGE);
+        throw e;
+      }
     },
   },
 ];

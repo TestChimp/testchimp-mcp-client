@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "activeWorkspaceId": "ws-1",
+  "mappings": [
+    {
+      "id": "ws-1",
+      "projectId": "p1",
+      "projectName": "One",
+      "folders": [
+        {
+          "id": "f-1",
+          "path": "__ROOT__/repo-a",
+          "name": "repo-a",
+          "futureFolderFlag": true
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "path": "__ROOT__/repo-b",
+          "name": "repo-b"
+        }
+      ],
+      "createdAtMillis": 1700000000000,
+      "lastOpenedAtMillis": 1767225600000,
+      "futureMappingField": "kept-by-cli"
+    }
+  ],
+  "futureTopLevel": {
+    "note": "written by a newer Studio"
+  }
+}
