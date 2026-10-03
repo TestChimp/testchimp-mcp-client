@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 2,
+  "activeWorkspaceId": "00000000-0000-4000-8000-000000000004",
+  "mappings": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "projectId": "p1",
+      "projectName": "One",
+      "folders": [
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "path": "__ROOT__/repo-b",
+          "name": "repo-b"
+        }
+      ],
+      "createdAtMillis": 1767225600000,
+      "lastOpenedAtMillis": 1767225601000
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "projectId": "p2",
+      "projectName": "Two",
+      "folders": [
+        {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "path": "__ROOT__/repo-a",
+          "name": "repo-a"
+        }
+      ],
+      "createdAtMillis": 1767225602000,
+      "lastOpenedAtMillis": 1767225602000
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "activeWorkspaceId": "00000000-0000-4000-8000-000000000003",
+  "mappings": [
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "projectId": "p2",
+      "folders": [
+        {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "path": "__ROOT__/repo-a",
+          "name": "repo-a"
+        }
+      ],
+      "createdAtMillis": 1767225601000,
+      "lastOpenedAtMillis": 1767225601000
+    }
+  ]
+}

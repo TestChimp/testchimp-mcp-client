@@ -1,0 +1,89 @@
+{
+  "clock": { "startMillis": 1767225600000, "stepMillis": 1000 },
+  "idPattern": "00000000-0000-4000-8000-{n12}",
+  "folders": ["repo-a", "repo-b", "repo-c"],
+  "sequences": [
+    {
+      "name": "fresh-home-single-upsert",
+      "initial": null,
+      "steps": [{ "projectId": "p1", "projectName": "One", "folder": "repo-a" }],
+      "expected": "expected/fresh-home-single-upsert.json"
+    },
+    {
+      "name": "add-folder-then-refresh",
+      "initial": null,
+      "steps": [
+        { "projectId": "p1", "projectName": "One", "folder": "repo-a" },
+        { "projectId": "p1", "folder": "repo-b" },
+        { "projectId": "p1", "projectName": "One renamed", "folder": "repo-a" }
+      ],
+      "expected": "expected/add-folder-then-refresh.json"
+    },
+    {
+      "name": "conflict-rejected-without-reassign",
+      "initial": null,
+      "steps": [
+        { "projectId": "p1", "projectName": "One", "folder": "repo-a" },
+        { "projectId": "p2", "projectName": "Two", "folder": "repo-a", "expectError": "already mapped to project p1" }
+      ],
+      "expected": "expected/conflict-rejected-without-reassign.json"
+    },
+    {
+      "name": "reassign-keeps-other-folders",
+      "initial": null,
+      "steps": [
+        { "projectId": "p1", "projectName": "One", "folder": "repo-a" },
+        { "projectId": "p1", "folder": "repo-b" },
+        { "projectId": "p2", "projectName": "Two", "folder": "repo-a", "reassign": true }
+      ],
+      "expected": "expected/reassign-keeps-other-folders.json"
+    },
+    {
+      "name": "reassign-drops-emptied-mapping",
+      "initial": null,
+      "steps": [
+        { "projectId": "p1", "projectName": "One", "folder": "repo-a" },
+        { "projectId": "p2", "folder": "repo-a", "reassign": true }
+      ],
+      "expected": "expected/reassign-drops-emptied-mapping.json"
+    },
+    {
+      "name": "existing-multi-project-untouched",
+      "initial": "valid/multi-project.json",
+      "steps": [{ "projectId": "p3", "projectName": "Three", "folder": "repo-c" }],
+      "expected": "expected/existing-multi-project-untouched.json"
+    },
+    {
+      "name": "existing-project-new-folder",
+      "initial": "valid/multi-project.json",
+      "steps": [{ "projectId": "p2", "projectName": "Two", "folder": "repo-c" }],
+      "expected": "expected/existing-project-new-folder.json"
+    },
+    {
+      "name": "unordered-keys-normalized",
+      "initial": "edge/unordered-keys.json",
+      "steps": [{ "projectId": "p1", "folder": "repo-a" }],
+      "expected": "expected/unordered-keys-normalized.json"
+    },
+    {
+      "name": "v1-migrated-then-upsert",
+      "initial": "legacy/v1.json",
+      "steps": [{ "projectId": "p1", "folder": "repo-b" }],
+      "expected": "expected/v1-migrated-then-upsert.json"
+    },
+    {
+      "name": "invalid-file-quarantined",
+      "initial": "invalid/wrong-schema-version.json",
+      "steps": [{ "projectId": "p1", "projectName": "One", "folder": "repo-a" }],
+      "expected": "expected/invalid-file-quarantined.json",
+      "expectQuarantine": true
+    },
+    {
+      "name": "unknown-fields",
+      "initial": "edge/unknown-fields.json",
+      "steps": [{ "projectId": "p1", "folder": "repo-b" }],
+      "expected": "expected/unknown-fields.studio.json",
+      "expectedCli": "expected/unknown-fields.cli.json"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 2,
+  "activeWorkspaceId": "00000000-0000-4000-8000-000000000001",
+  "mappings": [
+    {
+      "id": "ws-1",
+      "projectId": "p1",
+      "projectName": "One",
+      "folders": [
+        {
+          "id": "f-1",
+          "path": "__ROOT__/repo-a",
+          "name": "repo-a"
+        },
+        {
+          "id": "f-2",
+          "path": "__ROOT__/repo-b",
+          "name": "repo-b"
+        }
+      ],
+      "createdAtMillis": 1700000000000,
+      "lastOpenedAtMillis": 1700000005000,
+      "browserStartUrl": "https://app.example.com/login"
+    },
+    {
+      "id": "ws-2",
+      "projectId": "p2",
+      "folders": [],
+      "createdAtMillis": 1700000001000,
+      "lastOpenedAtMillis": 1700000001000
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "projectId": "p3",
+      "projectName": "Three",
+      "folders": [
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "path": "__ROOT__/repo-c",
+          "name": "repo-c"
+        }
+      ],
+      "createdAtMillis": 1767225600000,
+      "lastOpenedAtMillis": 1767225600000
+    }
+  ]
+}

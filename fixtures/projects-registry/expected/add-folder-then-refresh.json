@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "activeWorkspaceId": "00000000-0000-4000-8000-000000000001",
+  "mappings": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "projectId": "p1",
+      "projectName": "One renamed",
+      "folders": [
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "path": "__ROOT__/repo-a",
+          "name": "repo-a"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "path": "__ROOT__/repo-b",
+          "name": "repo-b"
+        }
+      ],
+      "createdAtMillis": 1767225600000,
+      "lastOpenedAtMillis": 1767225602000
+    }
+  ]
+}
