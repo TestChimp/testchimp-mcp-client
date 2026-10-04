@@ -124,4 +124,64 @@ describe("remote MCP over HTTP", () => {
       },
     ]);
   });
+
+  it("sends a QA bot's projectApiKey / botId arguments as headers and strips them from the body", async () => {
+    process.env.TESTCHIMP_BACKEND_URL = "https://featureservice.example.com";
+    const upstream: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(baseUrl)) return originalFetch(input, init);
+      upstream.push({ url, headers: init?.headers as Record<string, string>, body: String(init?.body) });
+      return new Response(JSON.stringify({ bot: { botId: "bot-2" } }));
+    }) as typeof fetch;
+
+    const res = await originalFetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer caller-jwt",
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: { name: "get-bot-profile", arguments: { projectApiKey: "project-b-key", botId: "bot-2" } },
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(upstream, [
+      {
+        url: "https://featureservice.example.com/api/mcp/get_bot_profile",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer caller-jwt",
+          "TestChimp-Api-Key": "project-b-key",
+          "bot-id": "bot-2",
+        },
+        body: "{}",
+      },
+    ]);
+  });
+
+  it("advertises the binding arguments on every tool", async () => {
+    const res = await originalFetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer caller-jwt",
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/list", params: {} }),
+    });
+    const payload = (await res.json()) as {
+      result?: { tools?: Array<{ name: string; inputSchema?: { properties?: Record<string, unknown> } }> };
+    };
+    const tools = payload.result?.tools ?? [];
+    assert.ok(tools.length > 50);
+    for (const tool of tools) {
+      assert.ok(tool.inputSchema?.properties?.projectApiKey, `${tool.name} lacks projectApiKey`);
+      assert.ok(tool.inputSchema?.properties?.botId, `${tool.name} lacks botId`);
+    }
+  });
 });
