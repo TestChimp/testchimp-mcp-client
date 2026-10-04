@@ -115,7 +115,7 @@ testchimp bot disconnect --project-id <id>    # forget the stored keys
 
 Headless AgentWatch acts as the user, so it needs their user id, personal access key and the project API key. `bot connect` runs an OAuth 2.1 PKCE login with a loopback redirect, asks for the opt-in `agentwatch` scope (the consent page warns that keys will be stored locally), fetches the keys from `/bots/get_agentwatch_credentials`, and writes them to `~/.testchimp/agentwatch/credentials.json` (mode `0600`, keyed by project) with the backend and ingress URLs. It revokes the OAuth refresh token straight away and never prints the keys. Approving also opts the project in to AgentWatch.
 
-**Pairing (no second browser consent).** When a QA bot is already connected with **Let this bot set up AgentWatch** allowed on its consent page (`agentwatch_pair` scope), the keys can reach the user's computer without another browser login, and without passing through the bot:
+**Pairing (no second browser consent; what QA bots use).** Every connection approved with **Use this connection as my QA bot** carries the `agentwatch_pair` scope, so the keys can reach the user's computer without another browser login, and without passing through the bot:
 
 1. On the user's computer: `testchimp bot connect --pair [--project-id <id>]` keeps a random verifier in `~/.testchimp/agentwatch/pairing.json` (`0600`) and prints `{pairingCode, expiresAtMillis}`; the code is the verifier's SHA-256 (base64url).
 2. The bot approves it with its own token: MCP tool `approve-agentwatch-pairing` (or `testchimp bot approve-pairing <code>`).
