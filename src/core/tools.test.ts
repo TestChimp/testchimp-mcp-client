@@ -313,4 +313,55 @@ describe("bot tools", () => {
     );
     await assert.rejects(capture("register-bot-profile", { role: "CEO" }), /Invalid input/);
   });
+
+  it("approves an AgentWatch pairing code", async () => {
+    const pairingCode = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    assert.deepEqual(await capture("approve-agentwatch-pairing", { pairingCode: ` ${pairingCode} ` }), {
+      path: "/bots/approve_agentwatch_pairing",
+      body: { pairingCode },
+    });
+    await assert.rejects(capture("approve-agentwatch-pairing", { pairingCode: "short" }), /Invalid input/);
+  });
+});
+
+describe("send-feedback", () => {
+  async function capture(args: Record<string, unknown>) {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool("send-feedback", args, {
+      postMcp: async (path, body) => {
+        request = { path, body };
+        return "{}";
+      },
+    });
+    return request;
+  }
+
+  it("maps the category to the proto enum and trims fields", async () => {
+    assert.deepEqual(
+      await capture({
+        category: "USER_STRUGGLE",
+        message: " Could not find the webhook key ",
+        context: " bot onboarding step 5 ",
+        agentName: " Grok QA bot ",
+      }),
+      {
+        path: "/api/mcp/send_feedback",
+        body: {
+          category: "AGENT_FEEDBACK_CATEGORY_USER_STRUGGLE",
+          message: "Could not find the webhook key",
+          context: "bot onboarding step 5",
+          agentName: "Grok QA bot",
+        },
+      },
+    );
+  });
+
+  it("defaults the category to OTHER and requires a message", async () => {
+    assert.deepEqual(await capture({ message: "hi" }), {
+      path: "/api/mcp/send_feedback",
+      body: { category: "AGENT_FEEDBACK_CATEGORY_OTHER", message: "hi" },
+    });
+    await assert.rejects(capture({ message: "  " }), /Invalid input/);
+    await assert.rejects(capture({ message: "x", category: "PRAISE" }), /Invalid input/);
+  });
 });

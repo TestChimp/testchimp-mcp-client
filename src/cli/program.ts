@@ -1805,6 +1805,23 @@ export function buildCliProgram(): Command {
       );
     });
 
+  program
+    .command("send-feedback")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "send-feedback")!.description)
+    .addOption(jsonInputOption())
+    .option("--category <category>", "BUG | USER_STRUGGLE | FEATURE_REQUEST | DOCS_GAP | OTHER")
+    .option("--message <text>", "What happened")
+    .option("--context <text>", "What you were doing: workflow, command, error text, versions")
+    .option("--agent-name <name>", "Agent / host, e.g. Cursor, Claude Code")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.category) body.category = String(opts.category).toUpperCase();
+      if (opts.message) body.message = String(opts.message);
+      if (opts.context) body.context = String(opts.context);
+      if (opts.agentName) body.agentName = String(opts.agentName);
+      console.log(await runTool("send-feedback", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
   for (const kebab of ["get-qa-posture", "get-bot-compat"] as const) {
     program
       .command(kebab)
@@ -1961,26 +1978,52 @@ export function buildCliProgram(): Command {
   bot
     .command("connect")
     .description(
-      "Sign in through the browser (OAuth) and store this user's id, PAT and the project API key for headless AgentWatch (no TestChimp Studio needed)",
+      "Store this user's id, PAT and the project API key for headless AgentWatch (no TestChimp Studio needed): browser sign-in (OAuth), or --pair / --finish-pair approved by your QA bot",
     )
     .option("--project-id <id>", "Fail unless the project approved on the consent page is this one")
     .option("--port <n>", "Loopback port for the OAuth redirect (default: a free port)")
     .option("--no-browser", "Only print the approval URL")
-    .option("--timeout-ms <n>", "How long to wait for approval (default 300000)")
+    .option("--timeout-ms <n>", "How long to wait for approval (default 300000; 60000 with --finish-pair)")
+    .option(
+      "--pair",
+      "No browser: print a pairing code for your QA bot to approve (approve-agentwatch-pairing), then run --finish-pair",
+    )
+    .option("--finish-pair", "Store the credentials once the QA bot has approved the pairing code from --pair")
     .action(async (opts) => {
       const { connectAgentWatch, ingressUrlForBackend } = await import("../agentwatch/connect.js");
       const { getBackendUrl, getIngressUrl } = await import("../core/client.js");
       try {
         const backendUrl = getBackendUrl();
-        const result = await connectAgentWatch({
-          backendUrl,
-          ingressUrl: process.env.TESTCHIMP_INGRESS_URL?.trim() ? getIngressUrl() : ingressUrlForBackend(backendUrl),
-          expectedProjectId: opts.projectId ? String(opts.projectId).trim() : undefined,
-          port: opts.port != null ? Number(opts.port) : undefined,
-          timeoutMs: opts.timeoutMs != null ? Number(opts.timeoutMs) : undefined,
-          openUrl: opts.browser === false ? () => undefined : undefined,
-          log: stderrProgress,
-        });
+        const ingressUrl = process.env.TESTCHIMP_INGRESS_URL?.trim() ? getIngressUrl() : ingressUrlForBackend(backendUrl);
+        const expectedProjectId = opts.projectId ? String(opts.projectId).trim() : undefined;
+        if (opts.pair && opts.finishPair) throw new Error("Use either --pair or --finish-pair, not both");
+        if (opts.pair) {
+          const { startAgentWatchPairing } = await import("../agentwatch/pairing.js");
+          const started = startAgentWatchPairing({ backendUrl, ingressUrl, expectedProjectId });
+          stderrProgress(
+            "Ask your QA bot to approve this pairing code (approve-agentwatch-pairing), then run: testchimp bot connect --finish-pair",
+          );
+          console.log(JSON.stringify(started, null, 2));
+          return;
+        }
+        let result;
+        if (opts.finishPair) {
+          const { finishAgentWatchPairing } = await import("../agentwatch/pairing.js");
+          result = await finishAgentWatchPairing({
+            backendUrl,
+            timeoutMs: opts.timeoutMs != null ? Number(opts.timeoutMs) : undefined,
+          });
+        } else {
+          result = await connectAgentWatch({
+            backendUrl,
+            ingressUrl,
+            expectedProjectId,
+            port: opts.port != null ? Number(opts.port) : undefined,
+            timeoutMs: opts.timeoutMs != null ? Number(opts.timeoutMs) : undefined,
+            openUrl: opts.browser === false ? () => undefined : undefined,
+            log: stderrProgress,
+          });
+        }
         stderrProgress(
           `Saved AgentWatch credentials for project ${result.projectId} in ${result.credentialsPath}` +
             (result.botId ? `; set TESTCHIMP_BOT_ID=${result.botId} for this bot` : ""),
@@ -1990,6 +2033,14 @@ export function buildCliProgram(): Command {
         console.error(`[testchimp bot connect] ${e instanceof Error ? e.message : String(e)}`);
         process.exitCode = 1;
       }
+    });
+
+  bot
+    .command("approve-pairing")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "approve-agentwatch-pairing")!.description)
+    .argument("<pairingCode>", "Code printed by testchimp bot connect --pair on the user's computer")
+    .action(async (pairingCode: string) => {
+      console.log(await runTool("approve-agentwatch-pairing", { pairingCode }, { postMcp }));
     });
 
   bot
