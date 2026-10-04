@@ -1239,6 +1239,23 @@ export const approveAgentwatchPairingInput = z.object({
     .regex(/^[A-Za-z0-9_-]{43}$/, "pairingCode must be the 43-character code printed by testchimp bot connect --pair"),
 });
 
+export const feedbackCategorySchema = z.enum([
+  "BUG",
+  "USER_STRUGGLE",
+  "FEATURE_REQUEST",
+  "DOCS_GAP",
+  "OTHER",
+]);
+
+export const sendFeedbackInput = z.object({
+  category: feedbackCategorySchema.default("OTHER"),
+  message: z.string().trim().min(1).max(10_000),
+  /** What the agent was doing: workflow, tool or command, error text, versions. */
+  context: z.string().trim().max(20_000).optional(),
+  /** Agent / host sending it, e.g. Cursor, Claude Code, Grok QA bot. */
+  agentName: z.string().trim().max(100).optional(),
+});
+
 export const MAX_BOT_ACK_EVENT_IDS = 100;
 
 export const ackBotEventsInput = z.object({

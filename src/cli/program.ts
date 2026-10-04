@@ -1805,6 +1805,23 @@ export function buildCliProgram(): Command {
       );
     });
 
+  program
+    .command("send-feedback")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "send-feedback")!.description)
+    .addOption(jsonInputOption())
+    .option("--category <category>", "BUG | USER_STRUGGLE | FEATURE_REQUEST | DOCS_GAP | OTHER")
+    .option("--message <text>", "What happened")
+    .option("--context <text>", "What you were doing: workflow, command, error text, versions")
+    .option("--agent-name <name>", "Agent / host, e.g. Cursor, Claude Code")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.category) body.category = String(opts.category).toUpperCase();
+      if (opts.message) body.message = String(opts.message);
+      if (opts.context) body.context = String(opts.context);
+      if (opts.agentName) body.agentName = String(opts.agentName);
+      console.log(await runTool("send-feedback", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
   for (const kebab of ["get-qa-posture", "get-bot-compat"] as const) {
     program
       .command(kebab)

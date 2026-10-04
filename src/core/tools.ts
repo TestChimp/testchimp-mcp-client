@@ -1711,6 +1711,27 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "send-feedback",
+    description:
+      "Send feedback to the TestChimp team (\"contact us\" for agents). Use when you hit a TestChimp bug or " +
+      "confusing error, the user struggles with or complains about TestChimp, a capability is missing, or the " +
+      "skill / docs were wrong or unclear. category: BUG | USER_STRUGGLE | FEATURE_REQUEST | DOCS_GAP | OTHER. " +
+      "message: what happened, in plain words. context: what you were doing (workflow, tool or command, error " +
+      "text, CLI / skill versions). agentName: your host, e.g. Cursor, Claude Code, Grok QA bot. Never include " +
+      "secrets, API keys or tokens. Mention to the user that you sent it.",
+    inputSchema: S.sendFeedbackInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.sendFeedbackInput>;
+      const body: Record<string, unknown> = {
+        category: `AGENT_FEEDBACK_CATEGORY_${a.category}`,
+        message: a.message,
+      };
+      if (a.context) body.context = a.context;
+      if (a.agentName) body.agentName = a.agentName;
+      return postMcp("/api/mcp/send_feedback", body);
+    },
+  },
+  {
     kebab: "ack-bot-events",
     description:
       "Acknowledge QA-bot webhook events by eventId (1-100 per call) so TestChimp stops redelivering them. Ack every " +
