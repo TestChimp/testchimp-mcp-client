@@ -1,7 +1,16 @@
 {
   "name": "@testchimp/cli",
-  "version": "0.1.88",
-  "description": "TestChimp CLI and MCP server — coverage, plans, EaaS, TrueCoverage, API operations (calls /api/mcp/*)",
+  "version": "0.1.89",
+  "description": "TestChimp CLI and MCP server: QA platform for coding agents. Coverage signals (scenario, API contract, TrueCoverage), in-repo test plans, verified tests, release readiness.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TestChimp/testchimp-mcp-client.git"
+  },
+  "homepage": "https://docs.testchimp.io",
+  "bugs": {
+    "url": "https://github.com/TestChimp/testchimp-mcp-client/issues"
+  },
+  "mcpName": "io.testchimp/qa",
   "type": "module",
   "main": "dist/bin/testchimp.js",
   "types": "dist/bin/testchimp.d.ts",
@@ -43,8 +52,20 @@
   "keywords": [
     "testchimp",
     "mcp",
+    "mcp-server",
     "cli",
-    "model-context-protocol"
+    "model-context-protocol",
+    "testing",
+    "qa",
+    "playwright",
+    "test-management",
+    "ai-agents",
+    "coding-agents",
+    "test-coverage",
+    "test-automation",
+    "e2e-testing",
+    "api-testing",
+    "release-governance"
   ],
   "license": "MIT",
   "publishConfig": {
