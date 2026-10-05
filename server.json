@@ -1,0 +1,52 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.testchimp/qa",
+  "title": "TestChimp",
+  "description": "QA platform for agents: coverage signals, in-repo test plans, verified tests and release governance.",
+  "repository": {
+    "url": "https://github.com/TestChimp/testchimp-mcp-client",
+    "source": "github"
+  },
+  "version": "0.1.89",
+  "websiteUrl": "https://testchimp.io",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.testchimp.io/mcp"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@testchimp/cli",
+      "version": "0.1.89",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "TESTCHIMP_API_KEY",
+          "description": "TestChimp project API key (Project Settings in TestChimp)",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "TESTCHIMP_BACKEND_URL",
+          "description": "Optional backend URL override for enterprise or self-hosted TestChimp",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
