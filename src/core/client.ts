@@ -114,6 +114,8 @@ export function requireApiKey(): string {
 export interface RequestAuth {
   bearerToken?: string;
   botId?: string;
+  /** QA bot's own project API key (tool argument): names the project; the bearer names the user. */
+  projectApiKey?: string;
   isolated: boolean;
 }
 
@@ -121,6 +123,10 @@ const requestAuthStorage = new AsyncLocalStorage<RequestAuth>();
 
 export function runWithRequestAuth<T>(auth: RequestAuth, fn: () => T): T {
   return requestAuthStorage.run(auth, fn);
+}
+
+export function currentRequestAuth(): RequestAuth | undefined {
+  return requestAuthStorage.getStore();
 }
 
 const BOT_ID_PATTERN = /^[\x21-\x7e]{1,64}$/;
@@ -159,6 +165,7 @@ export function buildRequestHeaders(): Record<string, string> {
       throw new Error("Authorization: Bearer token is required for remote TestChimp MCP requests.");
     }
     headers.Authorization = `Bearer ${requestAuth.bearerToken}`;
+    if (requestAuth.projectApiKey) headers["TestChimp-Api-Key"] = requestAuth.projectApiKey;
     if (requestAuth.botId && isValidBotId(requestAuth.botId)) headers["bot-id"] = requestAuth.botId;
     return headers;
   }

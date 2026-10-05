@@ -107,7 +107,7 @@ async function handleMcpPost(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
-  const server = createMcpServer();
+  const server = createMcpServer({ bindingArgs: true });
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

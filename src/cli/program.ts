@@ -38,6 +38,42 @@ export function compareSemver(a: string, b: string): number {
 
 type CoverageRecordTypeAlias = "smart_test" | "manual" | "perf_test";
 
+/** Reads all of stdin; with `firstChunkTimeoutMs`, gives up (returns "") when nothing arrives in time. */
+function readStdinText(firstChunkTimeoutMs?: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const timer =
+      firstChunkTimeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            cleanup();
+            process.stdin.destroy();
+            resolve("");
+          }, firstChunkTimeoutMs);
+    const onData = (chunk: Buffer | string) => {
+      if (timer) clearTimeout(timer);
+      chunks.push(Buffer.from(chunk));
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(Buffer.concat(chunks).toString("utf8").trim());
+    };
+    const onError = (e: Error) => {
+      cleanup();
+      reject(e);
+    };
+    function cleanup() {
+      if (timer) clearTimeout(timer);
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      process.stdin.off("error", onError);
+    }
+    process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+    process.stdin.on("error", onError);
+  });
+}
+
 function parseRecordTypesCsv(raw: string): CoverageRecordTypeAlias[] {
   return String(raw)
     .split(",")
@@ -112,6 +148,27 @@ function stderrProgress(msg: string): void {
 export function buildCliProgram(): Command {
   const program = new Command();
   program.name("testchimp").description("TestChimp CLI — call project MCP HTTP APIs").version(PACKAGE_VERSION);
+  program.option(
+    "--bot <botId>",
+    "QA bots: use this bot's stored project binding (~/.testchimp/bots/<botId>.json from `bot save-binding`)",
+  );
+  program.hook("preAction", async (_root, actionCommand) => {
+    if (actionCommand.name() === "save-binding" || actionCommand.name() === "remove-binding") return;
+    const { applyBotBinding, readBotBinding } = await import("../bots/bindingFile.js");
+    const explicit = program.opts().bot as string | undefined;
+    if (explicit) {
+      applyBotBinding(String(explicit));
+      return;
+    }
+    const envBot = process.env.TESTCHIMP_BOT_ID?.trim();
+    if (envBot && !process.env.TESTCHIMP_API_KEY?.trim() && !process.env.TESTCHIMP_OAUTH_TOKEN?.trim()) {
+      try {
+        if (readBotBinding(envBot)) applyBotBinding(envBot);
+      } catch {
+        /* invalid id: the request goes out without a key and reports the auth error */
+      }
+    }
+  });
 
   program
     .command("mcp")
@@ -2033,6 +2090,87 @@ export function buildCliProgram(): Command {
         console.error(`[testchimp bot connect] ${e instanceof Error ? e.message : String(e)}`);
         process.exitCode = 1;
       }
+    });
+
+  bot
+    .command("get-credentials")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-bot-credentials")!.description)
+    .action(async () => {
+      console.log(await runTool("get-bot-credentials", {}, { postMcp }));
+    });
+
+  bot
+    .command("save-binding")
+    .description(
+      "Store this QA bot's project binding on this computer (~/.testchimp/bots/<botId>.json, readable only by you). " +
+        "The project API key is read from stdin, or from TESTCHIMP_API_KEY set on this one command; it is never " +
+        "taken as an argument. Then add --bot <botId> to every testchimp command.",
+    )
+    .requiredOption("--bot-id <id>", "botId from get-bot-credentials")
+    .requiredOption("--project-id <id>", "projectId from get-bot-credentials")
+    .option("--project-name <name>", "projectName from get-bot-credentials")
+    .action(async (opts) => {
+      const { saveBotBinding } = await import("../bots/bindingFile.js");
+      const { getBackendUrl, getIngressUrl } = await import("../core/client.js");
+      try {
+        const envKey = process.env.TESTCHIMP_API_KEY?.trim();
+        let key: string | undefined;
+        if (!process.stdin.isTTY) {
+          key = await readStdinText(envKey ? 1500 : undefined);
+        }
+        key = key || envKey;
+        if (!key) {
+          throw new Error("Pipe the project API key on stdin, or set TESTCHIMP_API_KEY on this command only");
+        }
+        const path = saveBotBinding({
+          botId: String(opts.botId).trim(),
+          projectId: String(opts.projectId).trim(),
+          ...(opts.projectName ? { projectName: String(opts.projectName).trim() } : {}),
+          projectApiKey: key,
+          ...(process.env.TESTCHIMP_BACKEND_URL?.trim() ? { backendUrl: getBackendUrl() } : {}),
+          ...(process.env.TESTCHIMP_INGRESS_URL?.trim() ? { ingressUrl: getIngressUrl() } : {}),
+          savedAtMillis: Date.now(),
+        });
+        console.log(JSON.stringify({ botId: String(opts.botId).trim(), projectId: String(opts.projectId).trim(), bindingPath: path }));
+      } catch (e: unknown) {
+        console.error(`[testchimp bot save-binding] ${e instanceof Error ? e.message : String(e)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  bot
+    .command("exec")
+    .description(
+      "Run a command (e.g. a Playwright run) with this QA bot's binding in its env (TESTCHIMP_API_KEY, " +
+        "TESTCHIMP_BOT_ID, backend/ingress URLs) without printing the key: testchimp --bot <botId> bot exec -- <command>",
+    )
+    .argument("<command...>", "Command and arguments, after --")
+    .action(async (command: string[]) => {
+      if (!program.opts().bot) {
+        console.error("[testchimp bot exec] --bot <botId> is required");
+        process.exitCode = 1;
+        return;
+      }
+      const { spawn } = await import("node:child_process");
+      const child = spawn(command[0], command.slice(1), { stdio: "inherit", env: process.env });
+      process.exitCode = await new Promise<number>((resolve) => {
+        child.on("error", (e) => {
+          console.error(`[testchimp bot exec] ${e.message}`);
+          resolve(127);
+        });
+        child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+      });
+    });
+
+  bot
+    .command("remove-binding")
+    .description("Delete this QA bot's stored project binding from this computer")
+    .requiredOption("--bot-id <id>", "botId")
+    .action(async (opts) => {
+      const { removeBotBinding, botBindingPath } = await import("../bots/bindingFile.js");
+      const botId = String(opts.botId).trim();
+      const removed = removeBotBinding(botId);
+      console.log(JSON.stringify({ botId, removed, bindingPath: botBindingPath(botId) }));
     });
 
   bot
