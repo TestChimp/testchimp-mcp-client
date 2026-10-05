@@ -7,7 +7,7 @@
     "url": "https://github.com/TestChimp/testchimp-mcp-client",
     "source": "github"
   },
-  "version": "0.1.89",
+  "version": "0.1.90",
   "websiteUrl": "https://testchimp.io",
   "remotes": [
     {
@@ -20,7 +20,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@testchimp/cli",
-      "version": "0.1.89",
+      "version": "0.1.90",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

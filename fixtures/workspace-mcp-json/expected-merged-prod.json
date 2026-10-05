@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "X-Custom": "1"
+      }
+    },
+    "local-tool": {
+      "command": "node",
+      "args": [
+        "tool.js"
+      ],
+      "enabled": false
+    },
+    "testchimp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@testchimp/cli@latest",
+        "mcp"
+      ],
+      "env": {
+        "TESTCHIMP_API_KEY": "fake-project-key-0001",
+        "TESTCHIMP_PROJECT_ID": "proj-fixture-1",
+        "TESTCHIMP_INGRESS_URL": "https://ingress.testchimp.io"
+      },
+      "enabled": true
+    }
+  }
+}

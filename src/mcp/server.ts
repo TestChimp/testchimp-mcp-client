@@ -28,7 +28,7 @@ export const BINDING_ARGS = {
     .optional()
     .describe(
       "QA bots: your own project API key from your stored TestChimp binding. Required on every call except " +
-        "get-bot-credentials and get-bot-compat. Never print it."
+        "get-bot-credentials, get-project-credentials and get-bot-compat. Never print it."
     ),
   botId: z
     .string()

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "testchimp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@testchimp/cli@latest",
+        "mcp"
+      ],
+      "env": {
+        "TESTCHIMP_API_KEY": "fake-project-key-0001",
+        "TESTCHIMP_PROJECT_ID": "proj-fixture-1",
+        "TESTCHIMP_BACKEND_URL": "https://featureservice-staging.testchimp.io",
+        "TESTCHIMP_INGRESS_URL": "https://ingress-staging.testchimp.io"
+      },
+      "enabled": true
+    }
+  }
+}

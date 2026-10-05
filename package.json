@@ -1,6 +1,6 @@
 {
   "name": "@testchimp/cli",
-  "version": "0.1.89",
+  "version": "0.1.90",
   "description": "TestChimp CLI and MCP server: QA platform for coding agents. Coverage signals (scenario, API contract, TrueCoverage), in-repo test plans, verified tests, release readiness.",
   "repository": {
     "type": "git",
@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test dist/core/client.test.js dist/core/tools.test.js dist/mcp/httpServer.test.js dist/workspace/projectsRegistry.test.js dist/bots/bindingFile.test.js dist/agentwatch/connect.test.js dist/agentwatch/pairing.test.js dist/chimphands/llmRetryProxy.test.js dist/chimphands/midTurnSteering.test.js dist/chimphands/steeringSidecar.test.js dist/chimphands/agentBranch.test.js dist/chimphands/worktreeCommitPaths.test.js",
+    "test": "npm run build && node --test dist/core/client.test.js dist/core/tools.test.js dist/mcp/httpServer.test.js dist/workspace/projectsRegistry.test.js dist/workspace/workspaceCredsFile.test.js dist/bots/bindingFile.test.js dist/agentwatch/connect.test.js dist/agentwatch/pairing.test.js dist/chimphands/llmRetryProxy.test.js dist/chimphands/midTurnSteering.test.js dist/chimphands/steeringSidecar.test.js dist/chimphands/agentBranch.test.js dist/chimphands/worktreeCommitPaths.test.js",
     "watch": "tsc --watch",
     "start": "node dist/bin/testchimp.js",
     "prepublishOnly": "npm run build"

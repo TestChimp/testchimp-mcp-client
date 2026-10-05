@@ -1,3 +1,4 @@
+import { currentRequestAuth } from "./client.js";
 import { resolveGitHeadSha } from "./gitSha.js";
 import { PACKAGE_VERSION } from "./version.js";
 
@@ -112,7 +113,7 @@ export function buildAgentTraceabilityPayload(
   const userId =
     nonEmptyString(nested?.userId) ??
     nonEmptyString(a.userId) ??
-    nonEmptyString(process.env.TESTCHIMP_USER_ID);
+    (currentRequestAuth()?.isolated === true ? undefined : nonEmptyString(process.env.TESTCHIMP_USER_ID));
   const branchName = nonEmptyString(nested?.branchName) ?? nonEmptyString(a.branchName);
   const agentModel =
     nonEmptyString(nested?.agentModel) ??

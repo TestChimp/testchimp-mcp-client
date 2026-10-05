@@ -153,7 +153,8 @@ export function buildCliProgram(): Command {
     "QA bots: use this bot's stored project binding (~/.testchimp/bots/<botId>.json from `bot save-binding`)",
   );
   program.hook("preAction", async (_root, actionCommand) => {
-    if (actionCommand.name() === "save-binding" || actionCommand.name() === "remove-binding") return;
+    const name = actionCommand.name();
+    if (name === "save-binding" || name === "remove-binding" || name === "save-creds") return;
     const { applyBotBinding, readBotBinding } = await import("../bots/bindingFile.js");
     const explicit = program.opts().bot as string | undefined;
     if (explicit) {
@@ -168,6 +169,11 @@ export function buildCliProgram(): Command {
         /* invalid id: the request goes out without a key and reports the auth error */
       }
     }
+    // The MCP server takes credentials from its host config (stdio) or each request (--http), never the cwd.
+    if (name === "mcp" || envBot) return;
+    const { applyWorkspaceCredsFallback } = await import("../workspace/workspaceCredsFile.js");
+    const used = applyWorkspaceCredsFallback(process.env, process.cwd(), stderrProgress);
+    if (used) stderrProgress(`Using the project API key from ${used} (TESTCHIMP_API_KEY not set)`);
   });
 
   program
@@ -1890,6 +1896,13 @@ export function buildCliProgram(): Command {
   }
 
   program
+    .command("get-project-credentials")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-project-credentials")!.description)
+    .action(async () => {
+      console.log(await runTool("get-project-credentials", {}, { postMcp }));
+    });
+
+  program
     .command("get-my-tasks")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-my-tasks")!.description)
     .addOption(jsonInputOption())
@@ -2258,6 +2271,64 @@ export function buildCliProgram(): Command {
         process.exitCode = 1;
       }
     });
+  workspace
+    .command("save-creds")
+    .description(
+      "Save the project API key for local runners (Playwright reporter, CLI, k6) in <folder>/.testchimp/mcp.json, " +
+        "the gitignored file TestChimp Studio writes (mode 0600; .testchimp/ added to .gitignore; other servers kept), " +
+        "and map the folder in ~/.testchimp/projects.json. The key is read from stdin (e.g. projectApiKey from " +
+        "get-project-credentials), never from an argument. Remote MCP users run this once per repo.",
+    )
+    .requiredOption("--folder <path>", "Repository root folder")
+    .requiredOption("--project-id <id>", "TestChimp project id")
+    .option("--project-name <name>", "Project display name stored with the folder mapping")
+    .option("--backend-url <url>", "Featureservice URL for runners (default: TESTCHIMP_BACKEND_URL, else production)")
+    .option(
+      "--ingress-url <url>",
+      "Ingress URL for runners (default: derived from --backend-url; without it TESTCHIMP_INGRESS_URL, else derived from the backend)",
+    )
+    .option("--reassign", "Replace another project's key in this folder and move the folder mapping to this project")
+    .action(async (opts) => {
+      const { planWorkspaceCreds, writePlannedWorkspaceCreds } = await import("../workspace/workspaceCredsFile.js");
+      const { upsertWorkspaceFolder } = await import("../workspace/projectsRegistry.js");
+      const { getBackendUrl, getIngressUrl } = await import("../core/client.js");
+      const { ingressUrlForBackend } = await import("../agentwatch/connect.js");
+      const httpUrl = (flag: string, value: unknown): string => {
+        const raw = String(value).trim();
+        let parsed: URL;
+        try {
+          parsed = new URL(raw);
+        } catch {
+          throw new Error(`${flag} must be an absolute http(s) URL`);
+        }
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`${flag} must use http or https`);
+        return raw.replace(/\/+$/, "");
+      };
+      try {
+        const key = process.stdin.isTTY ? "" : (await readStdinText()).trim();
+        if (!key) throw new Error("Pipe the project API key on stdin (never pass it as an argument)");
+        const projectId = String(opts.projectId).trim();
+        const backendUrl = opts.backendUrl ? httpUrl("--backend-url", opts.backendUrl) : getBackendUrl();
+        const ingressUrl = opts.ingressUrl
+          ? httpUrl("--ingress-url", opts.ingressUrl)
+          : !opts.backendUrl && process.env.TESTCHIMP_INGRESS_URL?.trim()
+            ? getIngressUrl()
+            : ingressUrlForBackend(backendUrl);
+        const reassign = opts.reassign === true;
+        const plan = planWorkspaceCreds(String(opts.folder), { apiKey: key, projectId, backendUrl, ingressUrl }, { reassign });
+        upsertWorkspaceFolder({
+          projectId,
+          projectName: opts.projectName != null ? String(opts.projectName).trim() || undefined : undefined,
+          rootPath: plan.root,
+          reassign,
+        });
+        const result = writePlannedWorkspaceCreds(plan);
+        console.log(JSON.stringify({ projectId, ...result }, null, 2));
+      } catch (e: unknown) {
+        console.error(`[testchimp workspace save-creds] ${e instanceof Error ? e.message : String(e)}`);
+        process.exitCode = 1;
+      }
+    });
 
   const chimphands = program.command("chimphands").description("ChimpHands GitHub Actions agent bridge");
   chimphands
@@ -2347,7 +2418,7 @@ export function buildCliProgram(): Command {
 
   program.addHelpText(
     "after",
-    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  provision-ephemeral-environment-and-wait progress on stderr.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
+    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set (else read from the nearest .testchimp/mcp.json)\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  provision-ephemeral-environment-and-wait progress on stderr.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
   );
 
   return program;

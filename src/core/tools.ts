@@ -1,6 +1,15 @@
 import { type z, type ZodTypeAny } from "zod";
 import { normalizeScope } from "./normalize.js";
-import { postIngress, TestChimpHttpError, type PostIngressFn, type PostMcpFn } from "./client.js";
+import { ingressUrlForBackend } from "../agentwatch/connect.js";
+import {
+  currentRequestAuth,
+  getBackendUrl,
+  getIngressUrl,
+  postIngress,
+  TestChimpHttpError,
+  type PostIngressFn,
+  type PostMcpFn,
+} from "./client.js";
 import { runProvisionEphemeralEnvironmentAndWait, type ProgressLog } from "./ephemeralWait.js";
 import * as S from "./schemas.js";
 import { resolveGitHeadSha } from "./gitSha.js";
@@ -209,6 +218,36 @@ async function loadRequirementQualityReportJson(
     return JSON.parse(raw) as Record<string, unknown>;
   }
   return {};
+}
+
+/**
+ * Hosts local runners should use with the returned key. TESTCHIMP_PUBLIC_* override the upstream URLs for
+ * deployments (remote MCP) that reach TestChimp over internal addresses.
+ */
+export function publicHosts(): { backendUrl: string; ingressUrl?: string } {
+  const publicBackend = process.env.TESTCHIMP_PUBLIC_BACKEND_URL?.trim();
+  const backendUrl = (publicBackend || getBackendUrl()).replace(/\/+$/, "");
+  let derived: string | undefined;
+  try {
+    derived = ingressUrlForBackend(backendUrl);
+  } catch {
+    derived = undefined;
+  }
+  const ingress =
+    process.env.TESTCHIMP_PUBLIC_INGRESS_URL?.trim() ||
+    (!publicBackend && process.env.TESTCHIMP_INGRESS_URL?.trim() ? getIngressUrl() : derived);
+  return ingress ? { backendUrl, ingressUrl: ingress.replace(/\/+$/, "") } : { backendUrl };
+}
+
+function withPublicHosts(json: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return json;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json;
+  return JSON.stringify({ ...(parsed as Record<string, unknown>), ...publicHosts() });
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -1201,8 +1240,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const gitSha = resolveGitHeadSha(a.gitSha);
       if (gitSha) body.gitSha = gitSha;
       if (a.userId) body.userId = a.userId;
-      else if (!sessionId && process.env.TESTCHIMP_USER_ID) {
+      else if (!sessionId && currentRequestAuth()?.isolated !== true && process.env.TESTCHIMP_USER_ID) {
         // ChimpHands: server resolves responsible user from SESSION_ID; do not stamp service account.
+        // Isolated (remote multi-tenant HTTP): the server attributes to the OAuth token's user.
         body.userId = process.env.TESTCHIMP_USER_ID;
       }
       if (a.branchName) body.branchName = a.branchName;
@@ -1670,6 +1710,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "project name with your user before storing. Never print projectApiKey.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_bot_credentials", {}),
+  },
+  {
+    kebab: "get-project-credentials",
+    description:
+      "Normal (non-bot) OAuth connections: fetch the project key local test runners (Playwright reporter, CLI, " +
+      "k6) need. Returns {projectId, projectName, projectApiKey, userId, backendUrl, ingressUrl} for the " +
+      "connection's project (the MCP URL's ?projectId= when set, else the one picked on the consent page). Save it " +
+      "once per repo by piping projectApiKey to `testchimp workspace save-creds --folder <repo root> --project-id " +
+      "<projectId> --backend-url <backendUrl> --ingress-url <ingressUrl>`, which writes the gitignored " +
+      ".testchimp/mcp.json that TestChimp Studio and the skill read. Not needed with an API key (stdio already " +
+      "has it). Never print projectApiKey.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) =>
+      withPublicHosts(await postMcp("/api/mcp/get_project_credentials", {})),
   },
   {
     kebab: "get-bot-profile",

@@ -1,10 +1,28 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { getBackendUrl, runWithRequestAuth } from "../core/client.js";
+import { getBackendUrl, isValidProjectId, runWithRequestAuth } from "../core/client.js";
 import { createMcpServer } from "./server.js";
 
 export const MAX_MCP_BODY_BYTES = 1024 * 1024;
 const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource";
+const AUTH_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
+const AUTH_SERVER_METADATA_TTL_MS = 5 * 60 * 1000;
+const SCOPE = "testchimp";
+
+/**
+ * Bearer-only API (no cookies), so any origin may call it: browser-hosted MCP clients and inspectors
+ * need the preflight and to read WWW-Authenticate for OAuth discovery.
+ */
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Authorization, Content-Type, Accept, Mcp-Protocol-Version, Mcp-Session-Id, Last-Event-ID, bot-id",
+  "Access-Control-Expose-Headers": "WWW-Authenticate, Mcp-Session-Id, Mcp-Protocol-Version",
+  "Access-Control-Max-Age": "86400",
+};
+
+let authServerMetadataCache: { issuer: string; body: string; fetchedAt: number } | undefined;
 
 export interface McpHttpServerOptions {
   port: number;
@@ -44,6 +62,26 @@ function jsonRpcError(res: ServerResponse, status: number, message: string, head
   sendJson(res, status, { jsonrpc: "2.0", error: { code: -32000, message }, id: null }, headers);
 }
 
+type ProjectScope = { projectId?: string; invalid?: true };
+
+/** `?projectId=` on the MCP URL scopes every tool call to that project (one URL per repo). */
+function projectScope(req: IncomingMessage): ProjectScope {
+  const raw = new URL(req.url ?? "/", "http://localhost").searchParams.get("projectId");
+  if (raw == null) return {};
+  const projectId = raw.trim();
+  return isValidProjectId(projectId) ? { projectId } : { invalid: true };
+}
+
+function scopeQuery(scope: ProjectScope): string {
+  return scope.projectId ? `?projectId=${encodeURIComponent(scope.projectId)}` : "";
+}
+
+/** RFC 9728 metadata URL for this resource; scoped URLs get path-inserted metadata echoing their query. */
+function resourceMetadataUrl(req: IncomingMessage, scope: ProjectScope): string {
+  const base = `${publicBaseUrl(req)}${PROTECTED_RESOURCE_PATH}`;
+  return scope.projectId ? `${base}/mcp${scopeQuery(scope)}` : base;
+}
+
 function bearerToken(req: IncomingMessage): string | undefined {
   const match = /^Bearer\s+(\S+)\s*$/i.exec(firstHeader(req.headers.authorization) ?? "");
   return match?.[1];
@@ -78,18 +116,23 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 async function handleMcpPost(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const scope = projectScope(req);
+  if (scope.invalid) {
+    jsonRpcError(res, 400, "Invalid projectId query parameter");
+    return;
+  }
   const token = bearerToken(req);
   if (!token) {
-    const metadataUrl = `${publicBaseUrl(req)}${PROTECTED_RESOURCE_PATH}`;
+    const metadataUrl = resourceMetadataUrl(req, scope);
     jsonRpcError(res, 401, "Unauthorized: Authorization: Bearer <token> is required", {
-      "WWW-Authenticate": `Bearer resource_metadata="${metadataUrl}"`,
+      "WWW-Authenticate": `Bearer resource_metadata="${metadataUrl}", scope="${SCOPE}"`,
     });
     return;
   }
   if (isExpiredJwt(token)) {
-    const metadataUrl = `${publicBaseUrl(req)}${PROTECTED_RESOURCE_PATH}`;
+    const metadataUrl = resourceMetadataUrl(req, scope);
     jsonRpcError(res, 401, "Unauthorized: access token expired", {
-      "WWW-Authenticate": `Bearer error="invalid_token", error_description="expired", resource_metadata="${metadataUrl}"`,
+      "WWW-Authenticate": `Bearer error="invalid_token", error_description="expired", resource_metadata="${metadataUrl}", scope="${SCOPE}"`,
     });
     return;
   }
@@ -117,15 +160,70 @@ async function handleMcpPost(req: IncomingMessage, res: ServerResponse): Promise
     void server.close();
   });
   const botId = firstHeader(req.headers["bot-id"])?.trim() || undefined;
-  await runWithRequestAuth({ bearerToken: token, botId, isolated: true }, async () => {
+  await runWithRequestAuth({ bearerToken: token, botId, projectId: scope.projectId, isolated: true }, async () => {
     await server.connect(transport);
     await transport.handleRequest(req, res, body);
   });
 }
 
+/**
+ * Older MCP clients (2025-03-26 spec) skip protected-resource metadata and look for authorization-server
+ * metadata on the MCP origin. Serve TestChimp's (endpoints are absolute, so they lead to the real issuer).
+ */
+async function handleAuthServerMetadata(res: ServerResponse): Promise<void> {
+  const issuer = authorizationServer();
+  const cached = authServerMetadataCache;
+  if (cached && cached.issuer === issuer && Date.now() - cached.fetchedAt < AUTH_SERVER_METADATA_TTL_MS) {
+    sendRaw(res, cached.body);
+    return;
+  }
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${issuer}${AUTH_SERVER_METADATA_PATH}`, { headers: { Accept: "application/json" } });
+  } catch {
+    sendJson(res, 502, { error: "Authorization server metadata unavailable" });
+    return;
+  }
+  if (!upstream.ok) {
+    sendJson(res, 502, { error: "Authorization server metadata unavailable" });
+    return;
+  }
+  const body = await upstream.text();
+  authServerMetadataCache = { issuer, body, fetchedAt: Date.now() };
+  sendRaw(res, body);
+}
+
+function sendRaw(res: ServerResponse, body: string): void {
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(body),
+    "Cache-Control": "public, max-age=300",
+  });
+  res.end(body);
+}
+
+export function resetAuthServerMetadataCache(): void {
+  authServerMetadataCache = undefined;
+}
+
 async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? "/", "http://localhost").pathname.replace(/\/+$/, "") || "/";
 
+  for (const [name, value] of Object.entries(CORS_HEADERS)) res.setHeader(name, value);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (path === AUTH_SERVER_METADATA_PATH || path === `${AUTH_SERVER_METADATA_PATH}/mcp`) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      sendJson(res, 405, { error: "Method not allowed" }, { Allow: "GET" });
+      return;
+    }
+    await handleAuthServerMetadata(res);
+    return;
+  }
   if (path === "/healthz") {
     sendJson(res, 200, { status: "ok" });
     return;
@@ -135,12 +233,17 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       sendJson(res, 405, { error: "Method not allowed" }, { Allow: "GET" });
       return;
     }
+    const scope = projectScope(req);
+    if (scope.invalid) {
+      sendJson(res, 400, { error: "Invalid projectId query parameter" });
+      return;
+    }
     // RFC 9728 protected-resource metadata keys are spec-mandated snake_case.
     sendJson(res, 200, {
-      resource: `${publicBaseUrl(req)}/mcp`,
+      resource: `${publicBaseUrl(req)}/mcp${scopeQuery(scope)}`,
       authorization_servers: [authorizationServer()],
       bearer_methods_supported: ["header"],
-      scopes_supported: ["testchimp"],
+      scopes_supported: [SCOPE],
     });
     return;
   }

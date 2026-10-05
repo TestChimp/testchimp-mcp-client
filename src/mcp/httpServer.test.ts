@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { after, afterEach, before, describe, it } from "node:test";
-import { createMcpHttpServer, isExpiredJwt } from "./httpServer.js";
+import { createMcpHttpServer, isExpiredJwt, resetAuthServerMetadataCache } from "./httpServer.js";
 
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
@@ -53,8 +53,63 @@ describe("remote MCP over HTTP", () => {
     assert.equal(res.status, 401);
     assert.equal(
       res.headers.get("www-authenticate"),
-      'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"',
+      'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource", scope="testchimp"',
     );
+    assert.equal(res.headers.get("access-control-allow-origin"), "*");
+    assert.match(res.headers.get("access-control-expose-headers") ?? "", /WWW-Authenticate/);
+  });
+
+  it("answers CORS preflight for browser-hosted clients", async () => {
+    const res = await originalFetch(`${baseUrl}/mcp`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://inspector.example",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization, content-type, mcp-protocol-version",
+      },
+    });
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get("access-control-allow-origin"), "*");
+    assert.match(res.headers.get("access-control-allow-methods") ?? "", /POST/);
+    assert.match(res.headers.get("access-control-allow-headers") ?? "", /Authorization/);
+    assert.match(res.headers.get("access-control-allow-headers") ?? "", /Mcp-Protocol-Version/);
+  });
+
+  it("serves the authorization server's metadata on the MCP origin for older clients", async () => {
+    resetAuthServerMetadataCache();
+    process.env.TESTCHIMP_OAUTH_ISSUER = "https://featureservice.example.com";
+    const metadata = {
+      issuer: "https://featureservice.example.com",
+      authorization_endpoint: "https://featureservice.example.com/oauth/authorize",
+      token_endpoint: "https://featureservice.example.com/oauth/token",
+      registration_endpoint: "https://featureservice.example.com/oauth/register",
+    };
+    const upstream: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(baseUrl)) return originalFetch(input, init);
+      upstream.push(url);
+      return new Response(JSON.stringify(metadata));
+    }) as typeof fetch;
+
+    for (const path of ["/.well-known/oauth-authorization-server", "/.well-known/oauth-authorization-server/mcp"]) {
+      const res = await originalFetch(`${baseUrl}${path}`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), metadata);
+    }
+    assert.deepEqual(upstream, ["https://featureservice.example.com/.well-known/oauth-authorization-server"]);
+  });
+
+  it("returns 502 when the authorization server metadata is unreachable", async () => {
+    resetAuthServerMetadataCache();
+    process.env.TESTCHIMP_OAUTH_ISSUER = "https://featureservice.example.com";
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(baseUrl)) return originalFetch(input, init);
+      return new Response("nope", { status: 500 });
+    }) as typeof fetch;
+    const res = await originalFetch(`${baseUrl}/.well-known/oauth-authorization-server`);
+    assert.equal(res.status, 502);
   });
 
   it("returns 405 for GET /mcp in stateless mode", async () => {
@@ -161,6 +216,64 @@ describe("remote MCP over HTTP", () => {
         },
         body: "{}",
       },
+    ]);
+  });
+
+  it("points scoped URLs at path-inserted metadata that echoes ?projectId=", async () => {
+    process.env.TESTCHIMP_MCP_PUBLIC_URL = "https://mcp.example.com";
+    const res = await originalFetch(`${baseUrl}/mcp?projectId=proj-2`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    assert.equal(res.status, 401);
+    assert.equal(
+      res.headers.get("www-authenticate"),
+      'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp?projectId=proj-2", scope="testchimp"',
+    );
+    for (const path of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
+      const meta = await originalFetch(`${baseUrl}${path}?projectId=proj-2`);
+      assert.equal(meta.status, 200);
+      assert.equal(((await meta.json()) as { resource: string }).resource, "https://mcp.example.com/mcp?projectId=proj-2");
+    }
+  });
+
+  it("rejects a malformed ?projectId=", async () => {
+    const res = await originalFetch(`${baseUrl}/mcp?projectId=${encodeURIComponent("../x y")}`, {
+      method: "POST",
+      headers: { Authorization: "Bearer caller-jwt", "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    assert.equal(res.status, 400);
+    const meta = await originalFetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp?projectId=a%20b`);
+    assert.equal(meta.status, 400);
+  });
+
+  it("sends ?projectId= as TestChimp-Project-Id unless a projectApiKey names the project", async () => {
+    process.env.TESTCHIMP_BACKEND_URL = "https://featureservice.example.com";
+    const upstream: Array<Record<string, string>> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(baseUrl)) return originalFetch(input, init);
+      upstream.push(init?.headers as Record<string, string>);
+      return new Response(JSON.stringify({}));
+    }) as typeof fetch;
+
+    const call = (id: number, args: Record<string, unknown>) =>
+      originalFetch(`${baseUrl}/mcp?projectId=proj-2`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer caller-jwt",
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "get-bot-profile", arguments: args } }),
+      });
+    assert.equal((await call(10, {})).status, 200);
+    assert.equal((await call(11, { projectApiKey: "project-b-key" })).status, 200);
+    assert.deepEqual(upstream, [
+      { "Content-Type": "application/json", Authorization: "Bearer caller-jwt", "TestChimp-Project-Id": "proj-2" },
+      { "Content-Type": "application/json", Authorization: "Bearer caller-jwt", "TestChimp-Api-Key": "project-b-key" },
     ]);
   });
 
