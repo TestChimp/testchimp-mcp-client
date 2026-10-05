@@ -1663,8 +1663,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "(consent page: project picked, \"Use this connection as my QA bot\" ticked). Returns {projectId, projectName, " +
       "botId, projectApiKey, userId, settingsUrl}. The connector is your user's and is shared with their other bots, " +
       "so it does not remember your project: store projectId, projectName, botId and projectApiKey as your own " +
-      "bot-scoped setting (env/secret if your host has one, else bot memory), then pass projectApiKey and botId on " +
-      "every other TestChimp tool call (CLI: testchimp bot save-binding once, then --bot <botId>). Confirm the " +
+      "bot-scoped setting (env/secret if your host has one, else bot memory). Then prefer the CLI for TestChimp " +
+      "calls: pipe the key to `testchimp bot save-binding --bot-id <botId> --project-id <projectId>` once per " +
+      "computer, then add --bot <botId> to every command. When you do use these MCP tools, pass projectApiKey and " +
+      "botId on every call. Confirm the " +
       "project name with your user before storing. Never print projectApiKey.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_bot_credentials", {}),
