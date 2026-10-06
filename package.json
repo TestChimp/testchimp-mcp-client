@@ -1,6 +1,6 @@
 {
   "name": "@testchimp/cli",
-  "version": "0.1.90",
+  "version": "0.1.91",
   "description": "TestChimp CLI and MCP server: QA platform for coding agents. Coverage signals (scenario, API contract, TrueCoverage), in-repo test plans, verified tests, release readiness.",
   "repository": {
     "type": "git",

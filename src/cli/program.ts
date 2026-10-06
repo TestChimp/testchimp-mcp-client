@@ -961,6 +961,24 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("invite-team-members")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "invite-team-members")!.description)
+    .addOption(jsonInputOption())
+    .option("--emails <list>", "Comma-separated teammate emails")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.emails) {
+        body.emails = String(opts.emails)
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean);
+      }
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("invite-team-members", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("get-eaas-config")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-eaas-config")!.description)
     .addOption(jsonInputOption())
@@ -1581,6 +1599,29 @@ export function buildCliProgram(): Command {
       if (opts.userId) body.userId = String(opts.userId);
       const merged = mergeBodies(body, opts.jsonInput);
       console.log(await runTool("get-last-run-workflow-detail", merged, { postMcp }));
+    });
+
+  program
+    .command("update-workflow-execution-assignees")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-workflow-execution-assignees")!.description)
+    .addOption(jsonInputOption())
+    .option("--workflow-execution-id <id>", "Workflow execution id")
+    .option("--assignee <userIdOrEmail>", "New assignee (team member user id or email)")
+    .option("--add-cc <list>", "Comma-separated user ids or emails to CC")
+    .option("--remove-cc <list>", "Comma-separated user ids to remove from CC")
+    .action(async (opts) => {
+      const csv = (v: unknown) =>
+        String(v)
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean);
+      const body: Record<string, unknown> = {};
+      if (opts.workflowExecutionId) body.workflowExecutionId = String(opts.workflowExecutionId);
+      if (opts.assignee) body.assignee = String(opts.assignee);
+      if (opts.addCc) body.addCc = csv(opts.addCc);
+      if (opts.removeCc) body.removeCc = csv(opts.removeCc);
+      const merged = mergeBodies(body, opts.jsonInput);
+      console.log(await runTool("update-workflow-execution-assignees", merged, { postMcp }));
     });
 
   for (const kebab of [

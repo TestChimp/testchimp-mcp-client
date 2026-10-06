@@ -292,6 +292,45 @@ describe("bot tools", () => {
     });
   });
 
+  it("maps invite-team-members to its endpoint and caps the batch", async () => {
+    assert.deepEqual(await capture("invite-team-members", { emails: [" a@x.io ", "b@x.io"] }), {
+      path: "/api/mcp/invite_team_members",
+      body: { emails: ["a@x.io", "b@x.io"] },
+    });
+    await assert.rejects(capture("invite-team-members", { emails: [] }), /Invalid input/);
+    const tooMany = Array.from({ length: 21 }, (_, i) => `u${i}@x.io`);
+    await assert.rejects(capture("invite-team-members", { emails: tooMany }), /Invalid input/);
+  });
+
+  it("maps update-workflow-execution-assignees ids and emails to the right fields", async () => {
+    assert.deepEqual(
+      await capture("update-workflow-execution-assignees", {
+        workflowExecutionId: " ex1 ",
+        assignee: "bob@x.io",
+        addCc: ["u2", "carol@x.io"],
+        removeCc: ["u3"],
+      }),
+      {
+        path: "/api/mcp/update_workflow_execution_assignees",
+        body: {
+          workflowExecutionId: "ex1",
+          assigneeEmail: "bob@x.io",
+          addCcUserIds: ["u2"],
+          addCcEmails: ["carol@x.io"],
+          removeCcUserIds: ["u3"],
+        },
+      },
+    );
+    assert.deepEqual(
+      await capture("update-workflow-execution-assignees", { workflowExecutionId: "ex1", assignee: "u9" }),
+      { path: "/api/mcp/update_workflow_execution_assignees", body: { workflowExecutionId: "ex1", assigneeUserId: "u9" } },
+    );
+    assert.deepEqual(await capture("list-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true }), {
+      path: "/api/mcp/list_workflow_executions",
+      body: { pendingApprovalOnly: true, assignedToMeOnly: true },
+    });
+  });
+
   it("adds public backend / ingress hosts to project credentials", async () => {
     const saved = { ...process.env };
     try {

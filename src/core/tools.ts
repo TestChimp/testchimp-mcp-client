@@ -1315,7 +1315,35 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.workflowId) body.workflowId = a.workflowId;
       if (a.limit != null) body.limit = a.limit;
       if (a.offset != null) body.offset = a.offset;
+      if (a.pendingApprovalOnly) body.pendingApprovalOnly = true;
+      if (a.assignedToMeOnly) body.assignedToMeOnly = true;
       return postMcp("/api/mcp/list_workflow_executions", body);
+    },
+  },
+  {
+    kebab: "update-workflow-execution-assignees",
+    description:
+      "Change the assignee and/or CC list of a workflow execution. The caller (OAuth user, or the bot's owner " +
+      "with --bot) must be the current assignee or an org admin (admin override needs OAuth, not --bot); anyone " +
+      "on the team may assign an unassigned execution, and a CC'd user may remove themselves. 409 means someone " +
+      "else changed it: re-read with get-workflow-execution and retry. Assignee / CC accept team member user ids or emails. New assignees and CC'd users get a " +
+      "workflow-execution-assigned bot event plus email/Slack per their notification settings. Only call after " +
+      "the user explicitly approved the change. Returns the updated execution.",
+    inputSchema: S.updateWorkflowExecutionAssigneesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.updateWorkflowExecutionAssigneesInput>;
+      const isEmail = (v: string) => v.includes("@");
+      const body: Record<string, unknown> = { workflowExecutionId: a.workflowExecutionId.trim() };
+      if (a.assignee) {
+        const v = a.assignee.trim();
+        body[isEmail(v) ? "assigneeEmail" : "assigneeUserId"] = v;
+      }
+      const cc = (a.addCc ?? []).map((v) => v.trim()).filter(Boolean);
+      if (cc.some((v) => !isEmail(v))) body.addCcUserIds = cc.filter((v) => !isEmail(v));
+      if (cc.some(isEmail)) body.addCcEmails = cc.filter(isEmail);
+      const remove = (a.removeCc ?? []).map((v) => v.trim()).filter(Boolean);
+      if (remove.length) body.removeCcUserIds = remove;
+      return postMcp("/api/mcp/update_workflow_execution_assignees", body);
     },
   },
   {
@@ -1573,6 +1601,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (repo) body.repository_full_name = repo;
       if (a.plansBranch !== undefined) body.plansBranch = a.plansBranch.trim();
       return postMcp("/api/mcp/update_git_folder_mapping", body);
+    },
+  },
+  {
+    kebab: "invite-team-members",
+    description:
+      "Invite teammates (by email) to the TestChimp organization so they can access this project. Each invitee " +
+      "joins as a Viewer and gets a sign-up email. Needs an OAuth user session whose user is an org admin: QA bots " +
+      "call this MCP tool through the connector with their binding arguments (the CLI's --bot key can't invite). " +
+      "Returns a per-email outcome (INVITED, ALREADY_MEMBER, " +
+      "ALREADY_INVITED, FAILED with failureReason) and teamSettingsUrl for role changes / seats. Only call with " +
+      "emails the user explicitly confirmed.",
+    inputSchema: S.inviteTeamMembersInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.inviteTeamMembersInput>;
+      return postMcp("/api/mcp/invite_team_members", { emails: a.emails.map((e) => e.trim()) });
     },
   },
   {
