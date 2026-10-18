@@ -1816,10 +1816,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Normal (non-bot) OAuth connections: fetch the project key local test runners (Playwright reporter, CLI, " +
       "k6) need. Returns {projectId, projectName, projectApiKey, userId, backendUrl, ingressUrl} for the " +
       "connection's project (the MCP URL's ?projectId= when set, else the one picked on the consent page). " +
-      "To persist the runner key without echoing it, prefer save-workspace-creds (stdio MCP) or " +
-      "`testchimp workspace save-creds --folder <repo> --project-id <id>` (fetches the key using existing auth; " +
-      "do not put the key in a command). This tool still returns projectApiKey for callers that need it. " +
-      "Not needed with an API key (stdio already has it). Never print projectApiKey.",
+      "To persist the runner key without putting it in a shell command: local stdio MCP should call " +
+      "save-workspace-creds; hosted / plugin agents should write <repo>/.testchimp/mcp.json themselves " +
+      "(mode 0600, dir 0700) from this response and never print projectApiKey. This tool still returns " +
+      "projectApiKey for those callers. Not needed with an API key (stdio already has it).",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) =>
       withPublicHosts(await postMcp("/api/mcp/get_project_credentials", {})),
@@ -1829,9 +1829,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Save the project API key for local runners in <folder>/.testchimp/mcp.json (Studio format: mode 0600, " +
       "dir 0700, .testchimp/ gitignored) and map the folder in ~/.testchimp/projects.json. Fetches the key with " +
-      "the current MCP auth — do not pass the key, and the response never includes it. Preferred over " +
-      "get-project-credentials + a shell command. Hosted mcp.testchimp.io cannot write your laptop: run " +
-      "`testchimp workspace save-creds --folder <repo> --project-id <id>` there instead (it fetches the key).",
+      "the current MCP auth — do not pass the key, and the response never includes it. Local stdio MCP only " +
+      "(omitted on hosted mcp.testchimp.io). Hosted / plugin agents: call get-project-credentials and write " +
+      "<repo>/.testchimp/mcp.json with a file-write tool (never put the key in a shell command).",
     inputSchema: S.saveWorkspaceCredsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.saveWorkspaceCredsInput>;
@@ -1862,9 +1862,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.startsWith("NOT_FOUND:") && currentRequestAuth()?.isolated === true) {
           throw new Error(
-            `${msg}. The hosted MCP server cannot write your laptop's repo. On the machine that has the repo, run: ` +
-              `testchimp workspace save-creds --folder <repo> --project-id ${projectId} ` +
-              `(it fetches the key using TESTCHIMP_OAUTH_TOKEN or TESTCHIMP_API_KEY; do not pass the key on the command line).`,
+            `${msg}. The hosted MCP server cannot write your laptop's repo. Call get-project-credentials, then ` +
+              `write <repo>/.testchimp/mcp.json yourself with a file-write tool (mode 0600, dir 0700; ` +
+              `never put the key in a shell command). projectId=${projectId}.`,
           );
         }
         throw e;

@@ -2317,9 +2317,11 @@ export function buildCliProgram(): Command {
     .description(
       "Save the project API key for local runners (Playwright reporter, CLI, k6) in <folder>/.testchimp/mcp.json " +
         "(Studio format: mode 0600, .testchimp/ gitignored, other servers kept) and map the folder in ~/.testchimp/projects.json. " +
-        "Recommended: omit the key — this command fetches it with TESTCHIMP_OAUTH_TOKEN or copies TESTCHIMP_API_KEY already " +
-        "in the environment: `testchimp workspace save-creds --folder <repo> --project-id <id>`. Agents should prefer the " +
-        "save-workspace-creds MCP tool (never prints the key). Legacy: pipe the key on stdin (never as a command-line argument).",
+        "Accepts the key on stdin or copies TESTCHIMP_API_KEY already in the environment " +
+        "(`testchimp workspace save-creds --folder <repo> --project-id <id>`). Also fetches via get-project-credentials " +
+        "when TESTCHIMP_OAUTH_TOKEN is set. Local stdio MCP: save-workspace-creds (never prints the key). " +
+        "Hosted / plugin agents: call get-project-credentials and write `.testchimp/mcp.json` with a file-write tool. " +
+        "Never pass the key as a command-line argument.",
     )
     .requiredOption("--folder <path>", "Repository root folder")
     .requiredOption("--project-id <id>", "TestChimp project id")
@@ -2333,10 +2335,11 @@ export function buildCliProgram(): Command {
     .addHelpText(
       "after",
       "\nKey source (never pass the key as a command-line argument):\n" +
-        "  Recommended  omit the key; fetches via get-project-credentials when TESTCHIMP_OAUTH_TOKEN is set,\n" +
-        "               or copies TESTCHIMP_API_KEY from the environment\n" +
-        "  Agents       MCP tool save-workspace-creds --folder <repo> (optional projectId)\n" +
-        "  Legacy       printf '%s' \"$KEY\" | testchimp workspace save-creds --folder <repo> --project-id <id>\n",
+        "  CLI            TESTCHIMP_API_KEY in the environment, or pipe the key on stdin\n" +
+        "                 (optional: TESTCHIMP_OAUTH_TOKEN fetches via get-project-credentials)\n" +
+        "  Local stdio    MCP tool save-workspace-creds --folder <repo> (optional projectId)\n" +
+        "  Hosted/plugin  get-project-credentials, then write <repo>/.testchimp/mcp.json (0600) yourself\n" +
+        "  Legacy         printf '%s' \"$KEY\" | testchimp workspace save-creds --folder <repo> --project-id <id>\n",
     )
     .action(async (opts) => {
       const { persistWorkspaceCreds } = await import("../workspace/workspaceCredsFile.js");
@@ -2368,10 +2371,10 @@ export function buildCliProgram(): Command {
         if (!key) {
           if (!process.env.TESTCHIMP_OAUTH_TOKEN?.trim()) {
             throw new Error(
-              "No project API key on stdin or TESTCHIMP_API_KEY. Recommended: " +
-                "`testchimp workspace save-creds --folder <repo> --project-id <id>` with " +
-                "TESTCHIMP_OAUTH_TOKEN or TESTCHIMP_API_KEY set (do not pass the key as an argument). " +
-                "Agents: call the save-workspace-creds MCP tool. Legacy: pipe the key on stdin.",
+              "No project API key on stdin or TESTCHIMP_API_KEY. Set TESTCHIMP_API_KEY, pipe the key on stdin, " +
+                "or set TESTCHIMP_OAUTH_TOKEN so this command can fetch it. Local stdio MCP: save-workspace-creds. " +
+                "Hosted / plugin agents: call get-project-credentials and write <repo>/.testchimp/mcp.json " +
+                "with a file-write tool (never put the key in a command).",
             );
           }
           try {
@@ -2389,7 +2392,8 @@ export function buildCliProgram(): Command {
             const detail = e instanceof Error ? e.message : String(e);
             throw new Error(
               `Fetching the project API key failed (${detail}). ` +
-                "Agents: call the save-workspace-creds MCP tool. Legacy: pipe the key on stdin.",
+                "Set TESTCHIMP_API_KEY or pipe the key on stdin. Hosted / plugin agents: call " +
+                "get-project-credentials and write <repo>/.testchimp/mcp.json with a file-write tool.",
             );
           }
         }

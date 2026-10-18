@@ -333,8 +333,9 @@ describe("testchimp workspace save-creds (CLI)", () => {
   it("documents the recommended no-key form in --help", () => {
     const r = spawnSync(process.execPath, [cliBin, "workspace", "save-creds", "--help"], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /Recommended/);
+    assert.match(r.stdout, /TESTCHIMP_API_KEY/);
     assert.match(r.stdout, /save-workspace-creds/);
+    assert.match(r.stdout, /get-project-credentials/);
     assert.match(r.stdout, /stdin/);
     assert.doesNotMatch(r.stdout, /--api-key/);
   });

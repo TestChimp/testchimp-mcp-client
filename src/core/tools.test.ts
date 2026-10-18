@@ -703,7 +703,7 @@ describe("save-workspace-creds", () => {
           },
         ),
       ),
-      /hosted MCP server cannot write/,
+      /hosted MCP server cannot write[\s\S]*get-project-credentials[\s\S]*\.testchimp\/mcp\.json/,
     );
   });
 
