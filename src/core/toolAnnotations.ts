@@ -137,6 +137,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "get-bot-compat": readOnly("Get Bot Compat"),
   "get-bot-credentials": readOnly("Get Bot Credentials"),
   "get-project-credentials": readOnly("Get Project Credentials"),
+  "save-workspace-creds": mutating("Save Workspace Creds", { idempotent: true }),
   "get-bot-profile": readOnly("Get Bot Profile"),
   "register-bot-profile": mutating("Register Bot Profile", { destructive: true, idempotent: true }),
   "approve-agentwatch-pairing": mutating("Approve AgentWatch Pairing", { idempotent: true }),

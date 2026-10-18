@@ -7,7 +7,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_BACKEND, isValidProjectId } from "../core/client.js";
-import { canonicalizePath } from "./projectsRegistry.js";
+import { canonicalizePath, upsertWorkspaceFolder } from "./projectsRegistry.js";
 
 export const WORKSPACE_DIR = ".testchimp";
 const SERVER_NAME = "testchimp";
@@ -159,6 +159,24 @@ export function writePlannedWorkspaceCreds(plan: PlannedWorkspaceCreds): SaveWor
   }
   const gitignoreUpdated = ensureGitignoreHasTestchimp(plan.root);
   return { status: plan.status, folder: plan.root, mcpJsonPath: plan.path, gitignoreUpdated };
+}
+
+export type PersistWorkspaceCredsResult = SaveWorkspaceCredsResult & { projectId: string };
+
+/** Plan, map the folder in projects.json, then write `.testchimp/mcp.json`. Never returns the key. */
+export function persistWorkspaceCreds(
+  folder: string,
+  input: WorkspaceCredsInput,
+  opts: { reassign?: boolean; projectName?: string } = {},
+): PersistWorkspaceCredsResult {
+  const plan = planWorkspaceCreds(folder, input, { reassign: opts.reassign });
+  upsertWorkspaceFolder({
+    projectId: input.projectId,
+    projectName: opts.projectName,
+    rootPath: plan.root,
+    reassign: opts.reassign === true,
+  });
+  return { projectId: input.projectId, ...writePlannedWorkspaceCreds(plan) };
 }
 
 const FALLBACK_ENV_KEYS = ["TESTCHIMP_API_KEY", "TESTCHIMP_PROJECT_ID", "TESTCHIMP_BACKEND_URL", "TESTCHIMP_INGRESS_URL"];

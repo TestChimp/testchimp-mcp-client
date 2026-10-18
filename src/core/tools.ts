@@ -15,6 +15,7 @@ import * as S from "./schemas.js";
 import { resolveGitHeadSha } from "./gitSha.js";
 import { parseDateBoundToMillis } from "./dates.js";
 import { buildAgentTraceabilityPayload, resolveToolchainVersions } from "./agentTraceability.js";
+import { persistWorkspaceCreds } from "../workspace/workspaceCredsFile.js";
 
 export interface ToolContext {
   postMcp: PostMcpFn;
@@ -248,6 +249,57 @@ function withPublicHosts(json: string): string {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json;
   return JSON.stringify({ ...(parsed as Record<string, unknown>), ...publicHosts() });
+}
+
+export type ProjectCredentials = {
+  projectId: string;
+  projectName?: string;
+  projectApiKey: string;
+  backendUrl?: string;
+  ingressUrl?: string;
+};
+
+/** Parse get-project-credentials JSON (after public-host rewrite). Errors never include the key. */
+export function parseProjectCredentialsJson(json: string): ProjectCredentials {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error("get-project-credentials returned a non-JSON response");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("get-project-credentials returned an invalid payload");
+  }
+  const o = parsed as Record<string, unknown>;
+  const projectApiKey = typeof o.projectApiKey === "string" ? o.projectApiKey.trim() : "";
+  if (!projectApiKey) throw new Error("get-project-credentials did not return projectApiKey");
+  const projectId = typeof o.projectId === "string" ? o.projectId.trim() : "";
+  if (!projectId) throw new Error("get-project-credentials did not return projectId");
+  return {
+    projectId,
+    projectApiKey,
+    ...(typeof o.projectName === "string" && o.projectName.trim() ? { projectName: o.projectName.trim() } : {}),
+    ...(typeof o.backendUrl === "string" && o.backendUrl.trim() ? { backendUrl: o.backendUrl.trim() } : {}),
+    ...(typeof o.ingressUrl === "string" && o.ingressUrl.trim() ? { ingressUrl: o.ingressUrl.trim() } : {}),
+  };
+}
+
+async function fetchProjectCredentials(postMcp: PostMcpFn): Promise<ProjectCredentials> {
+  return parseProjectCredentialsJson(withPublicHosts(await postMcp("/api/mcp/get_project_credentials", {})));
+}
+
+function httpAbsoluteUrl(flag: string, value: string): string {
+  const raw = value.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`${flag} must be an absolute http(s) URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${flag} must use http or https`);
+  }
+  return raw.replace(/\/+$/, "");
 }
 
 /** Every kebab here must have an entry in TOOL_ANNOTATIONS (enforced by tests and createMcpServer). */
@@ -1573,7 +1625,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "update-project-init-status",
     description:
-      "Merge project-init progress fields for the current project. Server recomputes overall_complete when required items are DONE.",
+      "Merge project-init progress fields for the current project. Pass a `status` object with snake_case keys only " +
+      "(platform_comms, folder_mapping, connect_to_test_env, ci_wiring, and optional import_plans, import_tests, " +
+      "smoke_validation). The server recomputes overall_complete when required items are DONE — do not send " +
+      "overall_complete or camelCase aliases (platformComms, folderMapping, …); unknown keys are rejected.",
     inputSchema: S.updateProjectInitStatusInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updateProjectInitStatusInput>;
@@ -1760,14 +1815,61 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Normal (non-bot) OAuth connections: fetch the project key local test runners (Playwright reporter, CLI, " +
       "k6) need. Returns {projectId, projectName, projectApiKey, userId, backendUrl, ingressUrl} for the " +
-      "connection's project (the MCP URL's ?projectId= when set, else the one picked on the consent page). Save it " +
-      "once per repo by piping projectApiKey to `testchimp workspace save-creds --folder <repo root> --project-id " +
-      "<projectId> --backend-url <backendUrl> --ingress-url <ingressUrl>`, which writes the gitignored " +
-      ".testchimp/mcp.json that TestChimp Studio and the skill read. Not needed with an API key (stdio already " +
-      "has it). Never print projectApiKey.",
+      "connection's project (the MCP URL's ?projectId= when set, else the one picked on the consent page). " +
+      "To persist the runner key without echoing it, prefer save-workspace-creds (stdio MCP) or " +
+      "`testchimp workspace save-creds --folder <repo> --project-id <id>` (fetches the key using existing auth; " +
+      "do not put the key in a command). This tool still returns projectApiKey for callers that need it. " +
+      "Not needed with an API key (stdio already has it). Never print projectApiKey.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) =>
       withPublicHosts(await postMcp("/api/mcp/get_project_credentials", {})),
+  },
+  {
+    kebab: "save-workspace-creds",
+    description:
+      "Save the project API key for local runners in <folder>/.testchimp/mcp.json (Studio format: mode 0600, " +
+      "dir 0700, .testchimp/ gitignored) and map the folder in ~/.testchimp/projects.json. Fetches the key with " +
+      "the current MCP auth — do not pass the key, and the response never includes it. Preferred over " +
+      "get-project-credentials + a shell command. Hosted mcp.testchimp.io cannot write your laptop: run " +
+      "`testchimp workspace save-creds --folder <repo> --project-id <id>` there instead (it fetches the key).",
+    inputSchema: S.saveWorkspaceCredsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.saveWorkspaceCredsInput>;
+      const creds = await fetchProjectCredentials(postMcp);
+      const projectId = a.projectId?.trim() || creds.projectId;
+      if (a.projectId?.trim() && a.projectId.trim() !== creds.projectId) {
+        throw new Error(
+          `save-workspace-creds: --project-id ${a.projectId.trim()} does not match the signed-in project ${creds.projectId}`,
+        );
+      }
+      const backendUrl = a.backendUrl?.trim()
+        ? httpAbsoluteUrl("backendUrl", a.backendUrl)
+        : creds.backendUrl || publicHosts().backendUrl;
+      const ingressUrl = a.ingressUrl?.trim()
+        ? httpAbsoluteUrl("ingressUrl", a.ingressUrl)
+        : creds.ingressUrl;
+      try {
+        const result = persistWorkspaceCreds(
+          a.folder,
+          { apiKey: creds.projectApiKey, projectId, backendUrl, ingressUrl },
+          {
+            reassign: a.reassign === true,
+            projectName: a.projectName?.trim() || creds.projectName,
+          },
+        );
+        return JSON.stringify(result);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.startsWith("NOT_FOUND:") && currentRequestAuth()?.isolated === true) {
+          throw new Error(
+            `${msg}. The hosted MCP server cannot write your laptop's repo. On the machine that has the repo, run: ` +
+              `testchimp workspace save-creds --folder <repo> --project-id ${projectId} ` +
+              `(it fetches the key using TESTCHIMP_OAUTH_TOKEN or TESTCHIMP_API_KEY; do not pass the key on the command line).`,
+          );
+        }
+        throw e;
+      }
+    },
   },
   {
     kebab: "get-bot-profile",

@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, it } from "node:test";
 import { runWithRequestAuth, TestChimpHttpError } from "./client.js";
 import { buildAgentTraceabilityPayload } from "./agentTraceability.js";
 import { annotationsForTool, TOOL_ANNOTATIONS } from "./toolAnnotations.js";
-import { getToolDefinition, runTool, TOOL_DEFINITIONS } from "./tools.js";
+import { PROJECT_INIT_STATUS_INPUT_KEYS } from "./schemas.js";
+import { getToolDefinition, parseProjectCredentialsJson, runTool, TOOL_DEFINITIONS } from "./tools.js";
+import { workspaceMcpJsonPath } from "../workspace/workspaceCredsFile.js";
 
 const runtimeObservation = {
   windowStartMillis: "1789497600000",
@@ -545,5 +550,170 @@ describe("TESTCHIMP_USER_ID env fallback", () => {
       assert.equal(isolated?.userId, undefined);
       assert.equal(isolated?.workflowId, "wf-1");
     });
+  });
+});
+
+describe("update-project-init-status schema", () => {
+  async function capture(status: Record<string, unknown>) {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool(
+      "update-project-init-status",
+      { status },
+      {
+        postMcp: async (path, body) => {
+          request = { path, body };
+          return "{}";
+        },
+      },
+    );
+    return request;
+  }
+
+  it("forwards snake_case keys and advertises only those keys", async () => {
+    assert.deepEqual(PROJECT_INIT_STATUS_INPUT_KEYS, [
+      "platform_comms",
+      "folder_mapping",
+      "connect_to_test_env",
+      "ci_wiring",
+      "import_plans",
+      "import_tests",
+      "smoke_validation",
+    ]);
+    const def = getToolDefinition("update-project-init-status");
+    const shape = (def?.inputSchema as { shape?: { status?: { shape?: Record<string, unknown> } } }).shape?.status
+      ?.shape;
+    assert.deepEqual(Object.keys(shape ?? {}).sort(), [...PROJECT_INIT_STATUS_INPUT_KEYS].sort());
+    assert.equal("platformComms" in (shape ?? {}), false);
+    assert.equal("overallComplete" in (shape ?? {}), false);
+    assert.equal("overall_complete" in (shape ?? {}), false);
+    assert.match(def?.description ?? "", /snake_case/);
+    assert.match(def?.description ?? "", /platform_comms/);
+    assert.match(def?.description ?? "", /camelCase aliases \(platformComms/);
+
+    assert.deepEqual(
+      await capture({
+        platform_comms: "DONE",
+        folder_mapping: "PROJECT_INIT_ITEM_STATUS_DONE",
+        connect_to_test_env: "SKIPPED",
+      }),
+      {
+        path: "/api/mcp/update_project_init_status",
+        body: {
+          status: {
+            platform_comms: "DONE",
+            folder_mapping: "PROJECT_INIT_ITEM_STATUS_DONE",
+            connect_to_test_env: "SKIPPED",
+          },
+        },
+      },
+    );
+  });
+
+  it("rejects camelCase, overall_complete, and other unknown keys", async () => {
+    await assert.rejects(
+      capture({ platformComms: "DONE" }),
+      /Invalid input[\s\S]*platformComms|unrecognized key/i,
+    );
+    await assert.rejects(
+      capture({ folderMapping: "DONE", platform_comms: "DONE" }),
+      /Invalid input/,
+    );
+    await assert.rejects(capture({ overall_complete: "DONE" }), /Invalid input/);
+    await assert.rejects(capture({ overallComplete: "DONE" }), /Invalid input/);
+    await assert.rejects(capture({ not_a_real_item: "DONE" }), /Invalid input/);
+  });
+});
+
+describe("save-workspace-creds", () => {
+  const KEY = "fake-project-key-0001";
+  const PROJECT = "proj-fixture-1";
+  let root: string;
+  const homes: string[] = [];
+
+  afterEach(() => {
+    if (root) rmSync(root, { recursive: true, force: true });
+    for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+    delete process.env.TESTCHIMP_HOME;
+  });
+
+  it("writes .testchimp/mcp.json from fetched credentials and never returns the key", async () => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "tc-save-ws-")));
+    const home = mkdtempSync(join(tmpdir(), "tc-save-ws-home-"));
+    homes.push(home);
+    process.env.TESTCHIMP_HOME = home;
+    mkdirSync(join(root, "repo"));
+    const repo = join(root, "repo");
+
+    let fetched = 0;
+    const out = JSON.parse(
+      await runTool(
+        "save-workspace-creds",
+        { folder: repo, projectName: "Shop" },
+        {
+          postMcp: async (path) => {
+            assert.equal(path, "/api/mcp/get_project_credentials");
+            fetched += 1;
+            return JSON.stringify({
+              projectId: PROJECT,
+              projectName: "Shop",
+              projectApiKey: KEY,
+              userId: "u1",
+            });
+          },
+        },
+      ),
+    );
+    assert.equal(fetched, 1);
+    assert.equal(out.status, "written");
+    assert.equal(out.projectId, PROJECT);
+    assert.equal(out.folder, realpathSync(repo));
+    assert.ok(!JSON.stringify(out).includes(KEY));
+    const mcpPath = workspaceMcpJsonPath(repo);
+    assert.equal(statSync(mcpPath).mode & 0o777, 0o600);
+    assert.equal(statSync(dirname(mcpPath)).mode & 0o777, 0o700);
+    const written = JSON.parse(readFileSync(mcpPath, "utf8"));
+    assert.equal(written.mcpServers.testchimp.env.TESTCHIMP_API_KEY, KEY);
+    assert.equal(written.mcpServers.testchimp.env.TESTCHIMP_PROJECT_ID, PROJECT);
+    assert.equal(existsSync(join(repo, ".gitignore")), true);
+  });
+
+  it("rejects a projectId that does not match the signed-in project", async () => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "tc-save-ws-")));
+    await assert.rejects(
+      runTool(
+        "save-workspace-creds",
+        { folder: root, projectId: "other-proj" },
+        {
+          postMcp: async () => JSON.stringify({ projectId: PROJECT, projectApiKey: KEY }),
+        },
+      ),
+      /does not match the signed-in project/,
+    );
+    assert.equal(existsSync(workspaceMcpJsonPath(root)), false);
+  });
+
+  it("explains hosted MCP cannot write a missing laptop path", async () => {
+    await assert.rejects(
+      runWithRequestAuth({ isolated: true, bearerToken: "t" }, () =>
+        runTool(
+          "save-workspace-creds",
+          { folder: join(tmpdir(), "tc-missing-repo-path-da23") },
+          {
+            postMcp: async () => JSON.stringify({ projectId: PROJECT, projectApiKey: KEY }),
+          },
+        ),
+      ),
+      /hosted MCP server cannot write/,
+    );
+  });
+
+  it("parseProjectCredentialsJson never interpolates the key into errors", () => {
+    assert.throws(() => parseProjectCredentialsJson("not json"), /non-JSON/);
+    assert.throws(() => parseProjectCredentialsJson("{}"), /did not return projectApiKey/);
+    const creds = parseProjectCredentialsJson(
+      JSON.stringify({ projectId: PROJECT, projectApiKey: KEY, backendUrl: "https://featureservice.testchimp.io" }),
+    );
+    assert.equal(creds.projectApiKey, KEY);
+    assert.equal(creds.projectId, PROJECT);
   });
 });

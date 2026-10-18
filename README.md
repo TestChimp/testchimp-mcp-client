@@ -93,12 +93,16 @@ The byte-level format is pinned by `fixtures/projects-registry/`, with an identi
 Local runners (the Playwright reporter, this CLI, k6) need the project API key in their environment. TestChimp Studio keeps it in `<repo>/.testchimp/mcp.json`; remote MCP (OAuth) users write the same file once per repo:
 
 ```bash
-# projectApiKey / projectId / backendUrl / ingressUrl from the get-project-credentials MCP tool
-printf '%s' "$KEY" | testchimp workspace save-creds --folder . --project-id <id> \
+# Recommended: omit the key (fetches via TESTCHIMP_OAUTH_TOKEN, or copies TESTCHIMP_API_KEY)
+testchimp workspace save-creds --folder . --project-id <id> \
   [--project-name "Shop"] [--backend-url <backendUrl>] [--ingress-url <ingressUrl>] [--reassign]
+
+# Agents: MCP tool save-workspace-creds { folder, projectId? } — never returns the key
+# Legacy: pipe the key on stdin (never as a command-line argument)
+printf '%s' "$KEY" | testchimp workspace save-creds --folder . --project-id <id>
 ```
 
-- The key is read from stdin only, never from an argument, and is never printed.
+- Recommended form never puts the key in a command. Legacy stdin still works. The key is never printed.
 - The file uses Studio's exact format (pinned by `fixtures/workspace-mcp-json/`, mirrored in the Studio repo): mode `0600` in a `0700` `.testchimp/` directory, other servers in the file kept, `.testchimp/` added to `.gitignore`. The folder is also mapped in `projects.json` like `workspace map`.
 - An existing entry for the same project is kept as is (including Studio's managed binary); only a changed key is refreshed. Another project's entry is refused unless `--reassign`.
 
@@ -147,7 +151,7 @@ testchimp mcp --http [--port 8080] [--host 0.0.0.0]
 
 Stateless Streamable HTTP at `POST /mcp`. Every request must carry `Authorization: Bearer <OAuth access token>`; the caller's token is forwarded to TestChimp for each tool call, and the server's own `TESTCHIMP_API_KEY` / `TESTCHIMP_OAUTH_TOKEN` / `TESTCHIMP_BOT_ID` are never used. Requests without a bearer get `401` with `WWW-Authenticate: Bearer resource_metadata="…"`. Other endpoints: `GET /.well-known/oauth-protected-resource` (RFC 9728 metadata), `GET /healthz`. Request bodies are capped at 1 MB.
 
-**Per-project URLs.** `POST /mcp?projectId=<id>` scopes every tool call to that project: it is sent as `TestChimp-Project-Id`, and TestChimp checks that the token's user is a member (an explicit `projectApiKey` argument still wins). Commit one URL per repo (e.g. `{"url": "https://mcp.testchimp.io/mcp?projectId=<id>"}`); the same sign-in works for every project. The 401 challenge and the protected-resource metadata echo the query, so the advertised `resource` matches the configured URL. Plain `/mcp` keeps using the project picked on the consent page. Local runners get the project key with `get-project-credentials` piped to `testchimp workspace save-creds` (see [Workspace folder mapping](#workspace-folder-mapping)).
+**Per-project URLs.** `POST /mcp?projectId=<id>` scopes every tool call to that project: it is sent as `TestChimp-Project-Id`, and TestChimp checks that the token's user is a member (an explicit `projectApiKey` argument still wins). Commit one URL per repo (e.g. `{"url": "https://mcp.testchimp.io/mcp?projectId=<id>"}`); the same sign-in works for every project. The 401 challenge and the protected-resource metadata echo the query, so the advertised `resource` matches the configured URL. Plain `/mcp` keeps using the project picked on the consent page. Local runners get the project key with the `save-workspace-creds` MCP tool (stdio) or `testchimp workspace save-creds --folder <repo> --project-id <id>` (see [Workspace folder mapping](#workspace-folder-mapping)).
 
 | Variable | Purpose |
 |---|---|

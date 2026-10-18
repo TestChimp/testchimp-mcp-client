@@ -226,13 +226,14 @@ describe("testchimp workspace save-creds (CLI)", () => {
     assert.equal(JSON.parse(again.stdout).status, "unchanged");
   });
 
-  it("requires the key on stdin and refuses another project without --reassign", () => {
+  it("requires a key source and refuses another project without --reassign", () => {
     const home = join(root, "home");
     const repo = join(root, "repo");
     mkdirSync(repo);
     const empty = run(["--folder", repo, "--project-id", PROJECT], "", home);
     assert.equal(empty.status, 1);
-    assert.match(empty.stderr, /stdin/);
+    assert.match(empty.stderr, /stdin|save-workspace-creds|TESTCHIMP_OAUTH_TOKEN/);
+    assert.ok(!empty.stderr.includes(KEY));
     assert.equal(existsSync(workspaceMcpJsonPath(repo)), false);
 
     assert.equal(run(["--folder", repo, "--project-id", PROJECT], KEY, home).status, 0);
@@ -258,6 +259,84 @@ describe("testchimp workspace save-creds (CLI)", () => {
     );
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readFileSync(workspaceMcpJsonPath(repo), "utf8"), fixture("expected-fresh-staging.json"));
+  });
+
+  it("copies TESTCHIMP_API_KEY from the environment when stdin is empty", () => {
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    const env: NodeJS.ProcessEnv = { ...process.env, TESTCHIMP_HOME: home, TESTCHIMP_API_KEY: KEY };
+    delete env.TESTCHIMP_OAUTH_TOKEN;
+    delete env.TESTCHIMP_BACKEND_URL;
+    delete env.TESTCHIMP_INGRESS_URL;
+    const r = spawnSync(
+      process.execPath,
+      [cliBin, "workspace", "save-creds", "--folder", repo, "--project-id", PROJECT],
+      { env, input: "", encoding: "utf8" },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!r.stdout.includes(KEY) && !r.stderr.includes(KEY));
+    assert.equal(readFileSync(workspaceMcpJsonPath(repo), "utf8"), fixture("expected-fresh-prod.json"));
+  });
+
+  it("fetches the key with TESTCHIMP_OAUTH_TOKEN when stdin and TESTCHIMP_API_KEY are empty", async () => {
+    const { createServer } = await import("node:http");
+    const { spawn } = await import("node:child_process");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    const seen: Array<string | undefined> = [];
+    const server = createServer((req, res) => {
+      seen.push(req.headers.authorization);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ projectId: PROJECT, projectName: "Shop", projectApiKey: KEY }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        TESTCHIMP_HOME: home,
+        TESTCHIMP_OAUTH_TOKEN: "oauth-jwt",
+        TESTCHIMP_BACKEND_URL: `http://127.0.0.1:${port}`,
+      };
+      delete env.TESTCHIMP_API_KEY;
+      delete env.TESTCHIMP_INGRESS_URL;
+      const r = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolveRun) => {
+        const child = spawn(
+          process.execPath,
+          [
+            cliBin, "workspace", "save-creds",
+            "--folder", repo, "--project-id", PROJECT, "--project-name", "Shop",
+            "--backend-url", "https://featureservice.testchimp.io",
+            "--ingress-url", "https://ingress.testchimp.io",
+          ],
+          { env },
+        );
+        child.stdin.end();
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (d) => (stdout += String(d)));
+        child.stderr.on("data", (d) => (stderr += String(d)));
+        child.on("close", (status) => resolveRun({ status, stdout, stderr }));
+      });
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(seen, ["Bearer oauth-jwt"]);
+      assert.ok(!r.stdout.includes(KEY) && !r.stderr.includes(KEY));
+      assert.equal(JSON.parse(r.stdout).status, "written");
+      assert.equal(readFileSync(workspaceMcpJsonPath(repo), "utf8"), fixture("expected-fresh-prod.json"));
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it("documents the recommended no-key form in --help", () => {
+    const r = spawnSync(process.execPath, [cliBin, "workspace", "save-creds", "--help"], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Recommended/);
+    assert.match(r.stdout, /save-workspace-creds/);
+    assert.match(r.stdout, /stdin/);
+    assert.doesNotMatch(r.stdout, /--api-key/);
   });
 
   it("derives the ingress from --backend-url rather than an exported ingress", () => {

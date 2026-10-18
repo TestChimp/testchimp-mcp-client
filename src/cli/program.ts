@@ -2315,10 +2315,11 @@ export function buildCliProgram(): Command {
   workspace
     .command("save-creds")
     .description(
-      "Save the project API key for local runners (Playwright reporter, CLI, k6) in <folder>/.testchimp/mcp.json, " +
-        "the gitignored file TestChimp Studio writes (mode 0600; .testchimp/ added to .gitignore; other servers kept), " +
-        "and map the folder in ~/.testchimp/projects.json. The key is read from stdin (e.g. projectApiKey from " +
-        "get-project-credentials), never from an argument. Remote MCP users run this once per repo.",
+      "Save the project API key for local runners (Playwright reporter, CLI, k6) in <folder>/.testchimp/mcp.json " +
+        "(Studio format: mode 0600, .testchimp/ gitignored, other servers kept) and map the folder in ~/.testchimp/projects.json. " +
+        "Recommended: omit the key — this command fetches it with TESTCHIMP_OAUTH_TOKEN or copies TESTCHIMP_API_KEY already " +
+        "in the environment: `testchimp workspace save-creds --folder <repo> --project-id <id>`. Agents should prefer the " +
+        "save-workspace-creds MCP tool (never prints the key). Legacy: pipe the key on stdin (never as a command-line argument).",
     )
     .requiredOption("--folder <path>", "Repository root folder")
     .requiredOption("--project-id <id>", "TestChimp project id")
@@ -2329,11 +2330,19 @@ export function buildCliProgram(): Command {
       "Ingress URL for runners (default: derived from --backend-url; without it TESTCHIMP_INGRESS_URL, else derived from the backend)",
     )
     .option("--reassign", "Replace another project's key in this folder and move the folder mapping to this project")
+    .addHelpText(
+      "after",
+      "\nKey source (never pass the key as a command-line argument):\n" +
+        "  Recommended  omit the key; fetches via get-project-credentials when TESTCHIMP_OAUTH_TOKEN is set,\n" +
+        "               or copies TESTCHIMP_API_KEY from the environment\n" +
+        "  Agents       MCP tool save-workspace-creds --folder <repo> (optional projectId)\n" +
+        "  Legacy       printf '%s' \"$KEY\" | testchimp workspace save-creds --folder <repo> --project-id <id>\n",
+    )
     .action(async (opts) => {
-      const { planWorkspaceCreds, writePlannedWorkspaceCreds } = await import("../workspace/workspaceCredsFile.js");
-      const { upsertWorkspaceFolder } = await import("../workspace/projectsRegistry.js");
+      const { persistWorkspaceCreds } = await import("../workspace/workspaceCredsFile.js");
       const { getBackendUrl, getIngressUrl } = await import("../core/client.js");
       const { ingressUrlForBackend } = await import("../agentwatch/connect.js");
+      const { parseProjectCredentialsJson } = await import("../core/tools.js");
       const httpUrl = (flag: string, value: unknown): string => {
         const raw = String(value).trim();
         let parsed: URL;
@@ -2346,25 +2355,63 @@ export function buildCliProgram(): Command {
         return raw.replace(/\/+$/, "");
       };
       try {
-        const key = process.stdin.isTTY ? "" : (await readStdinText()).trim();
-        if (!key) throw new Error("Pipe the project API key on stdin (never pass it as an argument)");
+        const stdinKey = process.stdin.isTTY ? "" : (await readStdinText()).trim();
+        const envKey = process.env.TESTCHIMP_API_KEY?.trim() ?? "";
         const projectId = String(opts.projectId).trim();
-        const backendUrl = opts.backendUrl ? httpUrl("--backend-url", opts.backendUrl) : getBackendUrl();
+        let key = stdinKey;
+        let fetched:
+          | { projectId: string; projectName?: string; backendUrl?: string; ingressUrl?: string }
+          | undefined;
+        if (!key && envKey) {
+          key = envKey;
+        }
+        if (!key) {
+          if (!process.env.TESTCHIMP_OAUTH_TOKEN?.trim()) {
+            throw new Error(
+              "No project API key on stdin or TESTCHIMP_API_KEY. Recommended: " +
+                "`testchimp workspace save-creds --folder <repo> --project-id <id>` with " +
+                "TESTCHIMP_OAUTH_TOKEN or TESTCHIMP_API_KEY set (do not pass the key as an argument). " +
+                "Agents: call the save-workspace-creds MCP tool. Legacy: pipe the key on stdin.",
+            );
+          }
+          try {
+            const raw = await runTool("get-project-credentials", {}, { postMcp });
+            const creds = parseProjectCredentialsJson(raw);
+            if (creds.projectId !== projectId) {
+              throw new Error(
+                `get-project-credentials returned project ${creds.projectId} but --project-id is ${projectId}`,
+              );
+            }
+            key = creds.projectApiKey;
+            fetched = creds;
+          } catch (e: unknown) {
+            if (e instanceof Error && e.message.startsWith("get-project-credentials returned project")) throw e;
+            const detail = e instanceof Error ? e.message : String(e);
+            throw new Error(
+              `Fetching the project API key failed (${detail}). ` +
+                "Agents: call the save-workspace-creds MCP tool. Legacy: pipe the key on stdin.",
+            );
+          }
+        }
+        const backendUrl = opts.backendUrl
+          ? httpUrl("--backend-url", opts.backendUrl)
+          : fetched?.backendUrl || getBackendUrl();
         const ingressUrl = opts.ingressUrl
           ? httpUrl("--ingress-url", opts.ingressUrl)
-          : !opts.backendUrl && process.env.TESTCHIMP_INGRESS_URL?.trim()
-            ? getIngressUrl()
-            : ingressUrlForBackend(backendUrl);
-        const reassign = opts.reassign === true;
-        const plan = planWorkspaceCreds(String(opts.folder), { apiKey: key, projectId, backendUrl, ingressUrl }, { reassign });
-        upsertWorkspaceFolder({
-          projectId,
-          projectName: opts.projectName != null ? String(opts.projectName).trim() || undefined : undefined,
-          rootPath: plan.root,
-          reassign,
-        });
-        const result = writePlannedWorkspaceCreds(plan);
-        console.log(JSON.stringify({ projectId, ...result }, null, 2));
+          : opts.backendUrl
+            ? ingressUrlForBackend(backendUrl)
+            : fetched?.ingressUrl ||
+              (process.env.TESTCHIMP_INGRESS_URL?.trim() ? getIngressUrl() : ingressUrlForBackend(backendUrl));
+        const result = persistWorkspaceCreds(
+          String(opts.folder),
+          { apiKey: key, projectId, backendUrl, ingressUrl },
+          {
+            reassign: opts.reassign === true,
+            projectName:
+              opts.projectName != null ? String(opts.projectName).trim() || undefined : fetched?.projectName,
+          },
+        );
+        console.log(JSON.stringify(result, null, 2));
       } catch (e: unknown) {
         console.error(`[testchimp workspace save-creds] ${e instanceof Error ? e.message : String(e)}`);
         process.exitCode = 1;

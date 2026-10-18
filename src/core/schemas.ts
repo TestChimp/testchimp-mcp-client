@@ -343,16 +343,19 @@ const projectInitItemStatusSchema = z.enum([
   "NOT_APPLICABLE",
 ]);
 
+/** Backend proto JSON field names. camelCase aliases are not honoured and must not be advertised. */
+export const PROJECT_INIT_STATUS_INPUT_KEYS = [
+  "platform_comms",
+  "folder_mapping",
+  "connect_to_test_env",
+  "ci_wiring",
+  "import_plans",
+  "import_tests",
+  "smoke_validation",
+] as const;
+
 export const projectInitStatusSchema = z
   .object({
-    platformComms: projectInitItemStatusSchema.optional(),
-    folderMapping: projectInitItemStatusSchema.optional(),
-    connectToTestEnv: projectInitItemStatusSchema.optional(),
-    ciWiring: projectInitItemStatusSchema.optional(),
-    importPlans: projectInitItemStatusSchema.optional(),
-    importTests: projectInitItemStatusSchema.optional(),
-    smokeValidation: projectInitItemStatusSchema.optional(),
-    overallComplete: projectInitItemStatusSchema.optional(),
     platform_comms: projectInitItemStatusSchema.optional(),
     folder_mapping: projectInitItemStatusSchema.optional(),
     connect_to_test_env: projectInitItemStatusSchema.optional(),
@@ -360,12 +363,39 @@ export const projectInitStatusSchema = z
     import_plans: projectInitItemStatusSchema.optional(),
     import_tests: projectInitItemStatusSchema.optional(),
     smoke_validation: projectInitItemStatusSchema.optional(),
-    overall_complete: projectInitItemStatusSchema.optional(),
   })
-  .passthrough();
+  .strict()
+  .describe(
+    "Partial ProjectInitStatus. Snake_case keys only: platform_comms, folder_mapping, connect_to_test_env, " +
+      "ci_wiring, import_plans, import_tests, smoke_validation. overall_complete is server-computed — do not send it. " +
+      "camelCase keys (platformComms, folderMapping, …) are rejected.",
+  );
 
 export const updateProjectInitStatusInput = z.object({
   status: projectInitStatusSchema,
+});
+
+export const saveWorkspaceCredsInput = z.object({
+  folder: z
+    .string()
+    .min(1)
+    .describe(
+      "Repository root on the machine running this MCP server. Writes <folder>/.testchimp/mcp.json (mode 0600, dir 0700) " +
+        "and maps the folder in ~/.testchimp/projects.json. Hosted mcp.testchimp.io cannot write your laptop — use " +
+        "`testchimp workspace save-creds --folder <repo> --project-id <id>` there (it fetches the key; do not pass it).",
+    ),
+  projectId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .optional()
+    .describe("Defaults to the connection's project from get-project-credentials."),
+  projectName: z.string().optional(),
+  backendUrl: z.string().optional(),
+  ingressUrl: z.string().optional(),
+  reassign: z
+    .boolean()
+    .optional()
+    .describe("Replace another project's key in this folder and move the folder mapping to this project."),
 });
 
 export const updateGitFolderMappingInput = z.object({
