@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { runWithRequestAuth, TestChimpHttpError } from "./client.js";
 import { buildAgentTraceabilityPayload } from "./agentTraceability.js";
-import { getToolDefinition, runTool } from "./tools.js";
+import { annotationsForTool, TOOL_ANNOTATIONS } from "./toolAnnotations.js";
+import { getToolDefinition, runTool, TOOL_DEFINITIONS } from "./tools.js";
 
 const runtimeObservation = {
   windowStartMillis: "1789497600000",
@@ -19,6 +20,34 @@ const runtimeObservation = {
   status5xxCount: "2000",
   syncStatus: "OBSERVABILITY_SYNC_SUCCESS",
 };
+
+describe("MCP tool annotations", () => {
+  it("covers every registered tool with title and all four hints", () => {
+    const defined = TOOL_DEFINITIONS.map((t) => t.kebab).sort();
+    const annotated = Object.keys(TOOL_ANNOTATIONS).sort();
+    assert.deepEqual(
+      annotated,
+      defined,
+      `annotation keys must match TOOL_DEFINITIONS (annotated=${annotated.length}, defined=${defined.length})`,
+    );
+    assert.ok(defined.length > 0, "expected registered tools");
+    for (const def of TOOL_DEFINITIONS) {
+      const annotations = annotationsForTool(def.kebab);
+      assert.match(annotations.title, /\S/, `${def.kebab} title is blank`);
+      assert.equal(typeof annotations.readOnlyHint, "boolean", `${def.kebab} readOnlyHint`);
+      assert.equal(typeof annotations.destructiveHint, "boolean", `${def.kebab} destructiveHint`);
+      assert.equal(typeof annotations.idempotentHint, "boolean", `${def.kebab} idempotentHint`);
+      assert.equal(typeof annotations.openWorldHint, "boolean", `${def.kebab} openWorldHint`);
+      if (annotations.readOnlyHint) {
+        assert.equal(annotations.destructiveHint, false, `${def.kebab} is read-only but destructiveHint is true`);
+      }
+    }
+  });
+
+  it("fails loudly when a tool has no annotations", () => {
+    assert.throws(() => annotationsForTool("not-a-real-tool"), /Missing MCP tool annotations for not-a-real-tool/);
+  });
+});
 
 describe("API operation observability", () => {
   it("preserves daily observability summaries when listing operations", async () => {
