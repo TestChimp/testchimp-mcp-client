@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { after, afterEach, before, describe, it } from "node:test";
 import { TOOL_ANNOTATIONS } from "../core/toolAnnotations.js";
+import { HOSTED_OMITTED_TOOLS } from "./server.js";
 import { createMcpHttpServer, isExpiredJwt, resetAuthServerMetadataCache } from "./httpServer.js";
 
 const originalFetch = globalThis.fetch;
@@ -326,7 +327,8 @@ describe("remote MCP over HTTP", () => {
       };
     };
     const tools = payload.result?.tools ?? [];
-    assert.equal(tools.length, Object.keys(TOOL_ANNOTATIONS).length);
+    assert.equal(tools.length, Object.keys(TOOL_ANNOTATIONS).length - HOSTED_OMITTED_TOOLS.size);
+    assert.ok(!tools.some((t) => HOSTED_OMITTED_TOOLS.has(t.name)), "hosted tools/list must omit laptop-write tools");
     for (const tool of tools) {
       const expected = TOOL_ANNOTATIONS[tool.name];
       assert.ok(expected, `${tool.name} is registered but missing from TOOL_ANNOTATIONS`);

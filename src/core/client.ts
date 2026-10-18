@@ -101,7 +101,7 @@ export function requireApiKey(): string {
   const k = process.env.TESTCHIMP_API_KEY?.trim();
   if (!k) {
     throw new Error(
-      "TESTCHIMP_API_KEY is required. Set it in your project MCP config env (e.g. Cursor .cursor/mcp.json), then export it in the shell for CLI, or rely on the IDE for MCP. Remote MCP (OAuth) users: save it once per repo with get-project-credentials piped to `testchimp workspace save-creds`."
+      "TESTCHIMP_API_KEY is required. Set it in your project MCP config env (e.g. Cursor .cursor/mcp.json), then export it in the shell for CLI, or rely on the IDE for MCP. Remote MCP (OAuth) users: call get-project-credentials and write <repo>/.testchimp/mcp.json (mode 0600) with a file-write tool — never put the key in a shell command. Local stdio MCP: save-workspace-creds."
     );
   }
   return k;
