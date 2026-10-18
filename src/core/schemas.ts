@@ -381,6 +381,14 @@ export const updateGitFolderMappingInput = z.object({
   repository_full_name: z.string().optional(),
 });
 
+export const inviteTeamMembersInput = z.object({
+  emails: z
+    .array(z.string().min(3).max(254))
+    .min(1)
+    .max(20)
+    .describe("Teammate email addresses to invite (max 20 per call)."),
+});
+
 export const getBranchSpecificEndpointConfigInput = z.object({
   branchName: z.string().optional(),
 });
@@ -1007,6 +1015,20 @@ export const listWorkflowExecutionsInput = z.object({
   workflowId: z.string().optional(),
   limit: z.coerce.number().int().positive().max(200).optional(),
   offset: z.coerce.number().int().nonnegative().optional(),
+  pendingApprovalOnly: z.boolean().optional().describe("Only PENDING_INVOKE_APPROVAL / PLANNED executions."),
+  assignedToMeOnly: z
+    .boolean()
+    .optional()
+    .describe("Only executions assigned to the calling user (OAuth user, or the bot's owner with --bot)."),
+});
+
+const assigneeRef = z.string().min(1).max(254);
+
+export const updateWorkflowExecutionAssigneesInput = z.object({
+  workflowExecutionId: z.string().min(1),
+  assignee: assigneeRef.optional().describe("New assignee: team member user id or email."),
+  addCc: z.array(assigneeRef).max(20).optional().describe("User ids or emails to CC."),
+  removeCc: z.array(z.string().min(1)).max(20).optional().describe("User ids to remove from CC."),
 });
 
 export const getWorkflowExecutionInput = z.object({

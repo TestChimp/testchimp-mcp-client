@@ -1,6 +1,15 @@
 import { type z, type ZodTypeAny } from "zod";
 import { normalizeScope } from "./normalize.js";
-import { postIngress, TestChimpHttpError, type PostIngressFn, type PostMcpFn } from "./client.js";
+import { ingressUrlForBackend } from "../agentwatch/connect.js";
+import {
+  currentRequestAuth,
+  getBackendUrl,
+  getIngressUrl,
+  postIngress,
+  TestChimpHttpError,
+  type PostIngressFn,
+  type PostMcpFn,
+} from "./client.js";
 import { runProvisionEphemeralEnvironmentAndWait, type ProgressLog } from "./ephemeralWait.js";
 import * as S from "./schemas.js";
 import { resolveGitHeadSha } from "./gitSha.js";
@@ -211,6 +220,37 @@ async function loadRequirementQualityReportJson(
   return {};
 }
 
+/**
+ * Hosts local runners should use with the returned key. TESTCHIMP_PUBLIC_* override the upstream URLs for
+ * deployments (remote MCP) that reach TestChimp over internal addresses.
+ */
+export function publicHosts(): { backendUrl: string; ingressUrl?: string } {
+  const publicBackend = process.env.TESTCHIMP_PUBLIC_BACKEND_URL?.trim();
+  const backendUrl = (publicBackend || getBackendUrl()).replace(/\/+$/, "");
+  let derived: string | undefined;
+  try {
+    derived = ingressUrlForBackend(backendUrl);
+  } catch {
+    derived = undefined;
+  }
+  const ingress =
+    process.env.TESTCHIMP_PUBLIC_INGRESS_URL?.trim() ||
+    (!publicBackend && process.env.TESTCHIMP_INGRESS_URL?.trim() ? getIngressUrl() : derived);
+  return ingress ? { backendUrl, ingressUrl: ingress.replace(/\/+$/, "") } : { backendUrl };
+}
+
+function withPublicHosts(json: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return json;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json;
+  return JSON.stringify({ ...(parsed as Record<string, unknown>), ...publicHosts() });
+}
+
+/** Every kebab here must have an entry in TOOL_ANNOTATIONS (enforced by tests and createMcpServer). */
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-org-capabilities",
@@ -1201,8 +1241,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const gitSha = resolveGitHeadSha(a.gitSha);
       if (gitSha) body.gitSha = gitSha;
       if (a.userId) body.userId = a.userId;
-      else if (!sessionId && process.env.TESTCHIMP_USER_ID) {
+      else if (!sessionId && currentRequestAuth()?.isolated !== true && process.env.TESTCHIMP_USER_ID) {
         // ChimpHands: server resolves responsible user from SESSION_ID; do not stamp service account.
+        // Isolated (remote multi-tenant HTTP): the server attributes to the OAuth token's user.
         body.userId = process.env.TESTCHIMP_USER_ID;
       }
       if (a.branchName) body.branchName = a.branchName;
@@ -1275,7 +1316,35 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.workflowId) body.workflowId = a.workflowId;
       if (a.limit != null) body.limit = a.limit;
       if (a.offset != null) body.offset = a.offset;
+      if (a.pendingApprovalOnly) body.pendingApprovalOnly = true;
+      if (a.assignedToMeOnly) body.assignedToMeOnly = true;
       return postMcp("/api/mcp/list_workflow_executions", body);
+    },
+  },
+  {
+    kebab: "update-workflow-execution-assignees",
+    description:
+      "Change the assignee and/or CC list of a workflow execution. The caller (OAuth user, or the bot's owner " +
+      "with --bot) must be the current assignee or an org admin (admin override needs OAuth, not --bot); anyone " +
+      "on the team may assign an unassigned execution, and a CC'd user may remove themselves. 409 means someone " +
+      "else changed it: re-read with get-workflow-execution and retry. Assignee / CC accept team member user ids or emails. New assignees and CC'd users get a " +
+      "workflow-execution-assigned bot event plus email/Slack per their notification settings. Only call after " +
+      "the user explicitly approved the change. Returns the updated execution.",
+    inputSchema: S.updateWorkflowExecutionAssigneesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.updateWorkflowExecutionAssigneesInput>;
+      const isEmail = (v: string) => v.includes("@");
+      const body: Record<string, unknown> = { workflowExecutionId: a.workflowExecutionId.trim() };
+      if (a.assignee) {
+        const v = a.assignee.trim();
+        body[isEmail(v) ? "assigneeEmail" : "assigneeUserId"] = v;
+      }
+      const cc = (a.addCc ?? []).map((v) => v.trim()).filter(Boolean);
+      if (cc.some((v) => !isEmail(v))) body.addCcUserIds = cc.filter((v) => !isEmail(v));
+      if (cc.some(isEmail)) body.addCcEmails = cc.filter(isEmail);
+      const remove = (a.removeCc ?? []).map((v) => v.trim()).filter(Boolean);
+      if (remove.length) body.removeCcUserIds = remove;
+      return postMcp("/api/mcp/update_workflow_execution_assignees", body);
     },
   },
   {
@@ -1536,6 +1605,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "invite-team-members",
+    description:
+      "Invite teammates (by email) to the TestChimp organization so they can access this project. Each invitee " +
+      "joins as a Viewer and gets a sign-up email. Needs an OAuth user session whose user is an org admin: QA bots " +
+      "call this MCP tool through the connector with their binding arguments (the CLI's --bot key can't invite). " +
+      "Returns a per-email outcome (INVITED, ALREADY_MEMBER, " +
+      "ALREADY_INVITED, FAILED with failureReason) and teamSettingsUrl for role changes / seats. Only call with " +
+      "emails the user explicitly confirmed.",
+    inputSchema: S.inviteTeamMembersInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.inviteTeamMembersInput>;
+      return postMcp("/api/mcp/invite_team_members", { emails: a.emails.map((e) => e.trim()) });
+    },
+  },
+  {
     kebab: "list-related-perf-tests",
     description:
       "Find JOURNEY and, by default, COMPOSITE performance tests related to scenario titles and/or TestChimp ids.",
@@ -1670,6 +1754,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "project name with your user before storing. Never print projectApiKey.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_bot_credentials", {}),
+  },
+  {
+    kebab: "get-project-credentials",
+    description:
+      "Normal (non-bot) OAuth connections: fetch the project key local test runners (Playwright reporter, CLI, " +
+      "k6) need. Returns {projectId, projectName, projectApiKey, userId, backendUrl, ingressUrl} for the " +
+      "connection's project (the MCP URL's ?projectId= when set, else the one picked on the consent page). Save it " +
+      "once per repo by piping projectApiKey to `testchimp workspace save-creds --folder <repo root> --project-id " +
+      "<projectId> --backend-url <backendUrl> --ingress-url <ingressUrl>`, which writes the gitignored " +
+      ".testchimp/mcp.json that TestChimp Studio and the skill read. Not needed with an API key (stdio already " +
+      "has it). Never print projectApiKey.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) =>
+      withPublicHosts(await postMcp("/api/mcp/get_project_credentials", {})),
   },
   {
     kebab: "get-bot-profile",

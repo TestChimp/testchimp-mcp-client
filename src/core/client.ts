@@ -101,7 +101,7 @@ export function requireApiKey(): string {
   const k = process.env.TESTCHIMP_API_KEY?.trim();
   if (!k) {
     throw new Error(
-      "TESTCHIMP_API_KEY is required. Set it in your project MCP config env (e.g. Cursor .cursor/mcp.json), then export it in the shell for CLI, or rely on the IDE for MCP."
+      "TESTCHIMP_API_KEY is required. Set it in your project MCP config env (e.g. Cursor .cursor/mcp.json), then export it in the shell for CLI, or rely on the IDE for MCP. Remote MCP (OAuth) users: save it once per repo with get-project-credentials piped to `testchimp workspace save-creds`."
     );
   }
   return k;
@@ -116,7 +116,16 @@ export interface RequestAuth {
   botId?: string;
   /** QA bot's own project API key (tool argument): names the project; the bearer names the user. */
   projectApiKey?: string;
+  /** Project named by the remote MCP URL (`?projectId=`); TestChimp checks the bearer's user is a member. */
+  projectId?: string;
   isolated: boolean;
+}
+
+const PROJECT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Same charset/length TestChimp accepts on the TestChimp-Project-Id header. */
+export function isValidProjectId(value: string): boolean {
+  return PROJECT_ID_PATTERN.test(value);
 }
 
 const requestAuthStorage = new AsyncLocalStorage<RequestAuth>();
@@ -166,6 +175,7 @@ export function buildRequestHeaders(): Record<string, string> {
     }
     headers.Authorization = `Bearer ${requestAuth.bearerToken}`;
     if (requestAuth.projectApiKey) headers["TestChimp-Api-Key"] = requestAuth.projectApiKey;
+    else if (requestAuth.projectId) headers["TestChimp-Project-Id"] = requestAuth.projectId;
     if (requestAuth.botId && isValidBotId(requestAuth.botId)) headers["bot-id"] = requestAuth.botId;
     return headers;
   }

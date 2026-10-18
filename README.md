@@ -88,6 +88,22 @@ testchimp workspace get --project-id <id>        # prints the mapping JSON; exit
 
 The byte-level format is pinned by `fixtures/projects-registry/`, with an identical copy in the Studio repo. Both test suites replay the same upsert sequences and compare the output bytes.
 
+### Project key for local runners (`workspace save-creds`)
+
+Local runners (the Playwright reporter, this CLI, k6) need the project API key in their environment. TestChimp Studio keeps it in `<repo>/.testchimp/mcp.json`; remote MCP (OAuth) users write the same file once per repo:
+
+```bash
+# projectApiKey / projectId / backendUrl / ingressUrl from the get-project-credentials MCP tool
+printf '%s' "$KEY" | testchimp workspace save-creds --folder . --project-id <id> \
+  [--project-name "Shop"] [--backend-url <backendUrl>] [--ingress-url <ingressUrl>] [--reassign]
+```
+
+- The key is read from stdin only, never from an argument, and is never printed.
+- The file uses Studio's exact format (pinned by `fixtures/workspace-mcp-json/`, mirrored in the Studio repo): mode `0600` in a `0700` `.testchimp/` directory, other servers in the file kept, `.testchimp/` added to `.gitignore`. The folder is also mapped in `projects.json` like `workspace map`.
+- An existing entry for the same project is kept as is (including Studio's managed binary); only a changed key is refreshed. Another project's entry is refused unless `--reassign`.
+
+**Fallback:** when neither `TESTCHIMP_API_KEY` nor `TESTCHIMP_OAUTH_TOKEN` is set, the CLI reads `TESTCHIMP_API_KEY`, `TESTCHIMP_PROJECT_ID`, `TESTCHIMP_BACKEND_URL` and `TESTCHIMP_INGRESS_URL` from the nearest `.testchimp/mcp.json` at or above the current directory. Exported variables always win, and `--bot` bindings are unaffected. The file must be private to you (mode 0600, as Studio and `save-creds` write it); a group- or world-readable copy, such as one committed to a cloned repo, is ignored with a warning. Other runners (Playwright, k6) still need the variables exported in their own shell.
+
 ## QA bots
 
 ```bash
@@ -131,12 +147,15 @@ testchimp mcp --http [--port 8080] [--host 0.0.0.0]
 
 Stateless Streamable HTTP at `POST /mcp`. Every request must carry `Authorization: Bearer <OAuth access token>`; the caller's token is forwarded to TestChimp for each tool call, and the server's own `TESTCHIMP_API_KEY` / `TESTCHIMP_OAUTH_TOKEN` / `TESTCHIMP_BOT_ID` are never used. Requests without a bearer get `401` with `WWW-Authenticate: Bearer resource_metadata="…"`. Other endpoints: `GET /.well-known/oauth-protected-resource` (RFC 9728 metadata), `GET /healthz`. Request bodies are capped at 1 MB.
 
+**Per-project URLs.** `POST /mcp?projectId=<id>` scopes every tool call to that project: it is sent as `TestChimp-Project-Id`, and TestChimp checks that the token's user is a member (an explicit `projectApiKey` argument still wins). Commit one URL per repo (e.g. `{"url": "https://mcp.testchimp.io/mcp?projectId=<id>"}`); the same sign-in works for every project. The 401 challenge and the protected-resource metadata echo the query, so the advertised `resource` matches the configured URL. Plain `/mcp` keeps using the project picked on the consent page. Local runners get the project key with `get-project-credentials` piped to `testchimp workspace save-creds` (see [Workspace folder mapping](#workspace-folder-mapping)).
+
 | Variable | Purpose |
 |---|---|
 | `PORT` | Listen port when `--port` is not given (default `8080`; Cloud Run sets it). |
 | `TESTCHIMP_MCP_PUBLIC_URL` | Public base URL of this server (e.g. `https://mcp.testchimp.io`); used for the protected-resource `resource` and `WWW-Authenticate`. Defaults to the request's forwarded proto + host. |
 | `TESTCHIMP_OAUTH_ISSUER` | Authorization server advertised in the metadata (default: `TESTCHIMP_BACKEND_URL`). |
 | `TESTCHIMP_BACKEND_URL` / `TESTCHIMP_INGRESS_URL` | Upstream TestChimp services. |
+| `TESTCHIMP_PUBLIC_BACKEND_URL` / `TESTCHIMP_PUBLIC_INGRESS_URL` | Hosts returned by `get-project-credentials` for local runners when the upstream URLs are internal (default: the upstream URLs; ingress is derived for `featureservice[-env].testchimp.io`). |
 
 The repository `Dockerfile` builds an image that runs `testchimp mcp --http` as a non-root user (Cloud Run ready):
 

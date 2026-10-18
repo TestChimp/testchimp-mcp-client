@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z, type ZodTypeAny } from "zod";
 import { currentRequestAuth, postIngress, postMcp, runWithRequestAuth } from "../core/client.js";
+import { annotationsForTool } from "../core/toolAnnotations.js";
 import { TOOL_DEFINITIONS, runTool } from "../core/tools.js";
 import { PACKAGE_VERSION } from "../core/version.js";
 
@@ -28,7 +29,7 @@ export const BINDING_ARGS = {
     .optional()
     .describe(
       "QA bots: your own project API key from your stored TestChimp binding. Required on every call except " +
-        "get-bot-credentials and get-bot-compat. Never print it."
+        "get-bot-credentials, get-project-credentials and get-bot-compat. Never print it."
     ),
   botId: z
     .string()
@@ -65,11 +66,14 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
   );
 
   for (const def of TOOL_DEFINITIONS) {
+    const annotations = annotationsForTool(def.kebab);
     server.registerTool(
       def.kebab,
       {
+        title: annotations.title,
         description: def.description,
         inputSchema: options.bindingArgs ? withBindingArgs(def.inputSchema) : def.inputSchema,
+        annotations,
       },
       async (args) => {
         const onProgress =

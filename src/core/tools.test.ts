@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { TestChimpHttpError } from "./client.js";
-import { getToolDefinition, runTool } from "./tools.js";
+import { runWithRequestAuth, TestChimpHttpError } from "./client.js";
+import { buildAgentTraceabilityPayload } from "./agentTraceability.js";
+import { annotationsForTool, TOOL_ANNOTATIONS } from "./toolAnnotations.js";
+import { getToolDefinition, runTool, TOOL_DEFINITIONS } from "./tools.js";
 
 const runtimeObservation = {
   windowStartMillis: "1789497600000",
@@ -18,6 +20,34 @@ const runtimeObservation = {
   status5xxCount: "2000",
   syncStatus: "OBSERVABILITY_SYNC_SUCCESS",
 };
+
+describe("MCP tool annotations", () => {
+  it("covers every registered tool with title and all four hints", () => {
+    const defined = TOOL_DEFINITIONS.map((t) => t.kebab).sort();
+    const annotated = Object.keys(TOOL_ANNOTATIONS).sort();
+    assert.deepEqual(
+      annotated,
+      defined,
+      `annotation keys must match TOOL_DEFINITIONS (annotated=${annotated.length}, defined=${defined.length})`,
+    );
+    assert.ok(defined.length > 0, "expected registered tools");
+    for (const def of TOOL_DEFINITIONS) {
+      const annotations = annotationsForTool(def.kebab);
+      assert.match(annotations.title, /\S/, `${def.kebab} title is blank`);
+      assert.equal(typeof annotations.readOnlyHint, "boolean", `${def.kebab} readOnlyHint`);
+      assert.equal(typeof annotations.destructiveHint, "boolean", `${def.kebab} destructiveHint`);
+      assert.equal(typeof annotations.idempotentHint, "boolean", `${def.kebab} idempotentHint`);
+      assert.equal(typeof annotations.openWorldHint, "boolean", `${def.kebab} openWorldHint`);
+      if (annotations.readOnlyHint) {
+        assert.equal(annotations.destructiveHint, false, `${def.kebab} is read-only but destructiveHint is true`);
+      }
+    }
+  });
+
+  it("fails loudly when a tool has no annotations", () => {
+    assert.throws(() => annotationsForTool("not-a-real-tool"), /Missing MCP tool annotations for not-a-real-tool/);
+  });
+});
 
 describe("API operation observability", () => {
   it("preserves daily observability summaries when listing operations", async () => {
@@ -285,6 +315,89 @@ describe("bot tools", () => {
     assert.deepEqual(await capture("get-qa-posture", {}), { path: "/api/mcp/get_qa_posture", body: {} });
     assert.deepEqual(await capture("get-bot-compat", {}), { path: "/api/mcp/get_bot_compat", body: {} });
     assert.deepEqual(await capture("get-bot-profile", {}), { path: "/api/mcp/get_bot_profile", body: {} });
+    assert.deepEqual(await capture("get-project-credentials", {}), {
+      path: "/api/mcp/get_project_credentials",
+      body: {},
+    });
+  });
+
+  it("maps invite-team-members to its endpoint and caps the batch", async () => {
+    assert.deepEqual(await capture("invite-team-members", { emails: [" a@x.io ", "b@x.io"] }), {
+      path: "/api/mcp/invite_team_members",
+      body: { emails: ["a@x.io", "b@x.io"] },
+    });
+    await assert.rejects(capture("invite-team-members", { emails: [] }), /Invalid input/);
+    const tooMany = Array.from({ length: 21 }, (_, i) => `u${i}@x.io`);
+    await assert.rejects(capture("invite-team-members", { emails: tooMany }), /Invalid input/);
+  });
+
+  it("maps update-workflow-execution-assignees ids and emails to the right fields", async () => {
+    assert.deepEqual(
+      await capture("update-workflow-execution-assignees", {
+        workflowExecutionId: " ex1 ",
+        assignee: "bob@x.io",
+        addCc: ["u2", "carol@x.io"],
+        removeCc: ["u3"],
+      }),
+      {
+        path: "/api/mcp/update_workflow_execution_assignees",
+        body: {
+          workflowExecutionId: "ex1",
+          assigneeEmail: "bob@x.io",
+          addCcUserIds: ["u2"],
+          addCcEmails: ["carol@x.io"],
+          removeCcUserIds: ["u3"],
+        },
+      },
+    );
+    assert.deepEqual(
+      await capture("update-workflow-execution-assignees", { workflowExecutionId: "ex1", assignee: "u9" }),
+      { path: "/api/mcp/update_workflow_execution_assignees", body: { workflowExecutionId: "ex1", assigneeUserId: "u9" } },
+    );
+    assert.deepEqual(await capture("list-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true }), {
+      path: "/api/mcp/list_workflow_executions",
+      body: { pendingApprovalOnly: true, assignedToMeOnly: true },
+    });
+  });
+
+  it("adds public backend / ingress hosts to project credentials", async () => {
+    const saved = { ...process.env };
+    try {
+      delete process.env.TESTCHIMP_PUBLIC_BACKEND_URL;
+      delete process.env.TESTCHIMP_PUBLIC_INGRESS_URL;
+      delete process.env.TESTCHIMP_INGRESS_URL;
+      process.env.TESTCHIMP_BACKEND_URL = "https://featureservice-staging.testchimp.io/";
+      const ctx = { postMcp: async () => JSON.stringify({ projectId: "p1", projectApiKey: "fake-key" }) };
+      assert.deepEqual(JSON.parse(await runTool("get-project-credentials", {}, ctx)), {
+        projectId: "p1",
+        projectApiKey: "fake-key",
+        backendUrl: "https://featureservice-staging.testchimp.io",
+        ingressUrl: "https://ingress-staging.testchimp.io",
+      });
+
+      process.env.TESTCHIMP_BACKEND_URL = "http://featureservice.internal:8080";
+      process.env.TESTCHIMP_PUBLIC_BACKEND_URL = "https://tc.example.com/api";
+      process.env.TESTCHIMP_PUBLIC_INGRESS_URL = "https://ingress.example.com";
+      const out = JSON.parse(await runTool("get-project-credentials", {}, ctx));
+      assert.equal(out.backendUrl, "https://tc.example.com/api");
+      assert.equal(out.ingressUrl, "https://ingress.example.com");
+
+      delete process.env.TESTCHIMP_PUBLIC_BACKEND_URL;
+      delete process.env.TESTCHIMP_PUBLIC_INGRESS_URL;
+      const internal = JSON.parse(await runTool("get-project-credentials", {}, ctx));
+      assert.equal(internal.backendUrl, "http://featureservice.internal:8080");
+      assert.equal("ingressUrl" in internal, false);
+
+      process.env.TESTCHIMP_INGRESS_URL = "http://ingress.internal:8080";
+      process.env.TESTCHIMP_PUBLIC_BACKEND_URL = "https://featureservice.testchimp.io";
+      const publicOnly = JSON.parse(await runTool("get-project-credentials", {}, ctx));
+      assert.equal(publicOnly.ingressUrl, "https://ingress.testchimp.io");
+
+      const raw = await runTool("get-project-credentials", {}, { postMcp: async () => "not json" });
+      assert.equal(raw, "not json");
+    } finally {
+      process.env = saved;
+    }
   });
 
   it("registers a bot profile with default filter op", async () => {
@@ -363,5 +476,74 @@ describe("send-feedback", () => {
     });
     await assert.rejects(capture({ message: "  " }), /Invalid input/);
     await assert.rejects(capture({ message: "x", category: "PRAISE" }), /Invalid input/);
+  });
+});
+
+describe("TESTCHIMP_USER_ID env fallback", () => {
+  const reportArgs = {
+    workflowId: "wf-1",
+    workflowExecutionId: "exec-1",
+    gitSha: "abc123",
+    entityType: "SCENARIO",
+    entityIdentity: "SC-1",
+    actionType: "CREATED",
+  };
+
+  async function reportBody(args: Record<string, unknown>) {
+    let body: Record<string, unknown> | undefined;
+    await runTool("report-agent-action", args, {
+      postMcp: async (_path, b) => {
+        body = b as Record<string, unknown>;
+        return "{}";
+      },
+    });
+    return body!;
+  }
+
+  async function withEnvUser<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = process.env.TESTCHIMP_USER_ID;
+    process.env.TESTCHIMP_USER_ID = "env-user";
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.TESTCHIMP_USER_ID;
+      else process.env.TESTCHIMP_USER_ID = prev;
+    }
+  }
+
+  it("report-agent-action skips env userId in isolated HTTP mode", async () => {
+    await withEnvUser(async () => {
+      const body = await runWithRequestAuth({ isolated: true, bearerToken: "t" }, () => reportBody(reportArgs));
+      assert.equal(body.userId, undefined);
+    });
+  });
+
+  it("report-agent-action applies env userId outside isolated mode", async () => {
+    await withEnvUser(async () => {
+      assert.equal((await reportBody(reportArgs)).userId, "env-user");
+      const body = await runWithRequestAuth({ isolated: false }, () => reportBody(reportArgs));
+      assert.equal(body.userId, "env-user");
+    });
+  });
+
+  it("explicit userId always wins", async () => {
+    await withEnvUser(async () => {
+      const body = await runWithRequestAuth({ isolated: true, bearerToken: "t" }, () =>
+        reportBody({ ...reportArgs, userId: "arg-user" }),
+      );
+      assert.equal(body.userId, "arg-user");
+    });
+  });
+
+  it("agent traceability payload skips env userId in isolated mode", async () => {
+    await withEnvUser(async () => {
+      const fields = { workflowId: "wf-1", gitSha: "abc123" };
+      assert.equal(buildAgentTraceabilityPayload(fields)?.userId, "env-user");
+      const isolated = runWithRequestAuth({ isolated: true, bearerToken: "t" }, () =>
+        buildAgentTraceabilityPayload(fields),
+      );
+      assert.equal(isolated?.userId, undefined);
+      assert.equal(isolated?.workflowId, "wf-1");
+    });
   });
 });

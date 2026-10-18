@@ -191,6 +191,27 @@ describe("request headers", () => {
     });
   });
 
+  it("isolated request auth sends the URL project only when no project key is given", async () => {
+    const capture = captureFetch();
+    await runWithRequestAuth({ bearerToken: "caller-token", projectId: "proj-2", isolated: true }, () =>
+      postMcp("/api/mcp/example", {}),
+    );
+    await runWithRequestAuth(
+      { bearerToken: "caller-token", projectId: "proj-2", projectApiKey: "key-b", isolated: true },
+      () => postMcp("/api/mcp/example", {}),
+    );
+    assert.deepEqual(capture.calls[0].init?.headers, {
+      "Content-Type": "application/json",
+      Authorization: "Bearer caller-token",
+      "TestChimp-Project-Id": "proj-2",
+    });
+    assert.deepEqual(capture.calls[1].init?.headers, {
+      "Content-Type": "application/json",
+      Authorization: "Bearer caller-token",
+      "TestChimp-Api-Key": "key-b",
+    });
+  });
+
   it("posts to the ingress base or a trusted absolute URL", async () => {
     process.env.TESTCHIMP_API_KEY = "test-key";
     const capture = captureFetch();
