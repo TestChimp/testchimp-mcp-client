@@ -343,16 +343,32 @@ const projectInitItemStatusSchema = z.enum([
   "NOT_APPLICABLE",
 ]);
 
-export const projectInitStatusSchema = z
+/** Backend proto JSON field names. Advertised schema is snake_case only. */
+export const PROJECT_INIT_STATUS_INPUT_KEYS = [
+  "platform_comms",
+  "folder_mapping",
+  "connect_to_test_env",
+  "ci_wiring",
+  "import_plans",
+  "import_tests",
+  "smoke_validation",
+] as const;
+
+const PROJECT_INIT_STATUS_DROPPED_KEYS = new Set(["overallComplete", "overall_complete"]);
+
+/** Drop server-computed overall_* keys; leave every other key (including legacy camelCase) intact. */
+export function stripProjectInitOverallComplete(raw: unknown): unknown {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (PROJECT_INIT_STATUS_DROPPED_KEYS.has(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+export const projectInitStatusFieldsSchema = z
   .object({
-    platformComms: projectInitItemStatusSchema.optional(),
-    folderMapping: projectInitItemStatusSchema.optional(),
-    connectToTestEnv: projectInitItemStatusSchema.optional(),
-    ciWiring: projectInitItemStatusSchema.optional(),
-    importPlans: projectInitItemStatusSchema.optional(),
-    importTests: projectInitItemStatusSchema.optional(),
-    smokeValidation: projectInitItemStatusSchema.optional(),
-    overallComplete: projectInitItemStatusSchema.optional(),
     platform_comms: projectInitItemStatusSchema.optional(),
     folder_mapping: projectInitItemStatusSchema.optional(),
     connect_to_test_env: projectInitItemStatusSchema.optional(),
@@ -360,12 +376,45 @@ export const projectInitStatusSchema = z
     import_plans: projectInitItemStatusSchema.optional(),
     import_tests: projectInitItemStatusSchema.optional(),
     smoke_validation: projectInitItemStatusSchema.optional(),
-    overall_complete: projectInitItemStatusSchema.optional(),
   })
-  .passthrough();
+  .passthrough()
+  .describe(
+    "Partial ProjectInitStatus. Advertised keys are snake_case: platform_comms, folder_mapping, connect_to_test_env, " +
+      "ci_wiring, import_plans, import_tests, smoke_validation. overall_complete is server-computed and ignored. " +
+      "Legacy camelCase keys are forwarded to the backend (not advertised).",
+  );
+
+/** Strip overall_* then passthrough so old camelCase reaches featureservice. JSON schema still lists only snake_case. */
+export const projectInitStatusSchema = z.preprocess(
+  stripProjectInitOverallComplete,
+  projectInitStatusFieldsSchema,
+);
 
 export const updateProjectInitStatusInput = z.object({
   status: projectInitStatusSchema,
+});
+
+export const saveWorkspaceCredsInput = z.object({
+  folder: z
+    .string()
+    .min(1)
+    .describe(
+      "Repository root on the machine running this MCP server. Writes <folder>/.testchimp/mcp.json (mode 0600, dir 0700) " +
+        "and maps the folder in ~/.testchimp/projects.json. Hosted mcp.testchimp.io cannot write your laptop — call " +
+        "get-project-credentials and write <repo>/.testchimp/mcp.json with a file-write tool (mode 0600, dir 0700).",
+    ),
+  projectId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .optional()
+    .describe("Defaults to the connection's project from get-project-credentials."),
+  projectName: z.string().optional(),
+  backendUrl: z.string().optional(),
+  ingressUrl: z.string().optional(),
+  reassign: z
+    .boolean()
+    .optional()
+    .describe("Replace another project's key in this folder and move the folder mapping to this project."),
 });
 
 export const updateGitFolderMappingInput = z.object({

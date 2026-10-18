@@ -20,6 +20,13 @@ export interface CreateMcpServerOptions {
   bindingArgs?: boolean;
 }
 
+/**
+ * Tools that write the caller's laptop. Hosted mcp.testchimp.io cannot do that, so they are omitted
+ * from HTTP tools/list (annotation tests still require a TOOL_DEFINITIONS entry). Hosted / plugin
+ * agents should call get-project-credentials and write `.testchimp/mcp.json` with a file-write tool.
+ */
+export const HOSTED_OMITTED_TOOLS: ReadonlySet<string> = new Set(["save-workspace-creds"]);
+
 export const BINDING_ARGS = {
   projectApiKey: z
     .string()
@@ -66,6 +73,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
   );
 
   for (const def of TOOL_DEFINITIONS) {
+    if (options.bindingArgs && HOSTED_OMITTED_TOOLS.has(def.kebab)) continue;
     const annotations = annotationsForTool(def.kebab);
     server.registerTool(
       def.kebab,
