@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { after, afterEach, before, describe, it } from "node:test";
+import { TOOL_ANNOTATIONS } from "../core/toolAnnotations.js";
 import { createMcpHttpServer, isExpiredJwt, resetAuthServerMetadataCache } from "./httpServer.js";
 
 const originalFetch = globalThis.fetch;
@@ -295,6 +296,42 @@ describe("remote MCP over HTTP", () => {
     for (const tool of tools) {
       assert.ok(tool.inputSchema?.properties?.projectApiKey, `${tool.name} lacks projectApiKey`);
       assert.ok(tool.inputSchema?.properties?.botId, `${tool.name} lacks botId`);
+    }
+  });
+
+  it("advertises MCP tool annotations on every tools/list entry", async () => {
+    const res = await originalFetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer caller-jwt",
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 12, method: "tools/list", params: {} }),
+    });
+    assert.equal(res.status, 200);
+    const payload = (await res.json()) as {
+      result?: {
+        tools?: Array<{
+          name: string;
+          title?: string;
+          annotations?: {
+            title?: string;
+            readOnlyHint?: boolean;
+            destructiveHint?: boolean;
+            idempotentHint?: boolean;
+            openWorldHint?: boolean;
+          };
+        }>;
+      };
+    };
+    const tools = payload.result?.tools ?? [];
+    assert.equal(tools.length, Object.keys(TOOL_ANNOTATIONS).length);
+    for (const tool of tools) {
+      const expected = TOOL_ANNOTATIONS[tool.name];
+      assert.ok(expected, `${tool.name} is registered but missing from TOOL_ANNOTATIONS`);
+      assert.equal(tool.title, expected.title, `${tool.name} tools/list title`);
+      assert.deepEqual(tool.annotations, expected, `${tool.name} tools/list annotations`);
     }
   });
 });

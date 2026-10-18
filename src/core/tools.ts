@@ -250,6 +250,7 @@ function withPublicHosts(json: string): string {
   return JSON.stringify({ ...(parsed as Record<string, unknown>), ...publicHosts() });
 }
 
+/** Every kebab here must have an entry in TOOL_ANNOTATIONS (enforced by tests and createMcpServer). */
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-org-capabilities",

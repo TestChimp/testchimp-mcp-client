@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z, type ZodTypeAny } from "zod";
 import { currentRequestAuth, postIngress, postMcp, runWithRequestAuth } from "../core/client.js";
+import { annotationsForTool } from "../core/toolAnnotations.js";
 import { TOOL_DEFINITIONS, runTool } from "../core/tools.js";
 import { PACKAGE_VERSION } from "../core/version.js";
 
@@ -65,11 +66,14 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
   );
 
   for (const def of TOOL_DEFINITIONS) {
+    const annotations = annotationsForTool(def.kebab);
     server.registerTool(
       def.kebab,
       {
+        title: annotations.title,
         description: def.description,
         inputSchema: options.bindingArgs ? withBindingArgs(def.inputSchema) : def.inputSchema,
+        annotations,
       },
       async (args) => {
         const onProgress =
