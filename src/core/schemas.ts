@@ -343,7 +343,7 @@ const projectInitItemStatusSchema = z.enum([
   "NOT_APPLICABLE",
 ]);
 
-/** Backend proto JSON field names. camelCase aliases are not honoured and must not be advertised. */
+/** Backend proto JSON field names. Advertised schema is snake_case only. */
 export const PROJECT_INIT_STATUS_INPUT_KEYS = [
   "platform_comms",
   "folder_mapping",
@@ -354,7 +354,20 @@ export const PROJECT_INIT_STATUS_INPUT_KEYS = [
   "smoke_validation",
 ] as const;
 
-export const projectInitStatusSchema = z
+const PROJECT_INIT_STATUS_DROPPED_KEYS = new Set(["overallComplete", "overall_complete"]);
+
+/** Drop server-computed overall_* keys; leave every other key (including legacy camelCase) intact. */
+export function stripProjectInitOverallComplete(raw: unknown): unknown {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (PROJECT_INIT_STATUS_DROPPED_KEYS.has(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+export const projectInitStatusFieldsSchema = z
   .object({
     platform_comms: projectInitItemStatusSchema.optional(),
     folder_mapping: projectInitItemStatusSchema.optional(),
@@ -364,12 +377,18 @@ export const projectInitStatusSchema = z
     import_tests: projectInitItemStatusSchema.optional(),
     smoke_validation: projectInitItemStatusSchema.optional(),
   })
-  .strict()
+  .passthrough()
   .describe(
-    "Partial ProjectInitStatus. Snake_case keys only: platform_comms, folder_mapping, connect_to_test_env, " +
-      "ci_wiring, import_plans, import_tests, smoke_validation. overall_complete is server-computed — do not send it. " +
-      "camelCase keys (platformComms, folderMapping, …) are rejected.",
+    "Partial ProjectInitStatus. Advertised keys are snake_case: platform_comms, folder_mapping, connect_to_test_env, " +
+      "ci_wiring, import_plans, import_tests, smoke_validation. overall_complete is server-computed and ignored. " +
+      "Legacy camelCase keys are forwarded to the backend (not advertised).",
   );
+
+/** Strip overall_* then passthrough so old camelCase reaches featureservice. JSON schema still lists only snake_case. */
+export const projectInitStatusSchema = z.preprocess(
+  stripProjectInitOverallComplete,
+  projectInitStatusFieldsSchema,
+);
 
 export const updateProjectInitStatusInput = z.object({
   status: projectInitStatusSchema,

@@ -6,7 +6,10 @@ import { afterEach, describe, it } from "node:test";
 import { runWithRequestAuth, TestChimpHttpError } from "./client.js";
 import { buildAgentTraceabilityPayload } from "./agentTraceability.js";
 import { annotationsForTool, TOOL_ANNOTATIONS } from "./toolAnnotations.js";
-import { PROJECT_INIT_STATUS_INPUT_KEYS } from "./schemas.js";
+import {
+  PROJECT_INIT_STATUS_INPUT_KEYS,
+  projectInitStatusFieldsSchema,
+} from "./schemas.js";
 import { getToolDefinition, parseProjectCredentialsJson, runTool, TOOL_DEFINITIONS } from "./tools.js";
 import { workspaceMcpJsonPath } from "../workspace/workspaceCredsFile.js";
 
@@ -580,15 +583,21 @@ describe("update-project-init-status schema", () => {
       "smoke_validation",
     ]);
     const def = getToolDefinition("update-project-init-status");
-    const shape = (def?.inputSchema as { shape?: { status?: { shape?: Record<string, unknown> } } }).shape?.status
-      ?.shape;
-    assert.deepEqual(Object.keys(shape ?? {}).sort(), [...PROJECT_INIT_STATUS_INPUT_KEYS].sort());
-    assert.equal("platformComms" in (shape ?? {}), false);
-    assert.equal("overallComplete" in (shape ?? {}), false);
-    assert.equal("overall_complete" in (shape ?? {}), false);
+    const shape = projectInitStatusFieldsSchema.shape;
+    assert.deepEqual(Object.keys(shape).sort(), [...PROJECT_INIT_STATUS_INPUT_KEYS].sort());
+    assert.equal("platformComms" in shape, false);
+    assert.equal("overallComplete" in shape, false);
+    assert.equal("overall_complete" in shape, false);
+    const advertised = def!.inputSchema.toJSONSchema({ io: "input" }) as {
+      properties?: { status?: { properties?: Record<string, unknown> } };
+    };
+    const advertisedKeys = Object.keys(advertised.properties?.status?.properties ?? {});
+    assert.deepEqual(advertisedKeys.sort(), [...PROJECT_INIT_STATUS_INPUT_KEYS].sort());
+    assert.equal(advertisedKeys.includes("platformComms"), false);
+    assert.equal(advertisedKeys.includes("overallComplete"), false);
     assert.match(def?.description ?? "", /snake_case/);
     assert.match(def?.description ?? "", /platform_comms/);
-    assert.match(def?.description ?? "", /camelCase aliases \(platformComms/);
+    assert.match(def?.description ?? "", /camelCase/);
 
     assert.deepEqual(
       await capture({
@@ -609,18 +618,50 @@ describe("update-project-init-status schema", () => {
     );
   });
 
-  it("rejects camelCase, overall_complete, and other unknown keys", async () => {
-    await assert.rejects(
-      capture({ platformComms: "DONE" }),
-      /Invalid input[\s\S]*platformComms|unrecognized key/i,
+  it("forwards legacy camelCase keys unchanged and strips overallComplete", async () => {
+    assert.deepEqual(
+      await capture({
+        platformComms: "DONE",
+        folderMapping: "PROJECT_INIT_ITEM_STATUS_DONE",
+        connectToTestEnv: "SKIPPED",
+        ciWiring: "INCOMPLETE",
+        importPlans: "NOT_APPLICABLE",
+        importTests: "DONE",
+        smokeValidation: "SKIPPED",
+        overallComplete: "DONE",
+      }),
+      {
+        path: "/api/mcp/update_project_init_status",
+        body: {
+          status: {
+            platformComms: "DONE",
+            folderMapping: "PROJECT_INIT_ITEM_STATUS_DONE",
+            connectToTestEnv: "SKIPPED",
+            ciWiring: "INCOMPLETE",
+            importPlans: "NOT_APPLICABLE",
+            importTests: "DONE",
+            smokeValidation: "SKIPPED",
+          },
+        },
+      },
     );
-    await assert.rejects(
-      capture({ folderMapping: "DONE", platform_comms: "DONE" }),
-      /Invalid input/,
+
+    assert.deepEqual(
+      await capture({
+        platform_comms: "SKIPPED",
+        platformComms: "DONE",
+        overall_complete: "DONE",
+      }),
+      {
+        path: "/api/mcp/update_project_init_status",
+        body: { status: { platform_comms: "SKIPPED", platformComms: "DONE" } },
+      },
     );
-    await assert.rejects(capture({ overall_complete: "DONE" }), /Invalid input/);
-    await assert.rejects(capture({ overallComplete: "DONE" }), /Invalid input/);
-    await assert.rejects(capture({ not_a_real_item: "DONE" }), /Invalid input/);
+
+    assert.deepEqual(await capture({ overallComplete: "DONE", overall_complete: "SKIPPED" }), {
+      path: "/api/mcp/update_project_init_status",
+      body: { status: {} },
+    });
   });
 });
 

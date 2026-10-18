@@ -1625,10 +1625,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "update-project-init-status",
     description:
-      "Merge project-init progress fields for the current project. Pass a `status` object with snake_case keys only " +
+      "Merge project-init progress fields for the current project. Pass a `status` object with snake_case keys " +
       "(platform_comms, folder_mapping, connect_to_test_env, ci_wiring, and optional import_plans, import_tests, " +
-      "smoke_validation). The server recomputes overall_complete when required items are DONE — do not send " +
-      "overall_complete or camelCase aliases (platformComms, folderMapping, …); unknown keys are rejected.",
+      "smoke_validation). The server recomputes overall_complete when required items are DONE — do not send it " +
+      "(overallComplete / overall_complete are ignored). Legacy camelCase keys from older skills are forwarded " +
+      "to the backend.",
     inputSchema: S.updateProjectInitStatusInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updateProjectInitStatusInput>;
