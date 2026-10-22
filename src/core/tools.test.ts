@@ -11,6 +11,7 @@ import {
   projectInitStatusFieldsSchema,
 } from "./schemas.js";
 import { getToolDefinition, parseProjectCredentialsJson, runTool, TOOL_DEFINITIONS } from "./tools.js";
+import { buildCliProgram } from "../cli/program.js";
 import { workspaceMcpJsonPath } from "../workspace/workspaceCredsFile.js";
 
 const runtimeObservation = {
@@ -70,7 +71,7 @@ describe("API operation observability", () => {
     let request: { path: string; body: unknown } | undefined;
 
     const result = await runTool(
-      "list-api-operations",
+      "get-api-operations",
       { rootFilePath: "openapi/service.json" },
       {
         postMcp: async (path, body) => {
@@ -81,7 +82,7 @@ describe("API operation observability", () => {
     );
 
     assert.deepEqual(request, {
-      path: "/api/mcp/list_api_operations",
+      path: "/api/mcp/get_api_operations",
       body: { rootFilePath: "openapi/service.json" },
     });
     assert.deepEqual(JSON.parse(result), JSON.parse(response));
@@ -99,14 +100,14 @@ describe("API operation observability", () => {
     });
 
     const result = await runTool(
-      "get-api-operation-detail",
+      "get-api-operations",
       { id: "01OBSERVABILITYOPERATION" },
       { postMcp: async () => response },
     );
 
     assert.deepEqual(JSON.parse(result), JSON.parse(response));
     assert.match(
-      getToolDefinition("get-api-operation-detail")?.description ?? "",
+      getToolDefinition("get-api-operations")?.description ?? "",
       /p95\/p99 latency/,
     );
   });
@@ -154,12 +155,12 @@ describe("get-meeting-transcript", () => {
   });
 });
 
-describe("get-meeting-set", () => {
-  it("posts meetingSetId to get_meeting_set", async () => {
+describe("list-meetings extra locators", () => {
+  it("forwards includeFilterOptions and meetingSetId", async () => {
     let request: { path: string; body: unknown } | undefined;
     await runTool(
-      "get-meeting-set",
-      { meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
+      "list-meetings",
+      { includeFilterOptions: true, meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
       {
         postMcp: async (path, body) => {
           request = { path, body };
@@ -168,8 +169,8 @@ describe("get-meeting-set", () => {
       },
     );
     assert.deepEqual(request, {
-      path: "/api/mcp/get_meeting_set",
-      body: { meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
+      path: "/api/mcp/list_meetings",
+      body: { includeFilterOptions: true, meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
     });
   });
 });
@@ -230,16 +231,250 @@ describe("list-meetings", () => {
   });
 });
 
-describe("list-meeting-filter-options", () => {
-  it("posts an empty body to list_meeting_filter_options", async () => {
+describe("MCP API 2.0 consolidations", () => {
+  async function capture(kebab: string, args: Record<string, unknown> = {}) {
     let request: { path: string; body: unknown } | undefined;
-    await runTool("list-meeting-filter-options", {}, {
+    const result = await runTool(kebab, args, {
       postMcp: async (path, body) => {
         request = { path, body };
         return "{}";
       },
     });
-    assert.deepEqual(request, { path: "/api/mcp/list_meeting_filter_options", body: {} });
+    return { request, result };
+  }
+
+  it("registers 81 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 81);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 81);
+  });
+
+  it("advertises extended get-org-capabilities fields", () => {
+    assert.match(
+      getToolDefinition("get-org-capabilities")?.description ?? "",
+      /planLabel/,
+    );
+    assert.match(
+      getToolDefinition("get-org-capabilities")?.description ?? "",
+      /chimphandsCredits/,
+    );
+    assert.match(
+      getToolDefinition("get-org-capabilities")?.description ?? "",
+      /freeTrialActive \/ trial/,
+    );
+  });
+
+  it("does not register replaced 1.x tools", () => {
+    const removed = [
+      "get-eaas-config",
+      "provision-ephemeral-environment",
+      "provision-ephemeral-environment-and-wait",
+      "get-ephemeral-environment-status",
+      "report-dast-findings",
+      "report-sast-findings",
+      "report-deps-findings",
+      "report-secrets-findings",
+      "list-workflow-executions",
+      "get-workflow-execution",
+      "get-last-run-workflow-detail",
+      "get-policy",
+      "list-policies",
+      "list-api-operation-services",
+      "list-api-operations",
+      "get-api-operation-detail",
+      "mark-entity-distinct",
+      "unmark-entity-distinct",
+      "mark-semantic-tests-distinct",
+      "list-meeting-filter-options",
+      "get-meeting-set",
+      "get-batch-view-url",
+      "get-suite-execution-stats",
+      "get-perf-run",
+      "get-release-details",
+      "create-issue",
+      "update-issue-status",
+    ];
+    for (const kebab of removed) {
+      assert.equal(getToolDefinition(kebab), undefined, kebab);
+    }
+  });
+
+  it("keeps destroy-ephemeral-environment destructive", () => {
+    const hints = annotationsForTool("destroy-ephemeral-environment");
+    assert.equal(hints.readOnlyHint, false);
+    assert.equal(hints.destructiveHint, true);
+    assert.equal(hints.openWorldHint, true);
+  });
+
+  it("maps ephemeral-environment actions", async () => {
+    assert.deepEqual((await capture("ephemeral-environment", { action: "CONFIG" })).request, {
+      path: "/api/mcp/ephemeral_environment",
+      body: { action: "CONFIG" },
+    });
+    assert.deepEqual(
+      (await capture("ephemeral-environment", { action: "PROVISION", wait: false, branchName: "feat" })).request,
+      {
+        path: "/api/mcp/ephemeral_environment",
+        body: { action: "PROVISION", wait: false, branchName: "feat" },
+      },
+    );
+    assert.deepEqual(
+      (await capture("ephemeral-environment", { action: "STATUS", bnsEnvironmentId: "env-1" })).request,
+      {
+        path: "/api/mcp/ephemeral_environment",
+        body: { action: "STATUS", bnsEnvironmentId: "env-1" },
+      },
+    );
+  });
+
+  it("maps report-scan-findings scanner + file", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "tc-scan-"));
+    const file = join(dir, "zap.json");
+    writeFileSync(file, "{\"alerts\":[]}");
+    try {
+      assert.deepEqual(
+        (await capture("report-scan-findings", { id: "scan-1", scanner: "DAST", reportFile: file })).request,
+        {
+          path: "/api/mcp/report_scan_findings",
+          body: { scanId: "scan-1", scanner: "DAST", reportJson: "{\"alerts\":[]}" },
+        },
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("maps get-workflow-executions list, detail, and latestOnly", async () => {
+    assert.deepEqual(
+      (await capture("get-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true })).request,
+      {
+        path: "/api/mcp/get_workflow_executions",
+        body: { pendingApprovalOnly: true, assignedToMeOnly: true },
+      },
+    );
+    assert.deepEqual(
+      (await capture("get-workflow-executions", { workflowExecutionId: "ex1" })).request,
+      {
+        path: "/api/mcp/get_workflow_executions",
+        body: { workflowExecutionId: "ex1", includeActions: true },
+      },
+    );
+    assert.deepEqual(
+      (await capture("get-workflow-executions", { workflowId: "run-qa", latestOnly: true, branchName: "main" })).request,
+      {
+        path: "/api/mcp/get_workflow_executions",
+        body: { workflowId: "run-qa", branchName: "main", latestOnly: true },
+      },
+    );
+  });
+
+  it("maps get-policies fetch vs list", async () => {
+    assert.deepEqual((await capture("get-policies", { policyFileName: "run-qa.policy.md" })).request, {
+      path: "/api/mcp/get_policies",
+      body: { policyFileName: "run-qa.policy.md" },
+    });
+    assert.deepEqual((await capture("get-policies", { workflowId: "run-qa" })).request, {
+      path: "/api/mcp/get_policies",
+      body: { workflowId: "run-qa" },
+    });
+  });
+
+  it("maps set-entity-distinct mark/unmark and TEST locators", async () => {
+    const loc = { fileName: "a.spec.ts", testName: "checkout" };
+    assert.deepEqual(
+      (await capture("set-entity-distinct", { entityType: "TEST", focusTest: loc, distinctTest: loc })).request,
+      {
+        path: "/api/mcp/set_entity_distinct",
+        body: { entityType: "TEST", distinct: true, focusTest: loc, otherTest: loc, distinctTest: loc },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("set-entity-distinct", {
+          entityType: "ISSUE",
+          focusOrdinalId: 1,
+          otherOrdinalId: 2,
+          distinct: false,
+        })
+      ).request,
+      {
+        path: "/api/mcp/set_entity_distinct",
+        body: { entityType: "ISSUE", distinct: false, focusOrdinalId: 1, otherOrdinalId: 2 },
+      },
+    );
+  });
+
+  it("maps upsert-issue create vs patch", async () => {
+    assert.deepEqual((await capture("upsert-issue", { title: "Broken checkout" })).request, {
+      path: "/api/mcp/upsert_issue",
+      body: { title: "Broken checkout" },
+    });
+    assert.deepEqual(
+      (await capture("upsert-issue", { issueId: "B-12", status: "FIXED" })).request,
+      {
+        path: "/api/mcp/upsert_issue",
+        body: { issueId: "B-12", status: "FIXED" },
+      },
+    );
+    await assert.rejects(capture("upsert-issue", {}), /Invalid input/);
+  });
+
+  it("maps list-issues, upsert-release, manage-test-run, get-release, history aggregate, perf runId", async () => {
+    assert.deepEqual((await capture("list-issues", { status: "ACTIVE", limit: 10 })).request, {
+      path: "/api/mcp/list_issues",
+      body: { status: "ACTIVE", limit: 10 },
+    });
+    assert.deepEqual((await capture("upsert-release", { version: "1.2.0", gitSha: "abc" })).request, {
+      path: "/api/mcp/upsert_release",
+      body: { version: "1.2.0", gitSha: "abc" },
+    });
+    assert.deepEqual(
+      (await capture("manage-test-run", { action: "CREATE", name: "Sprint 12", release: "1.2.0" })).request,
+      {
+        path: "/api/mcp/manage_test_run",
+        body: { action: "CREATE", name: "Sprint 12", release: "1.2.0" },
+      },
+    );
+    assert.deepEqual((await capture("get-release", {})).request, {
+      path: "/api/mcp/get_release",
+      body: {},
+    });
+    assert.deepEqual((await capture("get-release", { version: "1.2.0", detail: "GATE" })).request, {
+      path: "/api/mcp/get_release",
+      body: { version: "1.2.0", detail: "GATE" },
+    });
+    assert.deepEqual((await capture("get-execution-history", { aggregate: true, testId: "t1" })).request, {
+      path: "/api/mcp/list_execution_history",
+      body: { testId: "t1", aggregate: true },
+    });
+    assert.deepEqual((await capture("list-perf-runs", { runId: "01ABC", includeRaw: true })).request, {
+      path: "/api/mcp/list_perf_runs",
+      body: { runId: "01ABC", includeRaw: true },
+    });
+  });
+
+  it("keeps CLI subcommand parity with MCP tool names", () => {
+    const names = new Set<string>();
+    const walk = (cmd: ReturnType<typeof buildCliProgram>) => {
+      names.add(cmd.name());
+      for (const child of cmd.commands) walk(child);
+    };
+    walk(buildCliProgram());
+    const nestedAliases: Record<string, string> = {
+      "ack-bot-events": "ack",
+      "register-bot-profile": "register-profile",
+      "approve-agentwatch-pairing": "approve-pairing",
+      "get-bot-credentials": "get-credentials",
+      "save-workspace-creds": "save-creds",
+    };
+    for (const kebab of TOOL_DEFINITIONS.map((t) => t.kebab)) {
+      assert.ok(
+        names.has(kebab) || names.has(nestedAliases[kebab] ?? ""),
+        `CLI is missing a subcommand for ${kebab}`,
+      );
+    }
   });
 });
 
@@ -362,8 +597,8 @@ describe("bot tools", () => {
       await capture("update-workflow-execution-assignees", { workflowExecutionId: "ex1", assignee: "u9" }),
       { path: "/api/mcp/update_workflow_execution_assignees", body: { workflowExecutionId: "ex1", assigneeUserId: "u9" } },
     );
-    assert.deepEqual(await capture("list-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true }), {
-      path: "/api/mcp/list_workflow_executions",
+    assert.deepEqual(await capture("get-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true }), {
+      path: "/api/mcp/get_workflow_executions",
       body: { pendingApprovalOnly: true, assignedToMeOnly: true },
     });
   });

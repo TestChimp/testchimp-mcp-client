@@ -65,10 +65,9 @@ export const listExecutionInput = z.object({
   dimensionFilters: z.array(executionJobDimensionFilterSchema).optional(),
   limit: z.number().int().positive().max(500).optional(),
   offset: z.number().int().nonnegative().optional(),
+  /** When true, return suite timing aggregates instead of per-test history (replaces get-suite-execution-stats). */
+  aggregate: z.boolean().optional(),
 });
-
-/** Same filters as get-execution-history; rolls up list_execution_history testStats. */
-export const suiteExecutionStatsInput = listExecutionInput;
 
 export const fetchExecutionReportInput = z
   .object({
@@ -210,11 +209,6 @@ export const getMeetingTranscriptInput = z.object({
   summaryOnly: z.boolean().optional(),
 });
 
-export const getMeetingSetInput = z.object({
-  /** ULID from `/testchimp using meeting-set context <id>` (Meetings page → Start Chat) */
-  meetingSetId: z.string().min(1),
-});
-
 export const listMeetingsInput = z.object({
   /** Inclusive start bound: YYYY-MM-DD (local start of day), ISO datetime, or epoch millis. */
   from: z.union([z.string().min(1), z.number()]).optional(),
@@ -224,9 +218,9 @@ export const listMeetingsInput = z.object({
   startDateMillis: z.union([z.string().min(1), z.number()]).optional(),
   /** Raw inclusive end (epoch millis); `to` wins when both are set. */
   endDateMillis: z.union([z.string().min(1), z.number()]).optional(),
-  /** OR filter, case-insensitive (exact values from list-meeting-filter-options). */
+  /** OR filter, case-insensitive (exact values from includeFilterOptions). */
   labels: z.array(z.string().min(1)).optional(),
-  /** OR filter: participant user ids or emails (keys from list-meeting-filter-options). */
+  /** OR filter: participant user ids or emails (keys from includeFilterOptions). */
   participantKeys: z.array(z.string().min(1)).optional(),
   /** OR filter: participant email domains (e.g. customer.com). */
   participantDomains: z.array(z.string().min(1)).optional(),
@@ -236,30 +230,32 @@ export const listMeetingsInput = z.object({
   pageSize: z.number().int().positive().optional(),
   /** nextPageToken from the previous page. */
   pageToken: z.string().min(1).optional(),
+  /** Include label / participant / domain filter option catalogs (replaces list-meeting-filter-options). */
+  includeFilterOptions: z.boolean().optional(),
+  /** ULID from `/testchimp using meeting-set context <id>` (replaces get-meeting-set). */
+  meetingSetId: z.string().min(1).optional(),
 });
-
-export const listMeetingFilterOptionsInput = z.object({});
 
 export const getIssueDetailsInput = z.object({
   /** Accepts #B-123, B-123, #B123, B123, or plain 123 */
   issueId: z.string().min(1),
 });
 
-export const updateIssueStatusInput = z.object({
-  issueId: z.string().min(1),
-  status: z.enum([
-    "ACTIVE",
-    "IGNORED",
-    "FIXED",
-    "DUPLICATE",
-    "IN_PROGRESS_BUG",
-    "ARCHIVED_BUG",
-    "BLOCKED",
-  ]),
-  ignoreReason: z
-    .enum(["INTENDED_BEHAVIOUR", "INACCURATE_ASSESSMENT", "NOT_IMPORTANT"])
-    .optional(),
-}).merge(agentTraceabilityFieldsSchema);
+export const issueStatusSchema = z.enum([
+  "ACTIVE",
+  "IGNORED",
+  "FIXED",
+  "DUPLICATE",
+  "IN_PROGRESS_BUG",
+  "ARCHIVED_BUG",
+  "BLOCKED",
+]);
+
+export const issueIgnoreReasonSchema = z.enum([
+  "INTENDED_BEHAVIOUR",
+  "INACCURATE_ASSESSMENT",
+  "NOT_IMPORTANT",
+]);
 
 const linkedEntityTypeSchema = z.enum([
   "STORY",
@@ -276,59 +272,143 @@ const createIssueLinkTargetSchema = z.object({
   toEntityId: z.string().min(1),
 });
 
-export const createIssueInput = z.object({
-  title: z.string().min(1),
-  description: z.string().optional(),
-  issueType: z
-    .enum(["BUG_ISSUE", "SUGGESTION_ISSUE", "OBSERVATION_ISSUE", "TASK_ISSUE"])
-    .optional(),
-  category: z
-    .enum([
-      "ACCESSIBILITY",
-      "SECURITY",
-      "VISUAL",
-      "PERFORMANCE",
-      "FUNCTIONAL",
-      "NETWORK",
-      "USABILITY",
-      "COMPATIBILITY",
-      "DATA_INTEGRITY",
-      "INTERACTION",
-      "LOCALIZATION",
-      "RESPONSIVENESS",
-      "LAYOUT",
-      "VISUAL_REGRESSION",
-      "MEMORY",
-      "PERFORMANCE_REGRESSION",
-      "MEMORY_REGRESSION",
-      "FORM_VALIDATION_BUG",
-      "OTHER",
-    ])
-    .optional(),
-  severity: z
-    .enum(["LOW_SEVERITY", "MEDIUM_SEVERITY", "HIGH_SEVERITY", "CRITICAL_SEVERITY"])
-    .optional(),
-  status: z
-    .enum([
-      "ACTIVE",
-      "IGNORED",
-      "FIXED",
-      "DUPLICATE",
-      "IN_PROGRESS_BUG",
-      "ARCHIVED_BUG",
-      "BLOCKED",
-    ])
-    .optional(),
-  reportedReleaseId: z.string().optional(),
-  dueDateMillis: z.coerce.number().optional(),
-  assignee: z.string().optional(),
-  linkTargets: z.array(createIssueLinkTargetSchema).optional(),
-  labels: z.array(z.string()).optional(),
-  source: z.string().optional(),
-  environment: z.string().optional(),
-  attachments: z.array(z.record(z.string(), z.unknown())).optional(),
-  artifactReference: z.record(z.string(), z.unknown()).optional(),
-}).merge(agentTraceabilityFieldsSchema);
+export const issueTypeSchema = z.enum([
+  "BUG_ISSUE",
+  "SUGGESTION_ISSUE",
+  "OBSERVATION_ISSUE",
+  "TASK_ISSUE",
+]);
+
+export const issueCategorySchema = z.enum([
+  "ACCESSIBILITY",
+  "SECURITY",
+  "VISUAL",
+  "PERFORMANCE",
+  "FUNCTIONAL",
+  "NETWORK",
+  "USABILITY",
+  "COMPATIBILITY",
+  "DATA_INTEGRITY",
+  "INTERACTION",
+  "LOCALIZATION",
+  "RESPONSIVENESS",
+  "LAYOUT",
+  "VISUAL_REGRESSION",
+  "MEMORY",
+  "PERFORMANCE_REGRESSION",
+  "MEMORY_REGRESSION",
+  "FORM_VALIDATION_BUG",
+  "OTHER",
+]);
+
+export const issueSeveritySchema = z.enum([
+  "LOW_SEVERITY",
+  "MEDIUM_SEVERITY",
+  "HIGH_SEVERITY",
+  "CRITICAL_SEVERITY",
+]);
+
+/** Create when issueId is omitted (title required); patch when issueId is set. */
+export const upsertIssueInput = z
+  .object({
+    issueId: z.string().min(1).optional(),
+    title: z.string().min(1).optional(),
+    description: z.string().optional(),
+    issueType: issueTypeSchema.optional(),
+    category: issueCategorySchema.optional(),
+    severity: issueSeveritySchema.optional(),
+    status: issueStatusSchema.optional(),
+    ignoreReason: issueIgnoreReasonSchema.optional(),
+    reportedReleaseId: z.string().optional(),
+    dueDateMillis: z.coerce.number().optional(),
+    assignee: z.string().optional(),
+    linkTargets: z.array(createIssueLinkTargetSchema).optional(),
+    labels: z.array(z.string()).optional(),
+    source: z.string().optional(),
+    environment: z.string().optional(),
+    attachments: z.array(z.record(z.string(), z.unknown())).optional(),
+    artifactReference: z.record(z.string(), z.unknown()).optional(),
+  })
+  .merge(agentTraceabilityFieldsSchema)
+  .superRefine((v, ctx) => {
+    const issueId = (v.issueId ?? "").trim();
+    const title = (v.title ?? "").trim();
+    if (!issueId && !title) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide title to create an issue, or issueId to patch one",
+        path: ["title"],
+      });
+    }
+  });
+
+export const listIssuesInput = z
+  .object({
+    searchText: z.string().optional(),
+    issueId: z.string().min(1).optional(),
+    status: issueStatusSchema.optional(),
+    statuses: z.array(issueStatusSchema).optional(),
+    issueType: issueTypeSchema.optional(),
+    category: issueCategorySchema.optional(),
+    severity: issueSeveritySchema.optional(),
+    assignee: z.string().optional(),
+    labels: z.array(z.string().min(1)).optional(),
+    release: z.string().optional(),
+    environment: z.string().optional(),
+    limit: z.coerce.number().int().positive().max(200).optional(),
+    offset: z.coerce.number().int().nonnegative().optional(),
+  })
+  .passthrough();
+
+export const upsertReleaseInput = z
+  .object({
+    version: z.string().min(1),
+    name: z.string().optional(),
+    gitSha: z.string().optional(),
+    priorVersion: z.string().optional(),
+    dueDateMillis: z.coerce.number().optional(),
+    lifecycleStatus: z.string().optional(),
+    focusAreas: z.array(z.string()).optional(),
+    payload: z.record(z.string(), z.unknown()).optional(),
+  })
+  .merge(agentTraceabilityFieldsSchema)
+  .passthrough();
+
+export const manageTestRunActionSchema = z.enum([
+  "CREATE",
+  "UPDATE",
+  "COMPLETE",
+  "ADD_SCENARIOS",
+]);
+
+export const manageTestRunInput = z
+  .object({
+    action: manageTestRunActionSchema,
+    namedTestRunId: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+    release: z.string().optional(),
+    environment: z.string().optional(),
+    assignee: z.string().optional(),
+    scenarioOrdinalIds: z.array(z.coerce.number().int().positive()).optional(),
+  })
+  .merge(agentTraceabilityFieldsSchema)
+  .passthrough()
+  .superRefine((v, ctx) => {
+    if (v.action === "CREATE" && !(v.name ?? "").trim() && !(v.release ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "CREATE requires name and/or release",
+        path: ["name"],
+      });
+    }
+    if (v.action !== "CREATE" && !(v.namedTestRunId ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${v.action} requires namedTestRunId`,
+        path: ["namedTestRunId"],
+      });
+    }
+  });
 
 export const emptyInput = z.object({});
 
@@ -578,18 +658,30 @@ export const eventMetadataKeysInput = z.object({
   eventTitle: z.string().min(1),
 });
 
-export const provisionEphemeralInput = z.object({
-  branchName: z.string().optional(),
-});
+export const ephemeralEnvironmentActionSchema = z.enum(["CONFIG", "PROVISION", "STATUS"]);
+
+export const ephemeralEnvironmentInput = z
+  .object({
+    action: ephemeralEnvironmentActionSchema,
+    branchName: z.string().optional(),
+    /** When action=PROVISION, wait for deploy (defaults true). Send false for fire-and-forget. */
+    wait: z.boolean().optional(),
+    bnsEnvironmentId: z.string().min(1).optional(),
+    pollIntervalSeconds: z.number().optional(),
+    maxWaitMinutes: z.number().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.action === "STATUS" && !(v.bnsEnvironmentId ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "STATUS requires bnsEnvironmentId",
+        path: ["bnsEnvironmentId"],
+      });
+    }
+  });
 
 export const bnsEnvironmentIdInput = z.object({
   bnsEnvironmentId: z.string().min(1),
-});
-
-export const provisionEphemeralWaitInput = z.object({
-  branchName: z.string().optional(),
-  pollIntervalSeconds: z.number().optional(),
-  maxWaitMinutes: z.number().optional(),
 });
 
 export const listBunnyshellEnvironmentEventsInput = z.object({
@@ -614,14 +706,13 @@ export const listScreenStatesInput = z.object({
   environment: z.string().optional(),
 });
 
-export const getReleaseInput = z.object({
-  /** Release catalog version / label — maps to McpGetReleaseRequest.version */
-  version: z.string().min(1),
-});
+export const getReleaseDetailSchema = z.enum(["CATALOG", "GATE"]);
 
-export const getReleaseDetailsInput = z.object({
-  /** Release catalog version / label — maps to McpGetReleaseDetailsRequest.version */
-  version: z.string().min(1),
+export const getReleaseInput = z.object({
+  /** Release catalog version / label. Omit to list releases. */
+  version: z.string().min(1).optional(),
+  /** CATALOG (default when version is set) or GATE (replaces get-release-details). */
+  detail: getReleaseDetailSchema.optional(),
 });
 
 export const getSecurityScanConfigInput = z.object({
@@ -634,27 +725,12 @@ export const updateScanProgressInput = z.object({
   status: z.enum(["QUEUED", "IN_PROGRESS", "COMPLETED", "EXCEPTION"]),
 });
 
-export const reportDastFindingsInput = z.object({
-  id: z.string().min(1),
-  /** Path to ZAP Traditional JSON report file */
-  reportFile: z.string().min(1),
-});
+export const scanFinderSchema = z.enum(["DAST", "SAST", "DEPS", "SECRETS"]);
 
-export const reportSastFindingsInput = z.object({
+export const reportScanFindingsInput = z.object({
   id: z.string().min(1),
-  /** Path to full Semgrep CLI JSON report file */
-  reportFile: z.string().min(1),
-});
-
-export const reportSecretsFindingsInput = z.object({
-  id: z.string().min(1),
-  /** Path to full Gitleaks JSON report file */
-  reportFile: z.string().min(1),
-});
-
-export const reportDepsFindingsInput = z.object({
-  id: z.string().min(1),
-  /** Path to full Trivy JSON report file */
+  scanner: scanFinderSchema,
+  /** Path to the scanner JSON report (ZAP / Semgrep / Trivy / Gitleaks). */
   reportFile: z.string().min(1),
 });
 
@@ -745,25 +821,40 @@ export const listSemanticNearbyInput = z
     }
   });
 
-export const markEntityDistinctInput = z
+export const setEntityDistinctInput = z
   .object({
-    entityType: semanticNearbyEntityTypeSchema,
+    entityType: semanticNearbyEntityTypeSchema.optional(),
     focusTest: testLocatorSchema.optional(),
     otherTest: testLocatorSchema.optional(),
+    /** Alias for otherTest (mark-semantic-tests-distinct locator name). */
+    distinctTest: testLocatorSchema.optional(),
     focusOrdinalId: z.union([z.number(), z.string()]).optional(),
     otherOrdinalId: z.union([z.number(), z.string()]).optional(),
     focusEventTitle: z.string().optional(),
     otherEventTitle: z.string().optional(),
+    /** Defaults true (mark). Set false to unmark. */
+    distinct: z.boolean().optional(),
   })
   .superRefine((val, ctx) => {
-    if (val.entityType === "TEST") {
-      if (!val.focusTest || !val.otherTest) {
+    const otherTest = val.otherTest ?? val.distinctTest;
+    const entityType =
+      val.entityType ?? (val.focusTest && otherTest ? "TEST" : undefined);
+    if (!entityType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "entityType is required (or provide TEST locators)",
+        path: ["entityType"],
+      });
+      return;
+    }
+    if (entityType === "TEST") {
+      if (!val.focusTest || !otherTest) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "TEST requires focusTest and otherTest",
+          message: "TEST requires focusTest and otherTest (or distinctTest)",
         });
       }
-    } else if (val.entityType === "EVENT") {
+    } else if (entityType === "EVENT") {
       if (!(val.focusEventTitle ?? "").trim() || !(val.otherEventTitle ?? "").trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -773,7 +864,7 @@ export const markEntityDistinctInput = z
     } else if (val.focusOrdinalId == null || val.otherOrdinalId == null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `${val.entityType} requires focusOrdinalId and otherOrdinalId`,
+        message: `${entityType} requires focusOrdinalId and otherOrdinalId`,
       });
     }
   });
@@ -1054,14 +1145,14 @@ export const reportAgentActionInput = z
     }
   });
 
-export const getLastRunWorkflowDetailInput = z.object({
-  workflowId: z.string().min(1),
+export const getWorkflowExecutionsInput = z.object({
+  workflowExecutionId: z.string().min(1).optional(),
+  workflowId: z.string().optional(),
   branchName: z.string().optional(),
   userId: z.string().optional(),
-});
-
-export const listWorkflowExecutionsInput = z.object({
-  workflowId: z.string().optional(),
+  /** Last execution for workflowId (+ optional branchName / userId). Replaces get-last-run-workflow-detail. */
+  latestOnly: z.boolean().optional(),
+  includeActions: z.boolean().optional(),
   limit: z.coerce.number().int().positive().max(200).optional(),
   offset: z.coerce.number().int().nonnegative().optional(),
   pendingApprovalOnly: z.boolean().optional().describe("Only PENDING_INVOKE_APPROVAL / PLANNED executions."),
@@ -1080,16 +1171,9 @@ export const updateWorkflowExecutionAssigneesInput = z.object({
   removeCc: z.array(z.string().min(1)).max(20).optional().describe("User ids to remove from CC."),
 });
 
-export const getWorkflowExecutionInput = z.object({
-  workflowExecutionId: z.string().min(1),
-  includeActions: z.boolean().optional(),
-});
-
-export const getPolicyInput = z.object({
-  policyFileName: z.string().min(1),
-});
-
-export const listPoliciesInput = z.object({
+export const getPoliciesInput = z.object({
+  /** When set, fetch that file (filename coerced to *.policy.md). Omit to list. */
+  policyFileName: z.string().min(1).optional(),
   workflowId: z.string().optional(),
 });
 
@@ -1111,54 +1195,28 @@ export const getPlansSupportFileInput = z.object({
 
 export const listWorkflowCatalogInput = z.object({});
 
-/** API operation coverage (OpenAPI ops + denorm coverage) — CLI ≥ 0.1.28 */
-export const listApiOperationServicesInput = z.object({});
-
-export const listApiOperationsInput = z.object({
+/** API operation coverage (OpenAPI ops + denorm coverage). No identity args lists services. */
+export const getApiOperationsInput = z.object({
+  /** TestChimp operation id (ULID PK). Preferred for detail. */
+  id: z.string().optional(),
   /** Preferred: repo-relative OpenAPI root path. */
   rootFilePath: z.string().optional(),
   /** Alias for rootFilePath resolution; internal service key. */
   serviceKey: z.string().optional(),
+  oasOperationId: z.string().optional(),
+  httpMethod: z.string().optional(),
+  pathTemplate: z.string().optional(),
   includeManual: z.boolean().optional(),
   includeRemoved: z.boolean().optional(),
 });
-
-export const getApiOperationDetailInput = z
-  .object({
-    /** TestChimp operation id (ULID PK). Preferred. */
-    id: z.string().optional(),
-    rootFilePath: z.string().optional(),
-    serviceKey: z.string().optional(),
-    oasOperationId: z.string().optional(),
-    httpMethod: z.string().optional(),
-    pathTemplate: z.string().optional(),
-    includeManual: z.boolean().optional(),
-    includeRemoved: z.boolean().optional(),
-  })
-  .superRefine((v, ctx) => {
-    const id = v.id?.trim();
-    const root = v.rootFilePath?.trim();
-    const service = v.serviceKey?.trim();
-    const oas = v.oasOperationId?.trim();
-    const method = v.httpMethod?.trim();
-    const path = v.pathTemplate?.trim();
-    const hasService = !!(root || service);
-    if (id) return;
-    if (oas && hasService) return;
-    if (method && path && hasService) return;
-    if (oas && !hasService) return; // server allows project-wide oas fallback
-    ctx.addIssue({
-      code: "custom",
-      message:
-        "Provide --id (TestChimp operation ULID), or --root-file-path/--service-key with --oas-operation-id, " +
-        "or --root-file-path/--service-key with --http-method and --path-template",
-    });
-  });
 
 /** Performance run kind persisted by the Phase 2 performance API. */
 export const perfRunKindSchema = z.enum(["JOURNEY", "COMPOSITE"]);
 
 export const listPerfRunsInput = z.object({
+  /** When set, fetch that run (replaces get-perf-run). */
+  runId: z.string().min(1).optional(),
+  includeRaw: z.boolean().optional(),
   testchimpId: z.string().min(1).optional(),
   kind: perfRunKindSchema.optional(),
   branchName: z.string().min(1).optional(),
@@ -1168,11 +1226,6 @@ export const listPerfRunsInput = z.object({
   environment: z.string().min(1).optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
   offset: z.coerce.number().int().nonnegative().optional(),
-});
-
-export const getPerfRunInput = z.object({
-  runId: z.string().min(1),
-  includeRaw: z.boolean().optional(),
 });
 
 export const listPerfBaselinesInput = z.object({

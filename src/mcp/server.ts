@@ -85,7 +85,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
       },
       async (args) => {
         const onProgress =
-          def.kebab === "provision-ephemeral-environment-and-wait"
+          def.kebab === "ephemeral-environment"
             ? async (message: string) => {
                 try {
                   await server.sendLoggingMessage({ level: "info", data: message });
