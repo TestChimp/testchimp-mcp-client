@@ -58,3 +58,5 @@ New tools and 2.0 request shapes:
 - `get-release` — `version` plus optional `detail=GATE`. Omit `version` to list (`environment`, `pageSize`, `pageToken`, `excludeArchived`).
 
 CLI subcommands match the kebab-case MCP names. Nested `bot` / `workspace` aliases (`bot ack`, `bot register-profile`, `workspace save-creds`, …) are unchanged.
+
+**CLI release labels (2.0.1):** pass a release catalog version with `--release <label>` (alias `--release-version`). Do not use `--version` — that prints the CLI version only. Applies to `get-release`, `get-release-details` (alias of `get-release`), `upsert-release`, `manage-test-run`, and every other command that takes a release label. MCP / `--json-input` field names stay `version` on `get-release` and `upsert-release`.
