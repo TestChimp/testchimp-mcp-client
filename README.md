@@ -175,7 +175,7 @@ docker run -p 8080:8080 -e TESTCHIMP_MCP_PUBLIC_URL=https://mcp.example.com test
 
 ## MCP API 2.0.0
 
-`@testchimp/cli` **2.0.0** matches TestChimp MCP API 2.0.0 (81 tools). Several 1.x tools were consolidated:
+`@testchimp/cli` **2.0.0** matches TestChimp MCP API 2.0.0 (85 tools, including all 68 `/api/mcp/*` paths plus bot/workspace helpers). Several 1.x tools were consolidated:
 
 | Old tool | New tool |
 |---|---|

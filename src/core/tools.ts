@@ -48,6 +48,28 @@ function platformToProtoEnum(platform: "web" | "ios" | "android"): string {
   }
 }
 
+function asInt64String(v: unknown): string | undefined {
+  if (v == null || v === "") return undefined;
+  const s = String(v).trim();
+  return s === "" ? undefined : s;
+}
+
+/** Map short MCP enum aliases (GATE, DAST, FIND) to OpenAPI proto names. */
+function mcpEnum(prefix: string, value: string): string {
+  const v = value.trim().toUpperCase().replace(/-/g, "_");
+  if (v.startsWith(prefix) || v.includes("UNSPECIFIED") || v.startsWith("UNKNOWN_")) return v;
+  return `${prefix}${v}`;
+}
+
+function dueDateToInt64String(v: string | number): string {
+  if (typeof v === "number") return String(Math.trunc(v));
+  const s = v.trim();
+  if (/^-?\d+$/.test(s)) return s;
+  const ms = Date.parse(s);
+  if (!Number.isNaN(ms)) return String(ms);
+  return s;
+}
+
 /** Build ExecutionScope JSON after Zod parse (platform aliases already normalized). */
 function executionScopeBody(scope: z.infer<typeof S.executionScopeSchema>): Record<string, unknown> {
   return {
@@ -74,6 +96,9 @@ function listCoverageBody(args: z.infer<typeof S.listCoverageInput>): Record<str
     body.includeNonCoveredTestScenarios = args.includeNonCoveredTestScenarios;
   }
   if (args.branchName != null && args.branchName.trim() !== "") body.branchName = args.branchName.trim();
+  const coverageBranchId = asInt64String(args.branchId);
+  if (coverageBranchId) body.branchId = coverageBranchId;
+  if (args.timeWindow != null) body.timeWindow = args.timeWindow;
   if (args.platform != null) body.platform = platformToProtoEnum(args.platform);
   if (args.recordTypes != null && args.recordTypes.length > 0) {
     const normalized = args.recordTypes.map((t) => {
@@ -101,6 +126,9 @@ function listExecutionBody(args: z.infer<typeof S.listExecutionInput>): Record<s
   if (args.environment != null) body.environment = args.environment;
   if (args.scope != null) body.scope = normalizeScope(args.scope);
   if (args.branchName != null && args.branchName.trim() !== "") body.branchName = args.branchName.trim();
+  const historyBranchId = asInt64String(args.branchId);
+  if (historyBranchId) body.branchId = historyBranchId;
+  if (args.timeWindow != null) body.timeWindow = args.timeWindow;
   if (args.scenarioId != null && args.scenarioId.trim() !== "") body.scenarioId = args.scenarioId.trim();
   if (args.testId != null && args.testId.trim() !== "") body.testId = args.testId.trim();
   const dimensionFilters = [...(args.dimensionFilters ?? [])];
@@ -283,6 +311,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "list-test-planning-trends",
+    description:
+      "Time-series test-planning trends for a release/environment/branch. Optional coverageScope, " +
+      "scenarioId[], userStoryId[], userStoryIdInScope[], platform, timeWindow, branchId.",
+    inputSchema: S.listTestPlanningTrendsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listTestPlanningTrendsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.release) body.release = a.release;
+      if (a.environment) body.environment = a.environment;
+      if (a.timeWindow) body.timeWindow = a.timeWindow;
+      if (a.coverageScope != null) body.coverageScope = normalizeScope(a.coverageScope);
+      const branchId = asInt64String(a.branchId);
+      if (branchId) body.branchId = branchId;
+      if (a.branchName?.trim()) body.branchName = a.branchName.trim();
+      if (a.scenarioId?.length) body.scenarioId = a.scenarioId;
+      if (a.userStoryId?.length) body.userStoryId = a.userStoryId;
+      if (a.userStoryIdInScope?.length) body.userStoryIdInScope = a.userStoryIdInScope;
+      if (a.platform) body.platform = platformToProtoEnum(a.platform);
+      return postMcp("/api/mcp/list_test_planning_trends", body);
+    },
+  },
+  {
     kebab: "get-execution-history",
     description:
       "Fetch SmartTest execution history for a testId (top 5 recent runs), an optional platform-rooted folder/file scope, or a scenario when scenarioId is set. " +
@@ -293,6 +344,49 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_execution_history", listExecutionBody(args as z.infer<typeof S.listExecutionInput>));
       return json;
+    },
+  },
+  {
+    kebab: "list-execution-job-dimension-values",
+    description:
+      "List distinct execution-job dimension values (platform, device family, OS version, screen " +
+      "resolution, orientation) for filtering get-execution-history. Optional scenarioId, environment, " +
+      "release, timeWindow, branchId, branchName, dimensionFilters, dimension.",
+    inputSchema: S.listExecutionJobDimensionValuesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listExecutionJobDimensionValuesInput>;
+      const body: Record<string, unknown> = {};
+      if (a.scenarioId?.trim()) body.scenarioId = a.scenarioId.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.release?.trim()) body.release = a.release.trim();
+      if (a.timeWindow) body.timeWindow = a.timeWindow;
+      const branchId = asInt64String(a.branchId);
+      if (branchId) body.branchId = branchId;
+      if (a.branchName?.trim()) body.branchName = a.branchName.trim();
+      if (a.dimensionFilters?.length) body.dimensionFilters = a.dimensionFilters;
+      if (a.dimension) body.dimension = a.dimension;
+      return postMcp("/api/mcp/list_execution_job_dimension_values", body);
+    },
+  },
+  {
+    kebab: "ingest-scenario-execution",
+    description:
+      "Record a scenario execution result (manual or imported). Provide scenarioOrdinalId and/or externalId, " +
+      "plus result (SMART_TEST_EXECUTION_*). Optional release, testRunLabel, environment, platform, notes. " +
+      "Response is the ingested execution record.",
+    inputSchema: S.ingestScenarioExecutionInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.ingestScenarioExecutionInput>;
+      const body: Record<string, unknown> = { result: a.result };
+      const ordinal = asInt64String(a.scenarioOrdinalId);
+      if (ordinal) body.scenarioOrdinalId = ordinal;
+      if (a.externalId?.trim()) body.externalId = a.externalId.trim();
+      if (a.release?.trim()) body.release = a.release.trim();
+      if (a.testRunLabel?.trim()) body.testRunLabel = a.testRunLabel.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.platform) body.platform = platformToProtoEnum(a.platform);
+      if (a.notes != null) body.notes = a.notes;
+      return postMcp("/api/mcp/ingest_scenario_execution", body);
     },
   },
   {
@@ -348,7 +442,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const body: Record<string, unknown> = {
         platformFilePath: a.platformFilePath,
         title: a.title,
-        userStoryOrdinalId: a.userStoryOrdinalId,
+        userStoryOrdinalId: String(a.userStoryOrdinalId),
       };
       const trace = buildAgentTraceabilityPayload(a);
       if (trace) body.agentTraceability = trace;
@@ -397,7 +491,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getUserStoriesInput>;
       return postMcp("/api/mcp/get_user_stories", {
-        userStoryOrdinalIds: a.userStoryOrdinalIds,
+        userStoryOrdinalIds: a.userStoryOrdinalIds.map((id) => String(id)),
       });
     },
   },
@@ -413,7 +507,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getTestScenariosInput>;
       const body: Record<string, unknown> = {};
-      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds;
+      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds.map((id) => String(id));
       if (a.externalIds?.length) body.externalIds = a.externalIds;
       return postMcp("/api/mcp/get_test_scenarios", body);
     },
@@ -518,18 +612,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "list-issues",
     description:
-      "Search / filter TestChimp issues in the current project. Optional filters: searchText, issueId, " +
-      "status / statuses, issueType, category, severity, assignee, labels, release, environment, limit, offset. " +
+      "Search / filter TestChimp issues in the current project. Optional filters: searchText, " +
+      "statuses, severities, assignee, assignees, labels, release, limit, offset, ordinalIds. " +
       "Use get-issue-details for one issue by ordinal. Authenticated via project API key.",
     inputSchema: S.listIssuesInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.listIssuesInput>;
-      const body: Record<string, unknown> = { ...a };
+      const body: Record<string, unknown> = {};
       if (a.searchText != null) body.searchText = String(a.searchText).trim();
-      if (a.issueId != null) body.issueId = a.issueId.trim();
+      const statuses = [...(a.statuses ?? [])];
+      if (a.status && !statuses.includes(a.status)) statuses.push(a.status);
+      if (statuses.length) body.statuses = statuses;
+      const severities = [...(a.severities ?? [])];
+      if (a.severity && !severities.includes(a.severity)) severities.push(a.severity);
+      if (severities.length) body.severities = severities;
       if (a.assignee != null) body.assignee = a.assignee.trim();
+      if (a.assignees?.length) body.assignees = a.assignees;
+      if (a.labels?.length) body.labels = a.labels;
       if (a.release != null) body.release = a.release.trim();
-      if (a.environment != null) body.environment = a.environment.trim();
+      if (a.limit != null) body.limit = a.limit;
+      if (a.offset != null) body.offset = a.offset;
+      const ordinalIds = [...(a.ordinalIds ?? []).map((id) => String(id))];
+      if (a.issueId?.trim()) ordinalIds.push(a.issueId.trim());
+      if (ordinalIds.length) body.ordinalIds = ordinalIds;
       return postMcp("/api/mcp/list_issues", body);
     },
   },
@@ -556,14 +661,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.status) body.status = a.status;
       if (a.ignoreReason) body.ignoreReason = a.ignoreReason;
       if (a.reportedReleaseId != null) body.reportedReleaseId = a.reportedReleaseId;
-      if (a.dueDateMillis != null) body.dueDateMillis = a.dueDateMillis;
+      if (a.dueDateMillis != null) body.dueDateMillis = dueDateToInt64String(a.dueDateMillis);
       if (a.assignee != null) body.assignee = a.assignee;
       if (a.linkTargets?.length) body.linkTargets = a.linkTargets;
       if (a.labels?.length) body.labels = a.labels;
+      if (a.addLabels?.length) body.addLabels = a.addLabels;
+      if (a.removeLabels?.length) body.removeLabels = a.removeLabels;
       if (a.source != null) body.source = a.source;
       if (a.environment != null) body.environment = a.environment;
-      if (a.attachments?.length) body.attachments = a.attachments;
-      if (a.artifactReference != null) body.artifactReference = a.artifactReference;
       const trace = buildAgentTraceabilityPayload(a);
       if (trace) body.agentTraceability = trace;
       return postMcp("/api/mcp/upsert_issue", body);
@@ -578,8 +683,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.markPlanItemsImplementationDoneInput>;
       const body: Record<string, unknown> = {};
-      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds;
-      if (a.userStoryOrdinalIds?.length) body.userStoryOrdinalIds = a.userStoryOrdinalIds;
+      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds.map((id) => String(id));
+      if (a.userStoryOrdinalIds?.length) body.userStoryOrdinalIds = a.userStoryOrdinalIds.map((id) => String(id));
       return postMcp("/api/mcp/mark_plan_items_implementation_done", body);
     },
   },
@@ -594,7 +699,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const a = args as z.infer<typeof S.updatePlanItemsLifecycleStatusInput>;
       return postMcp("/api/mcp/update_plan_items_lifecycle_status", {
         entityType: a.entityType,
-        ordinalId: a.ordinalId,
+        ordinalId: String(a.ordinalId),
         status: a.status,
       });
     },
@@ -624,19 +729,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: S.ephemeralEnvironmentInput,
     execute: async (args, { postMcp, onProgress }) => {
       const a = args as z.infer<typeof S.ephemeralEnvironmentInput>;
-      if (a.action === "CONFIG") {
-        return postMcp("/api/mcp/ephemeral_environment", { action: "CONFIG" });
+      const action = mcpEnum("MCP_EPHEMERAL_ENVIRONMENT_ACTION_", a.action);
+      if (action.endsWith("CONFIG")) {
+        return postMcp("/api/mcp/ephemeral_environment", { action });
       }
-      if (a.action === "STATUS") {
+      if (action.endsWith("STATUS")) {
         return postMcp("/api/mcp/ephemeral_environment", {
-          action: "STATUS",
+          action,
           bnsEnvironmentId: a.bnsEnvironmentId,
         });
       }
       const wait = a.wait !== false;
       if (!wait) {
-        const body: Record<string, unknown> = { action: "PROVISION", wait: false };
+        const body: Record<string, unknown> = { action, wait: false };
         if (a.branchName != null && a.branchName.trim() !== "") body.branchName = a.branchName.trim();
+        if (a.maxWaitMinutes != null) body.maxWaitMinutes = a.maxWaitMinutes;
         return postMcp("/api/mcp/ephemeral_environment", body);
       }
       return runProvisionEphemeralEnvironmentAndWait(postMcp, onProgress, {
@@ -833,6 +940,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const a = args as z.infer<typeof S.listScreenStatesInput>;
       const body: Record<string, unknown> = {};
       if (a.environment != null && a.environment.trim() !== "") body.environment = a.environment.trim();
+      if (a.platform) body.platform = platformToProtoEnum(a.platform);
+      if (a.startCommitSha?.trim()) body.startCommitSha = a.startCommitSha.trim();
+      if (a.endCommitSha?.trim()) body.endCommitSha = a.endCommitSha.trim();
       return postMcp("/api/mcp/list_screen_states", body);
     },
   },
@@ -848,7 +958,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const a = args as z.infer<typeof S.getReleaseInput>;
       const body: Record<string, unknown> = {};
       if (a.version?.trim()) body.version = a.version.trim();
-      if (a.detail) body.detail = a.detail;
+      if (a.detail) body.detail = mcpEnum("MCP_RELEASE_VIEW_", a.detail);
       if (a.environment?.trim()) body.environment = a.environment.trim();
       if (a.pageSize != null) body.pageSize = a.pageSize;
       if (a.pageToken?.trim()) body.pageToken = a.pageToken.trim();
@@ -869,13 +979,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const gitCommitSha = (a.gitCommitSha ?? a.gitSha)?.trim();
       if (gitCommitSha) body.gitCommitSha = gitCommitSha;
       if (a.priorReleaseVersion?.trim()) body.priorReleaseVersion = a.priorReleaseVersion.trim();
-      if (a.releaseType?.trim()) body.releaseType = a.releaseType.trim();
+      if (a.releaseType) body.releaseType = a.releaseType;
       if (a.lifecycleStatus?.trim()) body.lifecycleStatus = a.lifecycleStatus.trim();
       if (a.environment?.trim()) body.environment = a.environment.trim();
-      if (a.dueDateMillis != null) body.dueDateMillis = a.dueDateMillis;
-      if (a.branchId?.trim()) body.branchId = a.branchId.trim();
-      const trace = buildAgentTraceabilityPayload(a);
-      if (trace) body.agentTraceability = trace;
+      if (a.dueDateMillis != null) body.dueDateMillis = dueDateToInt64String(a.dueDateMillis);
+      const branchId = asInt64String(a.branchId);
+      if (branchId) body.branchId = branchId;
       return postMcp("/api/mcp/upsert_release", body);
     },
   },
@@ -896,12 +1005,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.release?.trim()) body.release = a.release.trim();
       if (a.title?.trim()) body.title = a.title.trim();
       if (a.environment?.trim()) body.environment = a.environment.trim();
-      if (a.dueDate != null && a.dueDate !== "") body.dueDate = a.dueDate;
+      if (a.dueDate != null && a.dueDate !== "") body.dueDate = dueDateToInt64String(a.dueDate);
       if (a.status) body.status = a.status;
       if (a.batchInvocationIds?.length) body.batchInvocationIds = a.batchInvocationIds;
-      if (a.commitRange) body.commitRange = a.commitRange;
-      const trace = buildAgentTraceabilityPayload(a);
-      if (trace) body.agentTraceability = trace;
+      if (a.commitRange) body.commitRange = mcpEnum("MCP_TEST_RUN_COMMIT_RANGE_", a.commitRange);
+      if (a.limitWhenNoPrior != null) body.limitWhenNoPrior = a.limitWhenNoPrior;
       return postMcp("/api/mcp/manage_test_run", body);
     },
   },
@@ -915,7 +1023,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: S.getSecurityScanConfigInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getSecurityScanConfigInput>;
-      return postMcp("/api/mcp/get_security_scan_config", { scanId: a.id.trim() });
+      return postMcp("/api/mcp/get_security_scan_config", { scanId: (a.scanId ?? a.id)!.trim() });
     },
   },
   {
@@ -928,7 +1036,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updateScanProgressInput>;
       return postMcp("/api/mcp/update_scan_progress", {
-        scanId: a.id.trim(),
+        scanId: (a.scanId ?? a.id)!.trim(),
         status: a.status,
       });
     },
@@ -943,13 +1051,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: S.reportScanFindingsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.reportScanFindingsInput>;
-      const { readFile } = await import("node:fs/promises");
-      const reportJson = await readFile(a.reportFile, "utf8");
-      return postMcp("/api/mcp/report_scan_findings", {
-        scanId: a.id.trim(),
-        scanner: a.scanner,
+      let reportJson = a.reportJson;
+      if (!reportJson && a.reportFile) {
+        const { readFile } = await import("node:fs/promises");
+        reportJson = await readFile(a.reportFile, "utf8");
+      }
+      const body: Record<string, unknown> = {
+        scanId: (a.scanId ?? a.id)!.trim(),
+        scanner: mcpEnum("MCP_SCAN_FINDER_", a.scanner),
         reportJson,
-      });
+      };
+      if (a.markCompleted != null) body.markCompleted = a.markCompleted;
+      return postMcp("/api/mcp/report_scan_findings", body);
     },
   },
   {
@@ -960,7 +1073,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: S.upsertScreenStatesInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.upsertScreenStatesInput>;
-      return postMcp("/api/mcp/upsert_screen_states", { screenStates: a.screenStates });
+      const body: Record<string, unknown> = { screenStates: a.screenStates };
+      if (a.gitCommitSha?.trim()) body.gitCommitSha = a.gitCommitSha.trim();
+      return postMcp("/api/mcp/upsert_screen_states", body);
     },
   },
   {
@@ -972,8 +1087,39 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.listSemanticSimilarTestsInput>;
       const body: Record<string, unknown> = {};
-      if (a.scope != null) body.scope = normalizeScope(a.scope);
+      if (a.scope != null) {
+        const folderPath = normalizeScope({
+          folderPath: a.scope.folderPath,
+          filePaths: a.scope.filePaths,
+        }).folderPath;
+        const scope: Record<string, unknown> = {};
+        if (folderPath?.length) scope.folderPath = folderPath;
+        if (a.scope.ids?.length) scope.ids = a.scope.ids;
+        if (a.scope.artifactType) scope.artifactType = a.scope.artifactType;
+        if (Object.keys(scope).length) body.scope = scope;
+      }
       return postMcp("/api/mcp/list_semantic_similar_tests", body);
+    },
+  },
+  {
+    kebab: "select-smart-smoke-tests",
+    description:
+      "Select a SmartTest smoke subset from relatedTests / taggedTests / suiteCandidates with optional " +
+      "includeTags, maxTimeBudgetMins, maxTests, suitePercentage, branchName, environment.",
+    inputSchema: S.selectSmartSmokeTestsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.selectSmartSmokeTestsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.relatedTests?.length) body.relatedTests = a.relatedTests;
+      if (a.includeTags?.length) body.includeTags = a.includeTags;
+      if (a.taggedTests?.length) body.taggedTests = a.taggedTests;
+      if (a.suiteCandidates?.length) body.suiteCandidates = a.suiteCandidates;
+      if (a.maxTimeBudgetMins != null) body.maxTimeBudgetMins = a.maxTimeBudgetMins;
+      if (a.maxTests != null) body.maxTests = a.maxTests;
+      if (a.suitePercentage != null) body.suitePercentage = a.suitePercentage;
+      if (a.branchName?.trim()) body.branchName = a.branchName.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      return postMcp("/api/mcp/select_smart_smoke_tests", body);
     },
   },
   {
@@ -1020,7 +1166,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         sourceEntityType: a.sourceEntityType,
       };
       if (a.sourceTest) body.sourceTest = a.sourceTest;
-      if (a.sourceOrdinalId != null) body.sourceOrdinalId = Number(a.sourceOrdinalId);
+      if (a.sourceOrdinalId != null) body.sourceOrdinalId = String(a.sourceOrdinalId);
       if (a.sourceEventTitle) body.sourceEventTitle = a.sourceEventTitle;
       if (a.targetEntityTypes?.length) body.targetEntityTypes = a.targetEntityTypes;
       if (a.limit != null) body.limit = a.limit;
@@ -1044,9 +1190,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       };
       if (a.focusTest) body.focusTest = a.focusTest;
       if (otherTest) body.otherTest = otherTest;
-      if (a.distinctTest) body.distinctTest = a.distinctTest;
-      if (a.focusOrdinalId != null) body.focusOrdinalId = Number(a.focusOrdinalId);
-      if (a.otherOrdinalId != null) body.otherOrdinalId = Number(a.otherOrdinalId);
+      const focusOrdinalId = asInt64String(a.focusOrdinalId);
+      const otherOrdinalId = asInt64String(a.otherOrdinalId);
+      if (focusOrdinalId) body.focusOrdinalId = focusOrdinalId;
+      if (otherOrdinalId) body.otherOrdinalId = otherOrdinalId;
       if (a.focusEventTitle) body.focusEventTitle = a.focusEventTitle;
       if (a.otherEventTitle) body.otherEventTitle = a.otherEventTitle;
       return postMcp("/api/mcp/set_entity_distinct", body);
@@ -1146,27 +1293,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       } else if (actionNorm === "FAILED" || actionNorm === "ACTION_FAILED") {
         actionType = "ACTION_FAILED";
       }
-      const body: Record<string, unknown> = {
-        workflowId: a.workflowId,
-        workflowExecutionId: a.workflowExecutionId,
-        actionType,
-        actorType,
-        entityType: a.entityType,
-      };
-      if (sessionId) body.chimphandsSessionId = sessionId;
-      if (a.policyFile) body.policyFile = a.policyFile;
-      if (a.policyVersion) body.policyVersion = a.policyVersion;
-      const gitSha = resolveGitHeadSha(a.gitSha);
-      if (gitSha) body.gitSha = gitSha;
-      if (a.userId) body.userId = a.userId;
-      else if (!sessionId && currentRequestAuth()?.isolated !== true && process.env.TESTCHIMP_USER_ID) {
-        // ChimpHands: server resolves responsible user from SESSION_ID; do not stamp service account.
-        // Isolated (remote multi-tenant HTTP): the server attributes to the OAuth token's user.
-        body.userId = process.env.TESTCHIMP_USER_ID;
-      }
-      if (a.branchName) body.branchName = a.branchName;
-      // Nested traceability wins for agentModel / skillVersion / cliVersion;
-      // fill from flat/env/package when nested omits them.
       const { skillVersion, cliVersion } = resolveToolchainVersions({
         skillVersion: a.skillVersion,
         cliVersion: a.cliVersion,
@@ -1175,36 +1301,35 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             ? (a.traceability as Record<string, unknown>)
             : null,
       });
-      if (a.traceability && typeof a.traceability === "object") {
-        const nested = { ...a.traceability } as Record<string, unknown>;
-        const nestedModel =
-          nested.agentModel != null && String(nested.agentModel).trim() !== ""
-            ? String(nested.agentModel).trim()
-            : undefined;
-        const flatModel = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
-        if (nestedModel) {
-          nested.agentModel = nestedModel;
-        } else if (flatModel) {
-          nested.agentModel = flatModel;
-        }
-        if (skillVersion) nested.skillVersion = skillVersion;
-        if (cliVersion) nested.cliVersion = cliVersion;
-        body.traceability = nested;
-      } else {
-        const model = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
-        const nested: Record<string, unknown> = {};
-        if (model) nested.agentModel = model;
-        if (skillVersion) nested.skillVersion = skillVersion;
-        if (cliVersion) nested.cliVersion = cliVersion;
-        if (Object.keys(nested).length > 0) {
-          body.traceability = nested;
-        }
+      const trace: Record<string, unknown> = {
+        ...(a.traceability && typeof a.traceability === "object" ? a.traceability : {}),
+        workflowId: a.workflowId,
+        workflowExecutionId: a.workflowExecutionId,
+        actorType,
+      };
+      if (a.policyFile) trace.policyFile = a.policyFile;
+      if (a.policyVersion) trace.policyVersion = a.policyVersion;
+      const gitSha = resolveGitHeadSha(a.gitSha);
+      if (gitSha) trace.gitSha = gitSha;
+      if (a.userId) trace.userId = a.userId;
+      else if (!sessionId && currentRequestAuth()?.isolated !== true && process.env.TESTCHIMP_USER_ID) {
+        trace.userId = process.env.TESTCHIMP_USER_ID;
       }
-      if (a.test) {
-        body.test = a.test;
-      } else if (a.entityIdentity) {
-        body.entityIdentity = a.entityIdentity;
-      }
+      if (a.branchName) trace.branchName = a.branchName;
+      const model = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
+      if (model && !trace.agentModel) trace.agentModel = model;
+      if (skillVersion) trace.skillVersion = skillVersion;
+      if (cliVersion) trace.cliVersion = cliVersion;
+
+      const body: Record<string, unknown> = {
+        entityType: a.entityType,
+        actionType,
+        traceability: trace,
+      };
+      if (a.chimphandsSessionId?.trim()) body.chimphandsSessionId = a.chimphandsSessionId.trim();
+      else if (sessionId) body.chimphandsSessionId = sessionId;
+      if (a.test) body.test = a.test;
+      else if (a.entityIdentity) body.entityIdentity = a.entityIdentity;
       return postMcp("/api/mcp/report_agent_action", body);
     },
   },
@@ -1366,6 +1491,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.dataset) body.dataset = a.dataset;
       if (a.llmMode) body.llmMode = a.llmMode;
       if (a.environment) body.environment = a.environment;
+      if (a.release) body.release = a.release;
+      if (a.folderPath) body.folderPath = a.folderPath;
+      if (a.fileIds?.length) body.fileIds = a.fileIds;
+      if (a.batchInvocationId) body.batchInvocationId = a.batchInvocationId;
+      if (a.groupByBatch != null) body.groupByBatch = a.groupByBatch;
       if (a.limit != null) body.limit = a.limit;
       if (a.offset != null) body.offset = a.offset;
       return postMcp("/api/mcp/list_perf_runs", body);
@@ -1391,13 +1521,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: S.promotePerfBaselineInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.promotePerfBaselineInput>;
-      const body: Record<string, unknown> = {
+      return postMcp("/api/mcp/promote_perf_baseline", {
         runId: a.runId,
         envClass: a.envClass,
-      };
-      const trace = buildAgentTraceabilityPayload(a);
-      if (trace) body.agentTraceability = trace;
-      return postMcp("/api/mcp/promote_perf_baseline", body);
+      });
     },
   },
   {
@@ -1511,6 +1638,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.testId) body.testId = a.testId;
       if (a.operationId) body.operationId = a.operationId;
       if (a.limit != null) body.limit = a.limit;
+      if (a.executionId) body.executionId = a.executionId;
+      if (a.retryCount != null) body.retryCount = a.retryCount;
+      if (a.includePayloads != null) body.includePayloads = a.includePayloads;
+      if (a.interactionId) body.interactionId = a.interactionId;
       return postMcp("/api/mcp/list_api_operation_interactions", body);
     },
   },

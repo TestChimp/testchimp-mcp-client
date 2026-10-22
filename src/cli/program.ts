@@ -279,6 +279,25 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("list-test-planning-trends")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-test-planning-trends")!.description)
+    .addOption(jsonInputOption())
+    .option("--release <s>")
+    .option("--environment <s>")
+    .option("--branch-name <s>")
+    .option("--branch-id <id>")
+    .option("--platform <web|ios|android>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.release) body.release = String(opts.release);
+      if (opts.environment) body.environment = String(opts.environment);
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.branchId) body.branchId = String(opts.branchId);
+      if (opts.platform) body.platform = String(opts.platform);
+      console.log(await runTool("list-test-planning-trends", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
     .command("get-execution-history")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-execution-history")!.description)
     .addOption(jsonInputOption())
@@ -307,6 +326,51 @@ export function buildCliProgram(): Command {
       const merged = mergeBodies(body, opts.jsonInput);
       const out = await runTool("get-execution-history", merged, { postMcp });
       console.log(out);
+    });
+
+  program
+    .command("list-execution-job-dimension-values")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-execution-job-dimension-values")!.description)
+    .addOption(jsonInputOption())
+    .option("--scenario-id <id>")
+    .option("--environment <s>")
+    .option("--release <s>")
+    .option("--branch-name <s>")
+    .option("--branch-id <id>")
+    .option("--dimension <dimension>", "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION | …")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.scenarioId) body.scenarioId = String(opts.scenarioId);
+      if (opts.environment) body.environment = String(opts.environment);
+      if (opts.release) body.release = String(opts.release);
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.branchId) body.branchId = String(opts.branchId);
+      if (opts.dimension) body.dimension = String(opts.dimension);
+      console.log(await runTool("list-execution-job-dimension-values", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
+    .command("ingest-scenario-execution")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "ingest-scenario-execution")!.description)
+    .addOption(jsonInputOption())
+    .option("--scenario-ordinal-id <id>")
+    .option("--external-id <id>")
+    .requiredOption("--result <status>", "SMART_TEST_EXECUTION_* status")
+    .option("--release <s>")
+    .option("--test-run-label <s>")
+    .option("--environment <s>")
+    .option("--platform <web|ios|android>")
+    .option("--notes <text>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = { result: String(opts.result).trim() };
+      if (opts.scenarioOrdinalId) body.scenarioOrdinalId = String(opts.scenarioOrdinalId);
+      if (opts.externalId) body.externalId = String(opts.externalId);
+      if (opts.release) body.release = String(opts.release);
+      if (opts.testRunLabel) body.testRunLabel = String(opts.testRunLabel);
+      if (opts.environment) body.environment = String(opts.environment);
+      if (opts.platform) body.platform = String(opts.platform);
+      if (opts.notes) body.notes = String(opts.notes);
+      console.log(await runTool("ingest-scenario-execution", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
   program
@@ -614,15 +678,16 @@ export function buildCliProgram(): Command {
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-issues")!.description)
     .addOption(jsonInputOption())
     .option("--search <text>", "Full-text search")
-    .option("--issue-id <id>", "Issue ordinal id")
-    .option("--status <status>", "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED")
-    .option("--issue-type <type>", "BUG_ISSUE | SUGGESTION_ISSUE | OBSERVATION_ISSUE | TASK_ISSUE")
-    .option("--category <category>", "FUNCTIONAL | SECURITY | …")
-    .option("--severity <severity>", "LOW_SEVERITY | MEDIUM_SEVERITY | HIGH_SEVERITY | CRITICAL_SEVERITY")
+    .option("--issue-id <id>", "Issue ordinal id (alias for --ordinal-ids)")
+    .option("--status <status>", "Alias for a single statuses[] value")
+    .option("--statuses <csv>", "ACTIVE | IGNORED | FIXED | …")
+    .option("--severity <severity>", "Alias for a single severities[] value")
+    .option("--severities <csv>", "LOW_SEVERITY | MEDIUM_SEVERITY | …")
     .option("--assignee <userId>", "Assignee user id")
+    .option("--assignees <csv>", "Comma-separated assignee user ids")
     .option("--labels <csv>", "Comma-separated labels")
     .option("--release <label>", "Release label")
-    .option("--environment <name>", "Environment tag")
+    .option("--ordinal-ids <csv>", "Issue ordinal ids")
     .option("--limit <n>", "Maximum results", (v) => parseInt(v, 10))
     .option("--offset <n>", "Pagination offset", (v) => parseInt(v, 10))
     .action(async (opts) => {
@@ -630,15 +695,24 @@ export function buildCliProgram(): Command {
       if (opts.search) body.searchText = String(opts.search);
       if (opts.issueId) body.issueId = String(opts.issueId).trim();
       if (opts.status) body.status = String(opts.status).trim();
-      if (opts.issueType) body.issueType = String(opts.issueType).trim();
-      if (opts.category) body.category = String(opts.category).trim();
+      if (opts.statuses) {
+        body.statuses = String(opts.statuses).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
       if (opts.severity) body.severity = String(opts.severity).trim();
+      if (opts.severities) {
+        body.severities = String(opts.severities).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
       if (opts.assignee) body.assignee = String(opts.assignee).trim();
+      if (opts.assignees) {
+        body.assignees = String(opts.assignees).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
       if (opts.labels) {
         body.labels = String(opts.labels).split(",").map((s: string) => s.trim()).filter(Boolean);
       }
       if (opts.release) body.release = String(opts.release).trim();
-      if (opts.environment) body.environment = String(opts.environment).trim();
+      if (opts.ordinalIds) {
+        body.ordinalIds = String(opts.ordinalIds).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
       if (opts.limit != null && !Number.isNaN(opts.limit)) body.limit = opts.limit;
       if (opts.offset != null && !Number.isNaN(opts.offset)) body.offset = opts.offset;
       const out = await runTool("list-issues", mergeBodies(body, opts.jsonInput), { postMcp });
@@ -677,6 +751,8 @@ export function buildCliProgram(): Command {
       .option("--due-date-millis <ms>", "Due date as UTC epoch millis")
       .option("--assignee <userId>", "Assignee user id")
       .option("--labels <csv>", "Comma-separated labels")
+      .option("--add-labels <csv>", "Labels to add on update")
+      .option("--remove-labels <csv>", "Labels to remove on update")
       .option("--source <name>", "External ingest source identifier (stored as label source:<name>)")
       .option("--environment <name>", "Environment tag (defaults to QA when omitted)"),
   ).action(async (opts) => {
@@ -699,6 +775,12 @@ export function buildCliProgram(): Command {
         .split(",")
         .map((s: string) => s.trim())
         .filter(Boolean);
+    }
+    if (opts.addLabels) {
+      body.addLabels = String(opts.addLabels).split(",").map((s: string) => s.trim()).filter(Boolean);
+    }
+    if (opts.removeLabels) {
+      body.removeLabels = String(opts.removeLabels).split(",").map((s: string) => s.trim()).filter(Boolean);
     }
     if (opts.source) body.source = String(opts.source).trim();
     if (opts.environment) body.environment = String(opts.environment).trim();
@@ -1211,7 +1293,8 @@ export function buildCliProgram(): Command {
       .option("--due-date <date>", "Due date (YYYY-MM-DD, ISO datetime, or epoch millis)")
       .option("--status <status>", "ACTIVE | COMPLETED | ARCHIVED")
       .option("--batch-invocation-ids <csv>", "Comma-separated batch invocation ids")
-      .option("--commit-range <mode>", "FIND (discover) or LINK (attach unlinked batches)"),
+      .option("--commit-range <mode>", "FIND (discover) or LINK (attach unlinked batches)")
+      .option("--limit-when-no-prior <n>", "Max batches to consider when no prior release cut exists"),
   ).action(async (opts) => {
     const body: Record<string, unknown> = {
       ...collectAgentTraceabilityFlags(opts),
@@ -1232,6 +1315,7 @@ export function buildCliProgram(): Command {
         .filter(Boolean);
     }
     if (opts.commitRange) body.commitRange = String(opts.commitRange).trim().toUpperCase();
+    if (opts.limitWhenNoPrior != null) body.limitWhenNoPrior = Number(opts.limitWhenNoPrior);
     const merged = mergeBodies(body, opts.jsonInput) as { id?: string; release?: string };
     if (!(merged.id ?? "").toString().trim() && !(merged.release ?? "").toString().trim()) {
       throw new Error("release is required to create; pass --id to update");
@@ -1284,34 +1368,36 @@ export function buildCliProgram(): Command {
     .command("report-scan-findings")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-scan-findings")!.description)
     .addOption(jsonInputOption())
-    .option("--id <scanId>", "Security scan id")
+    .option("--id <scanId>", "Security scan id (alias of --scan-id)")
+    .option("--scan-id <scanId>", "Security scan id")
     .option("--scanner <scanner>", "DAST | SAST | DEPS | SECRETS")
     .option("--report-file <path>", "Path to the scanner JSON report")
+    .option("--mark-completed", "Mark the scan COMPLETED after ingest")
     .action(async (opts) => {
-      const body: Record<string, string> = {};
-      if (opts.id) body.id = String(opts.id);
+      const body: Record<string, unknown> = {};
+      if (opts.scanId) body.scanId = String(opts.scanId);
+      else if (opts.id) body.scanId = String(opts.id);
       if (opts.scanner) body.scanner = String(opts.scanner).trim().toUpperCase();
       if (opts.reportFile) body.reportFile = String(opts.reportFile);
-      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; scanner?: string; reportFile?: string };
-      if (!merged.id || String(merged.id).trim() === "") {
-        throw new Error("id is required");
+      if (opts.markCompleted) body.markCompleted = true;
+      const merged = mergeBodies(body, opts.jsonInput) as {
+        id?: string;
+        scanId?: string;
+        scanner?: string;
+        reportFile?: string;
+        reportJson?: string;
+        markCompleted?: boolean;
+      };
+      if (!(merged.scanId ?? merged.id ?? "").toString().trim()) {
+        throw new Error("scanId is required");
       }
       if (!merged.scanner || String(merged.scanner).trim() === "") {
         throw new Error("scanner is required (DAST | SAST | DEPS | SECRETS)");
       }
-      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
-        throw new Error("reportFile is required (--report-file)");
+      if (!(merged.reportFile ?? "").toString().trim() && !(merged.reportJson ?? "").toString().trim()) {
+        throw new Error("reportFile or reportJson is required");
       }
-      const out = await runTool(
-        "report-scan-findings",
-        {
-          id: String(merged.id).trim(),
-          scanner: String(merged.scanner).trim().toUpperCase(),
-          reportFile: String(merged.reportFile).trim(),
-        },
-        { postMcp },
-      );
-      console.log(out);
+      console.log(await runTool("report-scan-findings", merged, { postMcp }));
     });
 
   program
@@ -1347,6 +1433,29 @@ export function buildCliProgram(): Command {
       const merged = mergeBodies({}, opts.jsonInput);
       const out = await runTool("mark-tests-for-review", merged, { postMcp });
       console.log(out);
+    });
+
+  program
+    .command("select-smart-smoke-tests")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "select-smart-smoke-tests")!.description)
+    .addOption(jsonInputOption())
+    .option("--include-tags <csv>")
+    .option("--max-tests <n>")
+    .option("--max-time-budget-mins <n>")
+    .option("--suite-percentage <n>")
+    .option("--branch-name <s>")
+    .option("--environment <s>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.includeTags) {
+        body.includeTags = String(opts.includeTags).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (opts.maxTests != null) body.maxTests = Number(opts.maxTests);
+      if (opts.maxTimeBudgetMins != null) body.maxTimeBudgetMins = Number(opts.maxTimeBudgetMins);
+      if (opts.suitePercentage != null) body.suitePercentage = Number(opts.suitePercentage);
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.environment) body.environment = String(opts.environment);
+      console.log(await runTool("select-smart-smoke-tests", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
   program
@@ -1658,6 +1767,10 @@ export function buildCliProgram(): Command {
     .option("--environment <name>")
     .option("--run-id <id>", "Fetch one run by id")
     .option("--include-raw", "Include the raw performance payload")
+    .option("--release <label>")
+    .option("--folder-path <path>")
+    .option("--batch-invocation-id <id>")
+    .option("--group-by-batch")
     .option("--limit <n>", "Maximum results", (v) => Number(v))
     .option("--offset <n>", "Pagination offset", (v) => Number(v))
     .action(async (opts) => {
@@ -1671,6 +1784,10 @@ export function buildCliProgram(): Command {
       if (opts.dataset) body.dataset = String(opts.dataset);
       if (opts.llmMode) body.llmMode = String(opts.llmMode);
       if (opts.environment) body.environment = String(opts.environment);
+      if (opts.release) body.release = String(opts.release);
+      if (opts.folderPath) body.folderPath = String(opts.folderPath);
+      if (opts.batchInvocationId) body.batchInvocationId = String(opts.batchInvocationId);
+      if (opts.groupByBatch) body.groupByBatch = true;
       if (opts.limit != null) body.limit = opts.limit;
       if (opts.offset != null) body.offset = opts.offset;
       console.log(await runTool("list-perf-runs", mergeBodies(body, opts.jsonInput), { postMcp }));

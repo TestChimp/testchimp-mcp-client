@@ -42,7 +42,10 @@ function mutating(
 export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "get-org-capabilities": readOnly("Get Org Capabilities"),
   "get-requirement-coverage": readOnly("Get Requirement Coverage"),
+  "list-test-planning-trends": readOnly("List Test Planning Trends"),
   "get-execution-history": readOnly("Get Execution History"),
+  "list-execution-job-dimension-values": readOnly("List Execution Job Dimension Values"),
+  "ingest-scenario-execution": mutating("Ingest Scenario Execution"),
   "fetch-execution-report": readOnly("Fetch Execution Report"),
   "create-user-story": mutating("Create User Story"),
   "create-test-scenario": mutating("Create Test Scenario"),
@@ -86,6 +89,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "report-scan-findings": mutating("Report Scan Findings"),
   "upsert-screen-states": mutating("Upsert Screen States", { idempotent: true }),
   "list-semantic-similar-tests": readOnly("List Semantic Similar Tests"),
+  "select-smart-smoke-tests": readOnly("Select Smart Smoke Tests"),
   "mark-tests-for-review": mutating("Mark Tests For Review"),
   "list-semantic-nearby": readOnly("List Semantic Nearby"),
   "set-entity-distinct": mutating("Set Entity Distinct", { idempotent: true }),

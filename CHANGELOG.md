@@ -2,7 +2,7 @@
 
 ## 2.0.0
 
-Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 81 tools.
+Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 85 tools.
 
 ### Added
 
@@ -15,7 +15,8 @@ Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 81
 - `list-issues`
 - `upsert-issue` — omit `issueId` + `title` to create; `issueId` to patch
 - `upsert-release` — `version` required; optional `gitCommitSha`, `priorReleaseVersion`, `releaseType`, `lifecycleStatus`, `environment` (create), `dueDateMillis` / `branchId` (update); response `{ release, created }`
-- `manage-test-run` — omit `id` to create (`release` required); optional `title`, `environment` (default QA), `dueDate`, `status` (ACTIVE/COMPLETED/ARCHIVED), `batchInvocationIds`, `commitRange` FIND|LINK
+- `manage-test-run` — omit `id` to create (`release` required); optional `title`, `environment` (default QA), `dueDate` (int64), `status` (ACTIVE/COMPLETED/ARCHIVED), `batchInvocationIds`, `commitRange` FIND|LINK, `limitWhenNoPrior`
+- `ingest-scenario-execution`, `list-execution-job-dimension-values`, `list-test-planning-trends`, `select-smart-smoke-tests`
 
 ### Removed (replaced by the tools above)
 

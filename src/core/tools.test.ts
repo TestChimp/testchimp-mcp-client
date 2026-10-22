@@ -243,9 +243,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 81 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 81);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 81);
+  it("registers 85 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 85);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 85);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -308,20 +308,20 @@ describe("MCP API 2.0 consolidations", () => {
   it("maps ephemeral-environment actions", async () => {
     assert.deepEqual((await capture("ephemeral-environment", { action: "CONFIG" })).request, {
       path: "/api/mcp/ephemeral_environment",
-      body: { action: "CONFIG" },
+      body: { action: "MCP_EPHEMERAL_ENVIRONMENT_ACTION_CONFIG" },
     });
     assert.deepEqual(
       (await capture("ephemeral-environment", { action: "PROVISION", wait: false, branchName: "feat" })).request,
       {
         path: "/api/mcp/ephemeral_environment",
-        body: { action: "PROVISION", wait: false, branchName: "feat" },
+        body: { action: "MCP_EPHEMERAL_ENVIRONMENT_ACTION_PROVISION", wait: false, branchName: "feat" },
       },
     );
     assert.deepEqual(
       (await capture("ephemeral-environment", { action: "STATUS", bnsEnvironmentId: "env-1" })).request,
       {
         path: "/api/mcp/ephemeral_environment",
-        body: { action: "STATUS", bnsEnvironmentId: "env-1" },
+        body: { action: "MCP_EPHEMERAL_ENVIRONMENT_ACTION_STATUS", bnsEnvironmentId: "env-1" },
       },
     );
   });
@@ -338,7 +338,7 @@ describe("MCP API 2.0 consolidations", () => {
         (await capture("report-scan-findings", { id: "scan-1", scanner: "DAST", reportFile: file })).request,
         {
           path: "/api/mcp/report_scan_findings",
-          body: { scanId: "scan-1", scanner: "DAST", reportJson: "{\"alerts\":[]}" },
+          body: { scanId: "scan-1", scanner: "MCP_SCAN_FINDER_DAST", reportJson: "{\"alerts\":[]}" },
         },
       );
     } finally {
@@ -387,7 +387,7 @@ describe("MCP API 2.0 consolidations", () => {
       (await capture("set-entity-distinct", { entityType: "TEST", focusTest: loc, distinctTest: loc })).request,
       {
         path: "/api/mcp/set_entity_distinct",
-        body: { entityType: "TEST", distinct: true, focusTest: loc, otherTest: loc, distinctTest: loc },
+        body: { entityType: "TEST", distinct: true, focusTest: loc, otherTest: loc },
       },
     );
     assert.deepEqual(
@@ -401,7 +401,7 @@ describe("MCP API 2.0 consolidations", () => {
       ).request,
       {
         path: "/api/mcp/set_entity_distinct",
-        body: { entityType: "ISSUE", distinct: false, focusOrdinalId: 1, otherOrdinalId: 2 },
+        body: { entityType: "ISSUE", distinct: false, focusOrdinalId: "1", otherOrdinalId: "2" },
       },
     );
   });
@@ -424,7 +424,7 @@ describe("MCP API 2.0 consolidations", () => {
   it("maps list-issues, history aggregate, perf runId", async () => {
     assert.deepEqual((await capture("list-issues", { status: "ACTIVE", limit: 10 })).request, {
       path: "/api/mcp/list_issues",
-      body: { status: "ACTIVE", limit: 10 },
+      body: { statuses: ["ACTIVE"], limit: 10 },
     });
     assert.deepEqual((await capture("get-execution-history", { aggregate: true, testId: "t1" })).request, {
       path: "/api/mcp/list_execution_history",
@@ -471,7 +471,7 @@ describe("MCP API 2.0 consolidations", () => {
       ).request,
       {
         path: "/api/mcp/upsert_release",
-        body: { version: "1.2.0", gitCommitSha: "abc", dueDateMillis: 1790000000000, branchId: "br-1" },
+        body: { version: "1.2.0", gitCommitSha: "abc", dueDateMillis: "1790000000000", branchId: "br-1" },
       },
     );
   });
@@ -495,10 +495,10 @@ describe("MCP API 2.0 consolidations", () => {
         path: "/api/mcp/manage_test_run",
         body: {
           id: "tr-1",
-          dueDate: "2026-10-30",
+          dueDate: String(Date.parse("2026-10-30")),
           status: "COMPLETED",
           batchInvocationIds: ["b1", "b2"],
-          commitRange: "LINK",
+          commitRange: "MCP_TEST_RUN_COMMIT_RANGE_LINK",
         },
       },
     );
@@ -506,11 +506,41 @@ describe("MCP API 2.0 consolidations", () => {
       (await capture("manage-test-run", { id: "tr-1", commitRange: "FIND" })).request,
       {
         path: "/api/mcp/manage_test_run",
-        body: { id: "tr-1", commitRange: "FIND" },
+        body: { id: "tr-1", commitRange: "MCP_TEST_RUN_COMMIT_RANGE_FIND" },
       },
     );
     await assert.rejects(capture("manage-test-run", {}), /Invalid input/);
     await assert.rejects(capture("manage-test-run", { title: "Sprint 12" }), /Invalid input/);
+  });
+
+  it("maps OpenAPI-only 2.0 tools", async () => {
+    assert.deepEqual(
+      (await capture("ingest-scenario-execution", { scenarioOrdinalId: 12, result: "SMART_TEST_EXECUTION_COMPLETED" }))
+        .request,
+      {
+        path: "/api/mcp/ingest_scenario_execution",
+        body: { result: "SMART_TEST_EXECUTION_COMPLETED", scenarioOrdinalId: "12" },
+      },
+    );
+    assert.deepEqual(
+      (await capture("list-execution-job-dimension-values", { dimension: "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION" }))
+        .request,
+      {
+        path: "/api/mcp/list_execution_job_dimension_values",
+        body: { dimension: "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION" },
+      },
+    );
+    assert.deepEqual((await capture("list-test-planning-trends", { release: "1.2.0" })).request, {
+      path: "/api/mcp/list_test_planning_trends",
+      body: { release: "1.2.0" },
+    });
+    assert.deepEqual(
+      (await capture("select-smart-smoke-tests", { maxTests: 5, includeTags: ["smoke"] })).request,
+      {
+        path: "/api/mcp/select_smart_smoke_tests",
+        body: { includeTags: ["smoke"], maxTests: 5 },
+      },
+    );
   });
 
   it("maps get-release detail vs list filters", async () => {
@@ -520,7 +550,7 @@ describe("MCP API 2.0 consolidations", () => {
     });
     assert.deepEqual((await capture("get-release", { version: "1.2.0", detail: "GATE" })).request, {
       path: "/api/mcp/get_release",
-      body: { version: "1.2.0", detail: "GATE" },
+      body: { version: "1.2.0", detail: "MCP_RELEASE_VIEW_GATE" },
     });
     assert.deepEqual(
       (
@@ -841,14 +871,15 @@ describe("TESTCHIMP_USER_ID env fallback", () => {
     await withEnvUser(async () => {
       const body = await runWithRequestAuth({ isolated: true, bearerToken: "t" }, () => reportBody(reportArgs));
       assert.equal(body.userId, undefined);
+      assert.equal((body.traceability as { userId?: string } | undefined)?.userId, undefined);
     });
   });
 
   it("report-agent-action applies env userId outside isolated mode", async () => {
     await withEnvUser(async () => {
-      assert.equal((await reportBody(reportArgs)).userId, "env-user");
+      assert.equal(((await reportBody(reportArgs)).traceability as { userId?: string }).userId, "env-user");
       const body = await runWithRequestAuth({ isolated: false }, () => reportBody(reportArgs));
-      assert.equal(body.userId, "env-user");
+      assert.equal((body.traceability as { userId?: string }).userId, "env-user");
     });
   });
 
@@ -857,7 +888,7 @@ describe("TESTCHIMP_USER_ID env fallback", () => {
       const body = await runWithRequestAuth({ isolated: true, bearerToken: "t" }, () =>
         reportBody({ ...reportArgs, userId: "arg-user" }),
       );
-      assert.equal(body.userId, "arg-user");
+      assert.equal((body.traceability as { userId?: string }).userId, "arg-user");
     });
   });
 

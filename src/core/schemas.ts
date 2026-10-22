@@ -30,6 +30,13 @@ export const listCoverageInput = z.object({
   includeNonCoveredUserStories: z.boolean().optional(),
   includeNonCoveredTestScenarios: z.boolean().optional(),
   branchName: z.string().optional(),
+  branchId: z.union([z.string().min(1), z.coerce.number()]).optional(),
+  timeWindow: z
+    .object({
+      relativeWindow: z.string().optional(),
+      fixedWindow: z.object({ startTime: z.string().min(1), endTime: z.string().min(1) }).optional(),
+    })
+    .optional(),
   platform: executionPlatformSchema.optional(),
   /**
    * Which coverage sources to include.
@@ -59,6 +66,13 @@ export const listExecutionInput = z.object({
   environment: z.string().optional(),
   scope: scopeSchema,
   branchName: z.string().optional(),
+  branchId: z.union([z.string().min(1), z.coerce.number()]).optional(),
+  timeWindow: z
+    .object({
+      relativeWindow: z.string().optional(),
+      fixedWindow: z.object({ startTime: z.string().min(1), endTime: z.string().min(1) }).optional(),
+    })
+    .optional(),
   scenarioId: z.string().optional(),
   testId: z.string().optional(),
   platform: executionPlatformSchema.optional(),
@@ -258,6 +272,7 @@ export const issueIgnoreReasonSchema = z.enum([
 ]);
 
 const linkedEntityTypeSchema = z.enum([
+  "UNKNOWN_LINKED_ENTITY_TYPE",
   "STORY",
   "SCENARIO",
   "TEST",
@@ -265,6 +280,16 @@ const linkedEntityTypeSchema = z.enum([
   "EXTERNAL",
   "TEST_EXECUTION",
   "BATCH_INVOCATION",
+  "POLICY",
+  "EXPLORATION_ENTITY",
+  "EVENT",
+  "WORKFLOW",
+  "JOURNEY_EXECUTION_ENTITY",
+  "RELEASE",
+  "NAMED_TEST_RUN",
+  "SCREEN",
+  "SCREEN_STATE",
+  "API_OPERATION",
 ]);
 
 const createIssueLinkTargetSchema = z.object({
@@ -298,6 +323,8 @@ export const issueCategorySchema = z.enum([
   "PERFORMANCE_REGRESSION",
   "MEMORY_REGRESSION",
   "FORM_VALIDATION_BUG",
+  "REQUIREMENT_QUALITY",
+  "TEST_COVERAGE",
   "OTHER",
 ]);
 
@@ -320,14 +347,14 @@ export const upsertIssueInput = z
     status: issueStatusSchema.optional(),
     ignoreReason: issueIgnoreReasonSchema.optional(),
     reportedReleaseId: z.string().optional(),
-    dueDateMillis: z.coerce.number().optional(),
+    dueDateMillis: z.union([z.string().min(1), z.coerce.number()]).optional(),
     assignee: z.string().optional(),
     linkTargets: z.array(createIssueLinkTargetSchema).optional(),
     labels: z.array(z.string()).optional(),
+    addLabels: z.array(z.string().min(1)).optional(),
+    removeLabels: z.array(z.string().min(1)).optional(),
     source: z.string().optional(),
     environment: z.string().optional(),
-    attachments: z.array(z.record(z.string(), z.unknown())).optional(),
-    artifactReference: z.record(z.string(), z.unknown()).optional(),
   })
   .merge(agentTraceabilityFieldsSchema)
   .superRefine((v, ctx) => {
@@ -342,42 +369,56 @@ export const upsertIssueInput = z
     }
   });
 
-export const listIssuesInput = z
-  .object({
-    searchText: z.string().optional(),
-    issueId: z.string().min(1).optional(),
-    status: issueStatusSchema.optional(),
-    statuses: z.array(issueStatusSchema).optional(),
-    issueType: issueTypeSchema.optional(),
-    category: issueCategorySchema.optional(),
-    severity: issueSeveritySchema.optional(),
-    assignee: z.string().optional(),
-    labels: z.array(z.string().min(1)).optional(),
-    release: z.string().optional(),
-    environment: z.string().optional(),
-    limit: z.coerce.number().int().positive().max(200).optional(),
-    offset: z.coerce.number().int().nonnegative().optional(),
-  })
-  .passthrough();
+export const listIssuesInput = z.object({
+  searchText: z.string().optional(),
+  statuses: z.array(issueStatusSchema).optional(),
+  /** Alias folded into statuses. */
+  status: issueStatusSchema.optional(),
+  severities: z.array(issueSeveritySchema).optional(),
+  /** Alias folded into severities. */
+  severity: issueSeveritySchema.optional(),
+  assignee: z.string().optional(),
+  assignees: z.array(z.string().min(1)).optional(),
+  labels: z.array(z.string().min(1)).optional(),
+  release: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(200).optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+  ordinalIds: z.array(z.union([z.string().min(1), z.coerce.number()])).optional(),
+  /** Alias folded into ordinalIds. */
+  issueId: z.string().min(1).optional(),
+});
 
-export const upsertReleaseInput = z
-  .object({
-    version: z.string().min(1),
-    gitCommitSha: z.string().min(1).optional(),
-    priorReleaseVersion: z.string().min(1).optional(),
-    releaseType: z.string().min(1).optional(),
-    lifecycleStatus: z.string().min(1).optional(),
-    /** Create only. */
-    environment: z.string().min(1).optional(),
-    /** Update only. */
-    dueDateMillis: z.coerce.number().optional(),
-    /** Update only. */
-    branchId: z.string().min(1).optional(),
-  })
-  .merge(agentTraceabilityFieldsSchema);
+export const releaseTypeSchema = z.enum(["UNKNOWN_RELEASE_TYPE", "MAJOR", "MINOR", "HOTFIX"]);
 
-export const manageTestRunStatusSchema = z.enum(["ACTIVE", "COMPLETED", "ARCHIVED"]);
-export const manageTestRunCommitRangeSchema = z.enum(["FIND", "LINK"]);
+export const upsertReleaseInput = z.object({
+  version: z.string().min(1),
+  gitCommitSha: z.string().min(1).optional(),
+  /** Alias mapped to gitCommitSha. */
+  gitSha: z.string().min(1).optional(),
+  priorReleaseVersion: z.string().min(1).optional(),
+  releaseType: releaseTypeSchema.optional(),
+  lifecycleStatus: z.string().min(1).optional(),
+  /** Create only. */
+  environment: z.string().min(1).optional(),
+  /** Update only; int64 string on the wire. */
+  dueDateMillis: z.union([z.string().min(1), z.coerce.number()]).optional(),
+  /** Update only; int64 string on the wire. */
+  branchId: z.union([z.string().min(1), z.coerce.number()]).optional(),
+});
+
+export const manageTestRunStatusSchema = z.enum([
+  "UNKNOWN_NAMED_TEST_RUN_STATUS",
+  "ACTIVE",
+  "COMPLETED",
+  "ARCHIVED",
+]);
+export const manageTestRunCommitRangeSchema = z.enum([
+  "FIND",
+  "LINK",
+  "MCP_TEST_RUN_COMMIT_RANGE_FIND",
+  "MCP_TEST_RUN_COMMIT_RANGE_LINK",
+  "MCP_TEST_RUN_COMMIT_RANGE_UNSPECIFIED",
+]);
 
 export const manageTestRunInput = z
   .object({
@@ -387,13 +428,14 @@ export const manageTestRunInput = z
     title: z.string().min(1).optional(),
     /** Server defaults to QA on create. */
     environment: z.string().min(1).optional(),
+    /** int64 millis string on the wire. */
     dueDate: z.union([z.string().min(1), z.number()]).optional(),
     status: manageTestRunStatusSchema.optional(),
     batchInvocationIds: z.array(z.string().min(1)).optional(),
-    /** FIND discovers batches in the prior-cut..current-cut range; LINK attaches unlinked ones. */
+    /** FIND discovers batches; LINK attaches unlinked ones. */
     commitRange: manageTestRunCommitRangeSchema.optional(),
+    limitWhenNoPrior: z.coerce.number().int().positive().optional(),
   })
-  .merge(agentTraceabilityFieldsSchema)
   .superRefine((v, ctx) => {
     if (!(v.id ?? "").trim() && !(v.release ?? "").trim()) {
       ctx.addIssue({
@@ -652,7 +694,15 @@ export const eventMetadataKeysInput = z.object({
   eventTitle: z.string().min(1),
 });
 
-export const ephemeralEnvironmentActionSchema = z.enum(["CONFIG", "PROVISION", "STATUS"]);
+export const ephemeralEnvironmentActionSchema = z.enum([
+  "CONFIG",
+  "PROVISION",
+  "STATUS",
+  "MCP_EPHEMERAL_ENVIRONMENT_ACTION_CONFIG",
+  "MCP_EPHEMERAL_ENVIRONMENT_ACTION_PROVISION",
+  "MCP_EPHEMERAL_ENVIRONMENT_ACTION_STATUS",
+  "MCP_EPHEMERAL_ENVIRONMENT_ACTION_UNSPECIFIED",
+]);
 
 export const ephemeralEnvironmentInput = z
   .object({
@@ -661,11 +711,12 @@ export const ephemeralEnvironmentInput = z
     /** When action=PROVISION, wait for deploy (defaults true). Send false for fire-and-forget. */
     wait: z.boolean().optional(),
     bnsEnvironmentId: z.string().min(1).optional(),
+    /** Client-only poll interval while waiting; not sent to the server. */
     pollIntervalSeconds: z.number().optional(),
     maxWaitMinutes: z.number().optional(),
   })
   .superRefine((v, ctx) => {
-    if (v.action === "STATUS" && !(v.bnsEnvironmentId ?? "").trim()) {
+    if (v.action.endsWith("STATUS") && !(v.bnsEnvironmentId ?? "").trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "STATUS requires bnsEnvironmentId",
@@ -698,9 +749,18 @@ export const getBunnyshellWorkflowJobLogsInput = z.object({
 /** ListScreenStatesRequest JSON (proto camelCase). */
 export const listScreenStatesInput = z.object({
   environment: z.string().optional(),
+  platform: executionPlatformSchema.optional(),
+  startCommitSha: z.string().min(1).optional(),
+  endCommitSha: z.string().min(1).optional(),
 });
 
-export const getReleaseDetailSchema = z.enum(["CATALOG", "GATE"]);
+export const getReleaseDetailSchema = z.enum([
+  "CATALOG",
+  "GATE",
+  "MCP_RELEASE_VIEW_CATALOG",
+  "MCP_RELEASE_VIEW_GATE",
+  "MCP_RELEASE_VIEW_UNSPECIFIED",
+]);
 
 export const getReleaseInput = z.object({
   /** Release catalog version / label. Omit to list releases. */
@@ -715,32 +775,69 @@ export const getReleaseInput = z.object({
 });
 
 export const getSecurityScanConfigInput = z.object({
-  id: z.string().min(1),
+  scanId: z.string().min(1).optional(),
+  /** Alias for scanId. */
+  id: z.string().min(1).optional(),
+}).superRefine((v, ctx) => {
+  if (!(v.scanId ?? "").trim() && !(v.id ?? "").trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "scanId is required", path: ["scanId"] });
+  }
 });
 
 export const updateScanProgressInput = z.object({
-  id: z.string().min(1),
+  scanId: z.string().min(1).optional(),
+  /** Alias for scanId. */
+  id: z.string().min(1).optional(),
   /** ScanStatus enum name: QUEUED | IN_PROGRESS | COMPLETED | EXCEPTION */
-  status: z.enum(["QUEUED", "IN_PROGRESS", "COMPLETED", "EXCEPTION"]),
+  status: z.enum(["UNKNOWN_SCAN_STATUS", "QUEUED", "IN_PROGRESS", "COMPLETED", "EXCEPTION"]),
+}).superRefine((v, ctx) => {
+  if (!(v.scanId ?? "").trim() && !(v.id ?? "").trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "scanId is required", path: ["scanId"] });
+  }
 });
 
-export const scanFinderSchema = z.enum(["DAST", "SAST", "DEPS", "SECRETS"]);
+export const scanFinderSchema = z.enum([
+  "DAST",
+  "SAST",
+  "DEPS",
+  "SECRETS",
+  "MCP_SCAN_FINDER_DAST",
+  "MCP_SCAN_FINDER_SAST",
+  "MCP_SCAN_FINDER_DEPS",
+  "MCP_SCAN_FINDER_SECRETS",
+  "MCP_SCAN_FINDER_UNSPECIFIED",
+]);
 
 export const reportScanFindingsInput = z.object({
-  id: z.string().min(1),
+  scanId: z.string().min(1).optional(),
+  /** Alias for scanId. */
+  id: z.string().min(1).optional(),
   scanner: scanFinderSchema,
   /** Path to the scanner JSON report (ZAP / Semgrep / Trivy / Gitleaks). */
-  reportFile: z.string().min(1),
+  reportFile: z.string().min(1).optional(),
+  reportJson: z.string().min(1).optional(),
+  markCompleted: z.boolean().optional(),
+}).superRefine((v, ctx) => {
+  if (!(v.scanId ?? "").trim() && !(v.id ?? "").trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "scanId is required", path: ["scanId"] });
+  }
+  if (!(v.reportFile ?? "").trim() && !(v.reportJson ?? "").trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "reportFile or reportJson is required", path: ["reportFile"] });
+  }
 });
 
 const screenStatesEntrySchema = z.object({
   screen: z.string().optional(),
   states: z.array(z.string()),
+  platform: executionPlatformSchema.optional(),
+  firstDiscoveredCommitSha: z.string().optional(),
+  isNewInRange: z.boolean().optional(),
 });
 
 /** UpsertScreenStatesRequest JSON (proto camelCase). */
 export const upsertScreenStatesInput = z.object({
   screenStates: z.array(screenStatesEntrySchema).min(1),
+  gitCommitSha: z.string().optional(),
 });
 
 export const testLocatorSchema = z.object({
@@ -751,7 +848,14 @@ export const testLocatorSchema = z.object({
 });
 
 export const listSemanticSimilarTestsInput = z.object({
-  scope: scopeSchema,
+  scope: z
+    .object({
+      folderPath: z.union([z.array(z.string()), z.string()]).optional(),
+      filePaths: z.array(z.string()).optional(),
+      ids: z.array(z.string().min(1)).optional(),
+      artifactType: z.enum(["UNKNOWN_ARTIFACT_TYPE", "USER_STORY_ARTIFACT", "SCENARIO_ARTIFACT"]).optional(),
+    })
+    .optional(),
 });
 
 export const markSemanticTestsDistinctInput = z.object({
@@ -773,14 +877,8 @@ export const markTestsForReviewInput = z
   })
   .merge(agentTraceabilityFieldsSchema);
 
-/** LinkedEntityType names for semantic nearby (embedding-capable). */
-export const semanticNearbyEntityTypeSchema = z.enum([
-  "STORY",
-  "SCENARIO",
-  "TEST",
-  "ISSUE",
-  "EVENT",
-]);
+/** LinkedEntityType names for semantic nearby / set-entity-distinct. */
+export const semanticNearbyEntityTypeSchema = linkedEntityTypeSchema;
 
 export const listSemanticNearbyInput = z
   .object({
@@ -1061,6 +1159,7 @@ export const reportAgentActionInput = z
     /** SmartTest TestLocator. Mutually exclusive with `entityIdentity`. */
     test: testLocatorSchema.optional(),
     actionType: agentActionTypeSchema,
+    chimphandsSessionId: z.string().min(1).optional(),
   })
   .superRefine((val, ctx) => {
     const actionNorm = val.actionType.toString().toUpperCase().replace(/-/g, "_");
@@ -1223,6 +1322,11 @@ export const listPerfRunsInput = z.object({
   dataset: z.string().min(1).optional(),
   llmMode: z.string().min(1).optional(),
   environment: z.string().min(1).optional(),
+  release: z.string().min(1).optional(),
+  folderPath: z.string().min(1).optional(),
+  fileIds: z.array(z.string().min(1)).optional(),
+  batchInvocationId: z.string().min(1).optional(),
+  groupByBatch: z.boolean().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
   offset: z.coerce.number().int().nonnegative().optional(),
 });
@@ -1281,8 +1385,12 @@ export const listApiOperationInteractionsInput = z
   .object({
     testId: z.string().min(1).optional(),
     operationId: z.string().min(1).optional(),
-    interactionType: z.enum(["REAL", "MOCKED"]).default("REAL"),
+    interactionType: z.enum(["UNKNOWN_API_OPERATION_INTERACTION_TYPE", "REAL", "MOCKED"]).default("REAL"),
     limit: z.coerce.number().int().positive().max(100).optional(),
+    executionId: z.string().min(1).optional(),
+    retryCount: z.coerce.number().int().nonnegative().optional(),
+    includePayloads: z.boolean().optional(),
+    interactionId: z.string().min(1).optional(),
   })
   .superRefine((v, ctx) => {
     if (!(v.testId ?? "").trim() && !(v.operationId ?? "").trim()) {
@@ -1388,4 +1496,85 @@ export const ackBotEventsInput = z.object({
     .max(MAX_BOT_ACK_EVENT_IDS),
   /** Webhook delivery ackUrl; defaults to ${TESTCHIMP_INGRESS_URL}/bot/events/ack. */
   ackUrl: z.string().min(1).optional(),
+});
+
+export const smartTestExecutionStatusSchema = z.enum([
+  "UNKNOWN_SMART_TEST_EXECUTION_STATUS",
+  "SMART_TEST_EXECUTION_QUEUED",
+  "SMART_TEST_EXECUTION_IN_PROGRESS",
+  "SMART_TEST_EXECUTION_COMPLETED",
+  "SMART_TEST_EXECUTION_FAILED",
+  "SMART_TEST_EXECUTION_COMPLETED_WITH_REPAIRS",
+  "SMART_TEST_EXECUTION_CANCELLED",
+  "SMART_TEST_EXECUTION_SKIPPED",
+  "SMART_TEST_EXECUTION_INTERRUPTED",
+  "SMART_TEST_EXECUTION_ARCHIVED",
+  "SMART_TEST_EXECUTION_BLOCKED",
+  "SMART_TEST_EXECUTION_OUT_OF_SCOPE",
+]);
+
+export const ingestScenarioExecutionInput = z.object({
+  scenarioOrdinalId: z.union([z.string().min(1), z.coerce.number()]).optional(),
+  externalId: z.string().min(1).optional(),
+  result: smartTestExecutionStatusSchema,
+  release: z.string().min(1).optional(),
+  testRunLabel: z.string().min(1).optional(),
+  environment: z.string().min(1).optional(),
+  platform: executionPlatformSchema.optional(),
+  notes: z.string().optional(),
+});
+
+export const executionJobFilterDimensionSchema = z.enum([
+  "UNKNOWN_EXECUTION_JOB_FILTER_DIMENSION",
+  "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION",
+  "DEVICE_FAMILY_EXECUTION_JOB_FILTER_DIMENSION",
+  "OS_VERSION_EXECUTION_JOB_FILTER_DIMENSION",
+  "SCREEN_RESOLUTION_EXECUTION_JOB_FILTER_DIMENSION",
+  "SCREEN_ORIENTATION_EXECUTION_JOB_FILTER_DIMENSION",
+]);
+
+export const listExecutionJobDimensionValuesInput = z.object({
+  scenarioId: z.string().min(1).optional(),
+  environment: z.string().min(1).optional(),
+  release: z.string().min(1).optional(),
+  timeWindow: z
+    .object({
+      relativeWindow: z.string().optional(),
+      fixedWindow: z.object({ startTime: z.string().min(1), endTime: z.string().min(1) }).optional(),
+    })
+    .optional(),
+  branchId: z.union([z.string().min(1), z.coerce.number()]).optional(),
+  branchName: z.string().min(1).optional(),
+  dimensionFilters: z.array(executionJobDimensionFilterSchema).optional(),
+  dimension: executionJobFilterDimensionSchema.optional(),
+});
+
+export const listTestPlanningTrendsInput = z.object({
+  release: z.string().min(1).optional(),
+  environment: z.string().min(1).optional(),
+  timeWindow: z
+    .object({
+      relativeWindow: z.string().optional(),
+      fixedWindow: z.object({ startTime: z.string().min(1), endTime: z.string().min(1) }).optional(),
+    })
+    .optional(),
+  coverageScope: scopeSchema,
+  branchId: z.union([z.string().min(1), z.coerce.number()]).optional(),
+  branchName: z.string().min(1).optional(),
+  scenarioId: z.array(z.string().min(1)).optional(),
+  userStoryId: z.array(z.string().min(1)).optional(),
+  userStoryIdInScope: z.array(z.string().min(1)).optional(),
+  platform: executionPlatformSchema.optional(),
+});
+
+export const selectSmartSmokeTestsInput = z.object({
+  relatedTests: z.array(testLocatorSchema).optional(),
+  includeTags: z.array(z.string().min(1)).optional(),
+  taggedTests: z.array(testLocatorSchema).optional(),
+  suiteCandidates: z.array(testLocatorSchema).optional(),
+  maxTimeBudgetMins: z.coerce.number().int().positive().optional(),
+  maxTests: z.coerce.number().int().positive().optional(),
+  suitePercentage: z.coerce.number().optional(),
+  branchName: z.string().min(1).optional(),
+  environment: z.string().min(1).optional(),
 });
