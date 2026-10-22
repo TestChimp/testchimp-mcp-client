@@ -40,6 +40,7 @@ Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 85
 - `fetch-execution-report` includes `batchViewUrl`
 - `get-execution-history` accepts `aggregate=true`
 - `list-perf-runs` accepts `runId` and `includeRaw`
+- Request/response field names, proto enums, and int64 strings aligned to Aware OpenAPI 2.0.0 (`docs/static/openapi/mcp.json`): no `agentTraceability` on `upsert-release` / `manage-test-run` / `promote-perf-baseline`; `linkedIssueOrdinalId` and int64 millis on requirement-quality reports; `stateDetails` on `upsert-screen-states`
 
 CLI subcommands match the kebab-case MCP names (existing nested `bot` / `workspace` aliases unchanged).
 

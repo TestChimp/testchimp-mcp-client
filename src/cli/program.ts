@@ -1248,23 +1248,21 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  addAgentTraceabilityOptions(
-    program
-      .command("upsert-release")
-      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-release")!.description)
-      .addOption(jsonInputOption())
-      .option("--version <version>", "Release version / label")
-      .option("--git-commit-sha <sha>", "Cut git SHA (also accepts --git-sha)")
-      .option("--prior-release-version <version>", "Previous release label")
-      .option("--release-type <type>", "Release type")
-      .option("--lifecycle-status <status>", "Release lifecycle status")
-      .option("--environment <name>", "Environment tag (create only)")
-      .option("--due-date-millis <ms>", "Due date as UTC epoch millis (update only)")
-      .option("--branch-id <id>", "Branch id (update only)"),
-  ).action(async (opts) => {
-    const body: Record<string, unknown> = {
-      ...collectAgentTraceabilityFlags(opts),
-    };
+  program
+    .command("upsert-release")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-release")!.description)
+    .addOption(jsonInputOption())
+    .option("--version <version>", "Release version / label")
+    .option("--git-commit-sha <sha>", "Cut git SHA")
+    .option("--git-sha <sha>", "Alias for --git-commit-sha")
+    .option("--prior-release-version <version>", "Previous release label")
+    .option("--release-type <type>", "Release type")
+    .option("--lifecycle-status <status>", "Release lifecycle status")
+    .option("--environment <name>", "Environment tag (create only)")
+    .option("--due-date-millis <ms>", "Due date as UTC epoch millis (update only)")
+    .option("--branch-id <id>", "Branch id (update only)")
+    .action(async (opts) => {
+    const body: Record<string, unknown> = {};
     if (opts.version) body.version = String(opts.version).trim();
     if (opts.gitCommitSha) body.gitCommitSha = String(opts.gitCommitSha).trim();
     else if (opts.gitSha) body.gitCommitSha = String(opts.gitSha).trim();
@@ -1281,24 +1279,21 @@ export function buildCliProgram(): Command {
     console.log(await runTool("upsert-release", merged, { postMcp }));
   });
 
-  addAgentTraceabilityOptions(
-    program
-      .command("manage-test-run")
-      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "manage-test-run")!.description)
-      .addOption(jsonInputOption())
-      .option("--id <id>", "Test run id (omit to create)")
-      .option("--release <label>", "Release label (required to create)")
-      .option("--title <title>", "Test run title")
-      .option("--environment <name>", "Environment tag (server defaults QA)")
-      .option("--due-date <date>", "Due date (YYYY-MM-DD, ISO datetime, or epoch millis)")
-      .option("--status <status>", "ACTIVE | COMPLETED | ARCHIVED")
-      .option("--batch-invocation-ids <csv>", "Comma-separated batch invocation ids")
-      .option("--commit-range <mode>", "FIND (discover) or LINK (attach unlinked batches)")
-      .option("--limit-when-no-prior <n>", "Max batches to consider when no prior release cut exists"),
-  ).action(async (opts) => {
-    const body: Record<string, unknown> = {
-      ...collectAgentTraceabilityFlags(opts),
-    };
+  program
+    .command("manage-test-run")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "manage-test-run")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <id>", "Test run id (omit to create)")
+    .option("--release <label>", "Release label (required to create)")
+    .option("--title <title>", "Test run title")
+    .option("--environment <name>", "Environment tag (server defaults QA)")
+    .option("--due-date <date>", "Due date (YYYY-MM-DD, ISO datetime, or epoch millis)")
+    .option("--status <status>", "ACTIVE | COMPLETED | ARCHIVED")
+    .option("--batch-invocation-ids <csv>", "Comma-separated batch invocation ids")
+    .option("--commit-range <mode>", "FIND (discover) or LINK (attach unlinked batches)")
+    .option("--limit-when-no-prior <n>", "Max batches to consider when no prior release cut exists")
+    .action(async (opts) => {
+    const body: Record<string, unknown> = {};
     if (opts.id) body.id = String(opts.id).trim();
     if (opts.release) body.release = String(opts.release).trim();
     if (opts.title) body.title = String(opts.title).trim();
@@ -1808,17 +1803,14 @@ export function buildCliProgram(): Command {
       console.log(await runTool("list-perf-baselines", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
-  addAgentTraceabilityOptions(
-    program
-      .command("promote-perf-baseline")
-      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "promote-perf-baseline")!.description)
-      .addOption(jsonInputOption())
-      .option("--run-id <id>")
-      .option("--env-class <name>"),
-  ).action(async (opts) => {
-    const body: Record<string, unknown> = {
-      ...collectAgentTraceabilityFlags(opts),
-    };
+  program
+    .command("promote-perf-baseline")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "promote-perf-baseline")!.description)
+    .addOption(jsonInputOption())
+    .option("--run-id <id>")
+    .option("--env-class <name>")
+    .action(async (opts) => {
+    const body: Record<string, unknown> = {};
     if (opts.runId) body.runId = String(opts.runId);
     if (opts.envClass) body.envClass = String(opts.envClass);
     console.log(await runTool("promote-perf-baseline", mergeBodies(body, opts.jsonInput), { postMcp }));

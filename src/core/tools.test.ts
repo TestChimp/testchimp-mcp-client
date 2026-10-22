@@ -568,6 +568,66 @@ describe("MCP API 2.0 consolidations", () => {
     );
   });
 
+  it("maps remaining OpenAPI request fields without extras", async () => {
+    assert.deepEqual(
+      (await capture("promote-perf-baseline", { runId: "run-1", envClass: "staging" })).request,
+      {
+        path: "/api/mcp/promote_perf_baseline",
+        body: { runId: "run-1", envClass: "staging" },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("upsert-screen-states", {
+          gitCommitSha: "abc",
+          screenStates: [
+            {
+              screen: "Login",
+              states: ["empty"],
+              stateDetails: [{ state: "empty", firstDiscoveredCommitSha: "abc", isNewInRange: true }],
+            },
+          ],
+        })
+      ).request,
+      {
+        path: "/api/mcp/upsert_screen_states",
+        body: {
+          gitCommitSha: "abc",
+          screenStates: [
+            {
+              screen: "Login",
+              states: ["empty"],
+              stateDetails: [{ state: "empty", firstDiscoveredCommitSha: "abc", isNewInRange: true }],
+            },
+          ],
+        },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("report-requirement-quality-findings", {
+          report: {
+            createdAtMillis: 1790000000000,
+            scoresUpdatedAtMillis: "1790000000001",
+            subject: { subjectType: "STORY", subjectEntityId: "ent-1", ordinalId: 3 },
+            findings: [{ title: "gap", linkedIssueOrdinalId: 9 }],
+          },
+        })
+      ).request,
+      {
+        path: "/api/mcp/report_requirement_quality_findings",
+        body: {
+          report: {
+            createdAtMillis: "1790000000000",
+            scoresUpdatedAtMillis: "1790000000001",
+            subject: { subjectType: "STORY", subjectEntityId: "ent-1", ordinalId: 3 },
+            findings: [{ title: "gap", linkedIssueOrdinalId: 9 }],
+          },
+        },
+      },
+    );
+  });
+
   it("keeps CLI subcommand parity with MCP tool names", () => {
     const names = new Set<string>();
     const walk = (cmd: ReturnType<typeof buildCliProgram>) => {

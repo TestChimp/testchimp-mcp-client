@@ -826,11 +826,18 @@ export const reportScanFindingsInput = z.object({
   }
 });
 
+const screenStateEntrySchema = z.object({
+  state: z.string().optional(),
+  firstDiscoveredCommitSha: z.string().optional(),
+  isNewInRange: z.boolean().optional(),
+});
+
 const screenStatesEntrySchema = z.object({
   screen: z.string().optional(),
   states: z.array(z.string()),
   platform: executionPlatformSchema.optional(),
   firstDiscoveredCommitSha: z.string().optional(),
+  stateDetails: z.array(screenStateEntrySchema).optional(),
   isNewInRange: z.boolean().optional(),
 });
 
@@ -1024,6 +1031,7 @@ export const requirementQualityFindingSchema = z.object({
   suggestedFix: suggestedFixSchema.optional(),
   /** Omit (defaults ACTIVE server-side) for new findings; set explicitly to carry forward IGNORED/APPLIED. */
   userState: requirementFindingUserStateSchema.optional(),
+  linkedIssueOrdinalId: z.coerce.number().int().optional(),
 });
 
 /** RequirementQualityMetrics (requirement_quality.proto) — scores 0-100, counts among ACTIVE findings. */
@@ -1056,10 +1064,10 @@ export const requirementQualityReportSchema = z.object({
   source: requirementQualityReportSourceSchema.optional(),
   metrics: requirementQualityMetricsSchema.optional(),
   findings: z.array(requirementQualityFindingSchema).optional(),
-  createdAtMillis: z.coerce.number().optional(),
+  createdAtMillis: z.union([z.string().min(1), z.coerce.number()]).optional(),
   jobId: z.string().optional(),
   contentFingerprint: z.string().optional(),
-  scoresUpdatedAtMillis: z.coerce.number().optional(),
+  scoresUpdatedAtMillis: z.union([z.string().min(1), z.coerce.number()]).optional(),
 });
 
 const requirementSubjectRefinement = (
@@ -1337,12 +1345,10 @@ export const listPerfBaselinesInput = z.object({
   offset: z.coerce.number().int().nonnegative().optional(),
 });
 
-export const promotePerfBaselineInput = z
-  .object({
-    runId: z.string().min(1),
-    envClass: z.string().min(1),
-  })
-  .merge(agentTraceabilityFieldsSchema);
+export const promotePerfBaselineInput = z.object({
+  runId: z.string().min(1),
+  envClass: z.string().min(1),
+});
 
 export const comparePerfToBaselineInput = z
   .object({

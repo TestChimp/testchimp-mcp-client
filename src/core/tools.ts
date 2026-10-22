@@ -970,8 +970,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "upsert-release",
     description:
       "Create or update a release catalog entry. version is required. Optional gitCommitSha, " +
-      "priorReleaseVersion, releaseType, lifecycleStatus, environment (create only), dueDateMillis and " +
-      "branchId (update only). Response is { release, created }. Optional agentTraceability records the mutation.",
+      "priorReleaseVersion, releaseType (MAJOR|MINOR|HOTFIX), lifecycleStatus, environment (create only), " +
+      "dueDateMillis and branchId (update only, int64 strings). Response is { release, created }.",
     inputSchema: S.upsertReleaseInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.upsertReleaseInput>;
@@ -995,8 +995,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "environment (server defaults QA), dueDate, status (ACTIVE|COMPLETED|ARCHIVED), batchInvocationIds, " +
       "and commitRange: FIND (discover batches in the prior-release-cut to current-cut SHA range without " +
       "attaching) or LINK (attach the unlinked ones). Response includes id, summary, created, link counts, " +
-      "commit SHAs, discoveredBatchInvocationIds and unlinkedBatchInvocationIds. " +
-      "Optional agentTraceability records the mutation.",
+      "commit SHAs, discoveredBatchInvocationIds and unlinkedBatchInvocationIds.",
     inputSchema: S.manageTestRunInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.manageTestRunInput>;
@@ -1017,9 +1016,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "get-security-scan-config",
     description:
       "Fetch security scan config by scan id (detail.dastCheckConfig / detail.sastCheckConfig / " +
-      "detail.depsCheckConfig / detail.leaksCheckConfig, release label, status). Pass id (CLI: --id). " +
-      "Used by /testchimp run security scan. For DAST honour allowActiveScan / useEphemeralSandbox / scope " +
-      "on dastCheckConfig.",
+      "detail.depsCheckConfig / detail.leaksCheckConfig, release label, status). Pass scanId " +
+      "(id is accepted as an alias). Used by /testchimp run security scan. For DAST honour " +
+      "allowActiveScan / useEphemeralSandbox / scope on dastCheckConfig.",
     inputSchema: S.getSecurityScanConfigInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getSecurityScanConfigInput>;
@@ -1047,7 +1046,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Upload a scanner JSON report for a security scan. Pass --id, --scanner (DAST|SAST|DEPS|SECRETS), and --report-file. " +
       "DAST = ZAP Traditional JSON; SAST = Semgrep CLI JSON; DEPS = Trivy JSON; SECRETS = Gitleaks JSON. " +
       "Backend parses, dedupes by bug hash, and inserts new SECURITY bugs linked to the scan. " +
-      "Does not mark the scan COMPLETED — the playbook calls update-scan-progress COMPLETED after this.",
+      "Optional markCompleted=true sets the scan COMPLETED after a successful ingest; otherwise the playbook " +
+      "calls update-scan-progress COMPLETED.",
     inputSchema: S.reportScanFindingsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.reportScanFindingsInput>;
@@ -1256,6 +1256,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         ...(ordinalId != null ? { ordinalId } : {}),
       };
       report.subject = mergedSubject;
+      const createdAtMillis = asInt64String(report.createdAtMillis);
+      if (createdAtMillis) report.createdAtMillis = createdAtMillis;
+      const scoresUpdatedAtMillis = asInt64String(report.scoresUpdatedAtMillis);
+      if (scoresUpdatedAtMillis) report.scoresUpdatedAtMillis = scoresUpdatedAtMillis;
 
       return postMcp("/api/mcp/report_requirement_quality_findings", { report });
     },
@@ -1517,7 +1521,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "promote-perf-baseline",
     description:
-      "Promote a performance run as the baseline for an environment class. Optional agent traceability records the mutation.",
+      "Promote a performance run as the baseline for an environment class (runId + envClass).",
     inputSchema: S.promotePerfBaselineInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.promotePerfBaselineInput>;
