@@ -100,7 +100,11 @@ export async function runProvisionEphemeralEnvironmentAndWait(
   let provisionRaw = "";
 
   try {
-    provisionRaw = await postMcp("/api/mcp/provision_ephemeral_environment", provisionBody);
+    provisionRaw = await postMcp("/api/mcp/ephemeral_environment", {
+      action: "PROVISION",
+      wait: false,
+      ...provisionBody,
+    });
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     return JSON.stringify({
@@ -146,7 +150,8 @@ export async function runProvisionEphemeralEnvironmentAndWait(
     pollIndex += 1;
     let statusRaw: string;
     try {
-      statusRaw = await postMcp("/api/mcp/get_ephemeral_environment_status", {
+      statusRaw = await postMcp("/api/mcp/ephemeral_environment", {
+        action: "STATUS",
         bnsEnvironmentId,
       });
     } catch (e) {

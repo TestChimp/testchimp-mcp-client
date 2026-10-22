@@ -48,6 +48,28 @@ function platformToProtoEnum(platform: "web" | "ios" | "android"): string {
   }
 }
 
+function asInt64String(v: unknown): string | undefined {
+  if (v == null || v === "") return undefined;
+  const s = String(v).trim();
+  return s === "" ? undefined : s;
+}
+
+/** Map short MCP enum aliases (GATE, DAST, FIND) to OpenAPI proto names. */
+function mcpEnum(prefix: string, value: string): string {
+  const v = value.trim().toUpperCase().replace(/-/g, "_");
+  if (v.startsWith(prefix) || v.includes("UNSPECIFIED") || v.startsWith("UNKNOWN_")) return v;
+  return `${prefix}${v}`;
+}
+
+function dueDateToInt64String(v: string | number): string {
+  if (typeof v === "number") return String(Math.trunc(v));
+  const s = v.trim();
+  if (/^-?\d+$/.test(s)) return s;
+  const ms = Date.parse(s);
+  if (!Number.isNaN(ms)) return String(ms);
+  return s;
+}
+
 /** Build ExecutionScope JSON after Zod parse (platform aliases already normalized). */
 function executionScopeBody(scope: z.infer<typeof S.executionScopeSchema>): Record<string, unknown> {
   return {
@@ -74,6 +96,9 @@ function listCoverageBody(args: z.infer<typeof S.listCoverageInput>): Record<str
     body.includeNonCoveredTestScenarios = args.includeNonCoveredTestScenarios;
   }
   if (args.branchName != null && args.branchName.trim() !== "") body.branchName = args.branchName.trim();
+  const coverageBranchId = asInt64String(args.branchId);
+  if (coverageBranchId) body.branchId = coverageBranchId;
+  if (args.timeWindow != null) body.timeWindow = args.timeWindow;
   if (args.platform != null) body.platform = platformToProtoEnum(args.platform);
   if (args.recordTypes != null && args.recordTypes.length > 0) {
     const normalized = args.recordTypes.map((t) => {
@@ -101,6 +126,9 @@ function listExecutionBody(args: z.infer<typeof S.listExecutionInput>): Record<s
   if (args.environment != null) body.environment = args.environment;
   if (args.scope != null) body.scope = normalizeScope(args.scope);
   if (args.branchName != null && args.branchName.trim() !== "") body.branchName = args.branchName.trim();
+  const historyBranchId = asInt64String(args.branchId);
+  if (historyBranchId) body.branchId = historyBranchId;
+  if (args.timeWindow != null) body.timeWindow = args.timeWindow;
   if (args.scenarioId != null && args.scenarioId.trim() !== "") body.scenarioId = args.scenarioId.trim();
   if (args.testId != null && args.testId.trim() !== "") body.testId = args.testId.trim();
   const dimensionFilters = [...(args.dimensionFilters ?? [])];
@@ -118,55 +146,8 @@ function listExecutionBody(args: z.infer<typeof S.listExecutionInput>): Record<s
   if (dimensionFilters.length > 0) body.dimensionFilters = dimensionFilters;
   if (args.limit != null) body.limit = args.limit;
   if (args.offset != null) body.offset = args.offset;
+  if (args.aggregate != null) body.aggregate = args.aggregate;
   return body;
-}
-
-/** Mean success duration above this counts as a slow test (mirrors UI ExecutionTimingSummary). */
-const SLOW_TEST_MEAN_SECS = 30;
-
-type TimingStatsLike = { meanSecs?: number | string | null };
-type TestScopeStatsLike = {
-  successTiming?: TimingStatsLike | null;
-  failTiming?: TimingStatsLike | null;
-};
-
-function parseMeanSecs(raw: unknown): number | null {
-  if (raw == null) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && !Number.isNaN(n) && n >= 0 ? n : null;
-}
-
-/** Suite rollup from list_execution_history testStats (sum of success means = UI Total time). */
-function aggregateSuiteExecutionStats(
-  testStats: TestScopeStatsLike[] | undefined,
-): Record<string, unknown> {
-  const stats = Array.isArray(testStats) ? testStats : [];
-  let timedTestCount = 0;
-  let sumSuccessMeanSecs = 0;
-  let sumFailMeanSecs = 0;
-  let maxSuccessMeanSecs = 0;
-  let slowTestCount = 0;
-
-  for (const s of stats) {
-    const successMean = parseMeanSecs(s.successTiming?.meanSecs);
-    if (successMean != null) {
-      timedTestCount += 1;
-      sumSuccessMeanSecs += successMean;
-      if (successMean > maxSuccessMeanSecs) maxSuccessMeanSecs = successMean;
-      if (successMean > SLOW_TEST_MEAN_SECS) slowTestCount += 1;
-    }
-    const failMean = parseMeanSecs(s.failTiming?.meanSecs);
-    if (failMean != null) sumFailMeanSecs += failMean;
-  }
-
-  return {
-    testCount: stats.length,
-    timedTestCount,
-    sumSuccessMeanSecs,
-    sumFailMeanSecs,
-    maxSuccessMeanSecs: timedTestCount > 0 ? maxSuccessMeanSecs : 0,
-    slowTestCount,
-  };
 }
 
 type RequirementSubjectType = z.infer<typeof S.requirementSubjectTypeSchema>;
@@ -307,11 +288,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-org-capabilities",
     description:
-      "Fetch the organization's enabled capabilities (e.g. TRUE_COVERAGE, API_CONTRACT_COVERAGE) and " +
-      "freeTrialActive flag. Call before relying on TrueCoverage / API contract coverage features so " +
-      "playbooks can soft-skip gated insights instead of failing. Authenticated via project API key.",
+      "Fetch the organization's enabled capabilities (e.g. TRUE_COVERAGE, API_CONTRACT_COVERAGE), " +
+      "freeTrialActive / trial, planLabel, and chimphandsCredits. Call before relying on TrueCoverage / " +
+      "API contract coverage / ChimpHands features so playbooks can soft-skip gated insights instead of failing. " +
+      "Authenticated via project API key.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_org_capabilities", {}),
+  },
+  {
+    kebab: "ask-about-testchimp",
+    description:
+      "Last-resort open-ended question about TestChimp (purpose, philosophy, intended testing approach). " +
+      "Answers from the same docs knowledge base as docs.testchimp.io Ask AI. Prefer this skill's " +
+      "references/ and agent-quick-answers first; use only when those do not cover platform intent / " +
+      "approach clarifications needed to run workflows in TestChimp's intended spirit. You may relay " +
+      "the answer to the user when education helps. question: the open-ended question (required, max 2000 characters). " +
+      "Server limit: 20 questions per project per hour. CLI/skill alias: ask-testchimp-question. " +
+      "Response JSON is returned as-is.",
+    inputSchema: S.askAboutTestchimpInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.askAboutTestchimpInput>;
+      return postMcp("/api/mcp/ask_about_testchimp", { question: a.question });
+    },
   },
   {
     kebab: "get-requirement-coverage",
@@ -329,11 +327,35 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "list-test-planning-trends",
+    description:
+      "Time-series test-planning trends for a release/environment/branch. Optional coverageScope, " +
+      "scenarioId[], userStoryId[], userStoryIdInScope[], platform, timeWindow, branchId.",
+    inputSchema: S.listTestPlanningTrendsInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listTestPlanningTrendsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.release) body.release = a.release;
+      if (a.environment) body.environment = a.environment;
+      if (a.timeWindow) body.timeWindow = a.timeWindow;
+      if (a.coverageScope != null) body.coverageScope = normalizeScope(a.coverageScope);
+      const branchId = asInt64String(a.branchId);
+      if (branchId) body.branchId = branchId;
+      if (a.branchName?.trim()) body.branchName = a.branchName.trim();
+      if (a.scenarioId?.length) body.scenarioId = a.scenarioId;
+      if (a.userStoryId?.length) body.userStoryId = a.userStoryId;
+      if (a.userStoryIdInScope?.length) body.userStoryIdInScope = a.userStoryIdInScope;
+      if (a.platform) body.platform = platformToProtoEnum(a.platform);
+      return postMcp("/api/mcp/list_test_planning_trends", body);
+    },
+  },
+  {
     kebab: "get-execution-history",
     description:
       "Fetch SmartTest execution history for a testId (top 5 recent runs), an optional platform-rooted folder/file scope, or a scenario when scenarioId is set. " +
       "Prefer testId when you have it from fetch-execution-report. Typically omit environment to avoid env scoping. " +
-      "Use branchName and scope.filePaths as for coverage. Optional platform (web|ios|android) and dimensionFilters narrow results.",
+      "Use branchName and scope.filePaths as for coverage. Optional platform (web|ios|android) and dimensionFilters narrow results. " +
+      "Set aggregate=true for suite timing stats (testCount, timedTestCount, sumSuccessMeanSecs, slowTestCount) instead of per-test history.",
     inputSchema: S.listExecutionInput,
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_execution_history", listExecutionBody(args as z.infer<typeof S.listExecutionInput>));
@@ -341,28 +363,53 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    kebab: "get-suite-execution-stats",
+    kebab: "list-execution-job-dimension-values",
     description:
-      "Aggregate suite timing from list_execution_history testStats (same filters as get-execution-history). " +
-      "Returns testCount, timedTestCount, sumSuccessMeanSecs (UI ExecutionTimingSummary total), sumFailMeanSecs, " +
-      "maxSuccessMeanSecs, slowTestCount (success mean > 30s). " +
-      "Sum of means is aggregate test CPU-time, not CI wall-clock under parallelism. " +
-      "Compare sumSuccessMeanSecs against any suite budget in the agent — this tool only returns stats.",
-    inputSchema: S.suiteExecutionStatsInput,
+      "List distinct execution-job dimension values (platform, device family, OS version, screen " +
+      "resolution, orientation) for filtering get-execution-history. Optional scenarioId, environment, " +
+      "release, timeWindow, branchId, branchName, dimensionFilters, dimension.",
+    inputSchema: S.listExecutionJobDimensionValuesInput,
     execute: async (args, { postMcp }) => {
-      const json = await postMcp(
-        "/api/mcp/list_execution_history",
-        listExecutionBody(args as z.infer<typeof S.listExecutionInput>),
-      );
-      const parsed = JSON.parse(json) as { testStats?: TestScopeStatsLike[] };
-      return JSON.stringify(aggregateSuiteExecutionStats(parsed.testStats));
+      const a = args as z.infer<typeof S.listExecutionJobDimensionValuesInput>;
+      const body: Record<string, unknown> = {};
+      if (a.scenarioId?.trim()) body.scenarioId = a.scenarioId.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.release?.trim()) body.release = a.release.trim();
+      if (a.timeWindow) body.timeWindow = a.timeWindow;
+      const branchId = asInt64String(a.branchId);
+      if (branchId) body.branchId = branchId;
+      if (a.branchName?.trim()) body.branchName = a.branchName.trim();
+      if (a.dimensionFilters?.length) body.dimensionFilters = a.dimensionFilters;
+      if (a.dimension) body.dimension = a.dimension;
+      return postMcp("/api/mcp/list_execution_job_dimension_values", body);
+    },
+  },
+  {
+    kebab: "ingest-scenario-execution",
+    description:
+      "Record a scenario execution result (manual or imported). Provide scenarioOrdinalId and/or externalId, " +
+      "plus result (SMART_TEST_EXECUTION_*). Optional release, testRunLabel, environment, platform, notes. " +
+      "Response is the ingested execution record.",
+    inputSchema: S.ingestScenarioExecutionInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.ingestScenarioExecutionInput>;
+      const body: Record<string, unknown> = { result: a.result };
+      const ordinal = asInt64String(a.scenarioOrdinalId);
+      if (ordinal) body.scenarioOrdinalId = ordinal;
+      if (a.externalId?.trim()) body.externalId = a.externalId.trim();
+      if (a.release?.trim()) body.release = a.release.trim();
+      if (a.testRunLabel?.trim()) body.testRunLabel = a.testRunLabel.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.platform) body.platform = platformToProtoEnum(a.platform);
+      if (a.notes != null) body.notes = a.notes;
+      return postMcp("/api/mcp/ingest_scenario_execution", body);
     },
   },
   {
     kebab: "fetch-execution-report",
     description:
       "Fetch a detailed execution report for failing SmartTests, given a batchInvocationId (batch run) or jobId (single run). " +
-      "Returns only failing tests and includes error details and a trace viewer URL when available.",
+      "Returns only failing tests and includes error details, a trace viewer URL when available, and batchViewUrl for the batch viewer deeplink.",
     inputSchema: S.fetchExecutionReportInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.fetchExecutionReportInput>;
@@ -411,7 +458,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const body: Record<string, unknown> = {
         platformFilePath: a.platformFilePath,
         title: a.title,
-        userStoryOrdinalId: a.userStoryOrdinalId,
+        userStoryOrdinalId: String(a.userStoryOrdinalId),
       };
       const trace = buildAgentTraceabilityPayload(a);
       if (trace) body.agentTraceability = trace;
@@ -460,7 +507,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getUserStoriesInput>;
       return postMcp("/api/mcp/get_user_stories", {
-        userStoryOrdinalIds: a.userStoryOrdinalIds,
+        userStoryOrdinalIds: a.userStoryOrdinalIds.map((id) => String(id)),
       });
     },
   },
@@ -476,7 +523,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getTestScenariosInput>;
       const body: Record<string, unknown> = {};
-      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds;
+      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds.map((id) => String(id));
       if (a.externalIds?.length) body.externalIds = a.externalIds;
       return postMcp("/api/mcp/get_test_scenarios", body);
     },
@@ -533,21 +580,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    kebab: "get-meeting-set",
-    description:
-      "Fetch a meeting-set context by id (ULID from `/testchimp using meeting-set context <id>`, " +
-      "created on the Meetings page via Start Chat). Returns the filters / search text applied and " +
-      "the meetings in scope (id, title, start). Fetch each meeting with get-meeting-transcript " +
-      "(summaryOnly first). Sets expire after 7 days.",
-    inputSchema: S.getMeetingSetInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.getMeetingSetInput>;
-      return postMcp("/api/mcp/get_meeting_set", {
-        meetingSetId: a.meetingSetId,
-      });
-    },
-  },
-  {
     kebab: "list-meetings",
     description:
       "List / search cloud-synced Meeting Bots meetings, newest first, like the Meetings page " +
@@ -555,8 +587,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "(YYYY-MM-DD, ISO datetime, or epoch millis; inclusive), labels, participantKeys (user id or " +
       "email), participantDomains, searchText (full-text over title + transcript; hits include a " +
       "searchSnippet with matches wrapped in ⟦ ⟧). Returns meetingId, title, startMillis, labels, " +
-      "participants, summaryStatus; page with nextPageToken. Use list-meeting-filter-options for exact " +
-      "label / domain / participant values, then get-meeting-transcript (summaryOnly first) per hit.",
+      "participants, summaryStatus; page with nextPageToken. Set includeFilterOptions=true for exact " +
+      "label / domain / participant catalogs. Pass meetingSetId for a Start Chat meeting-set (expires after 7 days). " +
+      "Then get-meeting-transcript (summaryOnly first) per hit.",
     inputSchema: S.listMeetingsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.listMeetingsInput>;
@@ -573,18 +606,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.searchText?.trim()) body.searchText = a.searchText.trim();
       if (a.pageSize != null) body.pageSize = a.pageSize;
       if (a.pageToken) body.pageToken = a.pageToken;
+      if (a.includeFilterOptions) body.includeFilterOptions = true;
+      if (a.meetingSetId?.trim()) body.meetingSetId = a.meetingSetId.trim();
       return postMcp("/api/mcp/list_meetings", body);
-    },
-  },
-  {
-    kebab: "list-meeting-filter-options",
-    description:
-      "List the labels, participants (key = user id or email, with display name), and participant " +
-      "email domains that appear on team-wide Meeting Bots meetings. Use the exact values as " +
-      "list-meetings filters (labels, participantKeys, participantDomains).",
-    inputSchema: S.listMeetingFilterOptionsInput,
-    execute: async (_args, { postMcp }) => {
-      return postMcp("/api/mcp/list_meeting_filter_options", {});
     },
   },
   {
@@ -602,62 +626,68 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    kebab: "update-issue-status",
+    kebab: "list-issues",
     description:
-      "Update a TestChimp issue status by ordinal id (same flexible issueId formats as get-issue-details). " +
-      "status must be one of: ACTIVE, IGNORED, FIXED, DUPLICATE, IN_PROGRESS_BUG, ARCHIVED_BUG, BLOCKED. " +
-      "For /testchimp fix issue: set IN_PROGRESS_BUG after applying a code fix; set FIXED only after user confirmation / commits pushed. " +
-      "Optional ignoreReason when status is IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT. " +
-      "Optional agentTraceability records UPDATED Activity inline " +
-      "(requires both workflowId and workflowExecutionId for Activity attachment).",
-    inputSchema: S.updateIssueStatusInput,
+      "Search / filter TestChimp issues in the current project. Optional filters: searchText, " +
+      "statuses, severities, assignee, assignees, labels, release, limit, offset, ordinalIds. " +
+      "Use get-issue-details for one issue by ordinal. Authenticated via project API key.",
+    inputSchema: S.listIssuesInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.updateIssueStatusInput>;
-      const body: Record<string, unknown> = {
-        issueId: a.issueId.trim(),
-        status: a.status,
-      };
-      if (a.ignoreReason) body.ignoreReason = a.ignoreReason;
-      const trace = buildAgentTraceabilityPayload(a);
-      if (trace) body.agentTraceability = trace;
-      return postMcp("/api/mcp/update_issue_status", body);
+      const a = args as z.infer<typeof S.listIssuesInput>;
+      const body: Record<string, unknown> = {};
+      if (a.searchText != null) body.searchText = String(a.searchText).trim();
+      const statuses = [...(a.statuses ?? [])];
+      if (a.status && !statuses.includes(a.status)) statuses.push(a.status);
+      if (statuses.length) body.statuses = statuses;
+      const severities = [...(a.severities ?? [])];
+      if (a.severity && !severities.includes(a.severity)) severities.push(a.severity);
+      if (severities.length) body.severities = severities;
+      if (a.assignee != null) body.assignee = a.assignee.trim();
+      if (a.assignees?.length) body.assignees = a.assignees;
+      if (a.labels?.length) body.labels = a.labels;
+      if (a.release != null) body.release = a.release.trim();
+      if (a.limit != null) body.limit = a.limit;
+      if (a.offset != null) body.offset = a.offset;
+      const ordinalIds = [...(a.ordinalIds ?? []).map((id) => String(id))];
+      if (a.issueId?.trim()) ordinalIds.push(a.issueId.trim());
+      if (ordinalIds.length) body.ordinalIds = ordinalIds;
+      return postMcp("/api/mcp/list_issues", body);
     },
   },
   {
-    kebab: "create-issue",
+    kebab: "upsert-issue",
     description:
-      "Create a TestChimp issue in the current project. title is required. " +
-      "Use simple fields for common creates, or pass the full curated contract via --json-input " +
-      "(description, issueType, category, severity, status, reportedReleaseId, dueDateMillis, assignee, " +
-      "linkTargets, labels, source, environment, attachments, artifactReference). " +
+      "Create or update a TestChimp issue in the current project. Omit issueId and pass title to create. " +
+      "Pass issueId (same flexible formats as get-issue-details) plus patch fields to update — including status " +
+      "(ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED) and optional ignoreReason. " +
       "For /testchimp implement TASK_ISSUE creates: set labels=[\"TestChimp Implement\"] (not source), " +
       "severity from task priority, category (e.g. FUNCTIONAL), and linkTargets for STORY and/or SCENARIO ordinals. " +
-      "Optional agentTraceability (or flat workflowId/workflowExecutionId/policyFile/…) records CREATED Activity inline — " +
-      "prefer this over a separate report-agent-action for issue creates. " +
-      "For Activity/timeline attachment both workflowId and workflowExecutionId (stable Plan ULID) are required; " +
-      "do not omit workflowExecutionId or mint a new ULID per issue. " +
-      "Authenticated via project API key; project is resolved from the key.",
-    inputSchema: S.createIssueInput,
+      "For /testchimp fix issue: set IN_PROGRESS_BUG after applying a code fix; set FIXED only after user confirmation. " +
+      "Optional agentTraceability records CREATED / UPDATED Activity inline. Authenticated via project API key.",
+    inputSchema: S.upsertIssueInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.createIssueInput>;
-      const body: Record<string, unknown> = { title: a.title.trim() };
+      const a = args as z.infer<typeof S.upsertIssueInput>;
+      const body: Record<string, unknown> = {};
+      if (a.issueId?.trim()) body.issueId = a.issueId.trim();
+      if (a.title?.trim()) body.title = a.title.trim();
       if (a.description != null) body.description = a.description;
       if (a.issueType) body.issueType = a.issueType;
       if (a.category) body.category = a.category;
       if (a.severity) body.severity = a.severity;
       if (a.status) body.status = a.status;
+      if (a.ignoreReason) body.ignoreReason = a.ignoreReason;
       if (a.reportedReleaseId != null) body.reportedReleaseId = a.reportedReleaseId;
-      if (a.dueDateMillis != null) body.dueDateMillis = a.dueDateMillis;
+      if (a.dueDateMillis != null) body.dueDateMillis = dueDateToInt64String(a.dueDateMillis);
       if (a.assignee != null) body.assignee = a.assignee;
       if (a.linkTargets?.length) body.linkTargets = a.linkTargets;
       if (a.labels?.length) body.labels = a.labels;
+      if (a.addLabels?.length) body.addLabels = a.addLabels;
+      if (a.removeLabels?.length) body.removeLabels = a.removeLabels;
       if (a.source != null) body.source = a.source;
       if (a.environment != null) body.environment = a.environment;
-      if (a.attachments?.length) body.attachments = a.attachments;
-      if (a.artifactReference != null) body.artifactReference = a.artifactReference;
       const trace = buildAgentTraceabilityPayload(a);
       if (trace) body.agentTraceability = trace;
-      return postMcp("/api/mcp/create_issue", body);
+      return postMcp("/api/mcp/upsert_issue", body);
     },
   },
   {
@@ -669,8 +699,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.markPlanItemsImplementationDoneInput>;
       const body: Record<string, unknown> = {};
-      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds;
-      if (a.userStoryOrdinalIds?.length) body.userStoryOrdinalIds = a.userStoryOrdinalIds;
+      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds.map((id) => String(id));
+      if (a.userStoryOrdinalIds?.length) body.userStoryOrdinalIds = a.userStoryOrdinalIds.map((id) => String(id));
       return postMcp("/api/mcp/mark_plan_items_implementation_done", body);
     },
   },
@@ -685,7 +715,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const a = args as z.infer<typeof S.updatePlanItemsLifecycleStatusInput>;
       return postMcp("/api/mcp/update_plan_items_lifecycle_status", {
         entityType: a.entityType,
-        ordinalId: a.ordinalId,
+        ordinalId: String(a.ordinalId),
         status: a.status,
       });
     },
@@ -708,9 +738,44 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-eaas-config",
     description:
-      "Return the project's BunnyShell (Environment-as-a-Service) settings. Secrets are never returned.",
+      "Return the project's BunnyShell (Environment-as-a-Service) settings. Secrets are never returned. " +
+      "Skill connectivity check: prefer this over ephemeral-environment action=CONFIG.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_eaas_config", {}),
+  },
+  {
+    kebab: "ephemeral-environment",
+    description:
+      "BunnyShell (Environment-as-a-Service) lifecycle. action=CONFIG returns project settings (secrets never returned). " +
+      "action=PROVISION creates an environment (wait defaults true and polls until deployed + component URLs; " +
+      "set wait=false for create/deploy trigger only). action=STATUS polls bnsEnvironmentId. " +
+      "Use destroy-ephemeral-environment to delete. Progress is logged to stderr (CLI) or MCP logging when waiting.",
+    inputSchema: S.ephemeralEnvironmentInput,
+    execute: async (args, { postMcp, onProgress }) => {
+      const a = args as z.infer<typeof S.ephemeralEnvironmentInput>;
+      const action = mcpEnum("MCP_EPHEMERAL_ENVIRONMENT_ACTION_", a.action);
+      if (action.endsWith("CONFIG")) {
+        return postMcp("/api/mcp/ephemeral_environment", { action });
+      }
+      if (action.endsWith("STATUS")) {
+        return postMcp("/api/mcp/ephemeral_environment", {
+          action,
+          bnsEnvironmentId: a.bnsEnvironmentId,
+        });
+      }
+      const wait = a.wait !== false;
+      if (!wait) {
+        const body: Record<string, unknown> = { action, wait: false };
+        if (a.branchName != null && a.branchName.trim() !== "") body.branchName = a.branchName.trim();
+        if (a.maxWaitMinutes != null) body.maxWaitMinutes = a.maxWaitMinutes;
+        return postMcp("/api/mcp/ephemeral_environment", body);
+      }
+      return runProvisionEphemeralEnvironmentAndWait(postMcp, onProgress, {
+        branchName: a.branchName,
+        pollIntervalSeconds: a.pollIntervalSeconds,
+        maxWaitMinutes: a.maxWaitMinutes,
+      });
+    },
   },
   {
     kebab: "get-branch-specific-endpoint-config",
@@ -722,42 +787,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const body: Record<string, unknown> = {};
       if (a.branchName != null && a.branchName.trim() !== "") body.branchName = a.branchName.trim();
       return postMcp("/api/mcp/get_branch_specific_endpoint_config", body);
-    },
-  },
-  {
-    kebab: "provision-ephemeral-environment-and-wait",
-    description:
-      "Provision a BunnyShell ephemeral environment, then poll until deployed and component URLs are available. " +
-      "Progress is logged to stderr (CLI) or MCP logging when supported.",
-    inputSchema: S.provisionEphemeralWaitInput,
-    execute: async (args, { postMcp, onProgress }) => {
-      const a = args as z.infer<typeof S.provisionEphemeralWaitInput>;
-      return runProvisionEphemeralEnvironmentAndWait(postMcp, onProgress, {
-        branchName: a.branchName,
-        pollIntervalSeconds: a.pollIntervalSeconds,
-        maxWaitMinutes: a.maxWaitMinutes,
-      });
-    },
-  },
-  {
-    kebab: "provision-ephemeral-environment",
-    description:
-      "Create a BunnyShell ephemeral environment (create + deploy trigger only). Prefer provision-ephemeral-environment-and-wait for normal flows.",
-    inputSchema: S.provisionEphemeralInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.provisionEphemeralInput>;
-      const body: Record<string, unknown> = {};
-      if (a.branchName != null && a.branchName.trim() !== "") body.branchName = a.branchName.trim();
-      return postMcp("/api/mcp/provision_ephemeral_environment", body);
-    },
-  },
-  {
-    kebab: "get-ephemeral-environment-status",
-    description: "Poll BunnyShell for environment status and component_urls_json.",
-    inputSchema: S.bnsEnvironmentIdInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.bnsEnvironmentIdInput>;
-      return postMcp("/api/mcp/get_ephemeral_environment_status", { bnsEnvironmentId: a.bnsEnvironmentId });
     },
   },
   {
@@ -935,48 +964,89 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const a = args as z.infer<typeof S.listScreenStatesInput>;
       const body: Record<string, unknown> = {};
       if (a.environment != null && a.environment.trim() !== "") body.environment = a.environment.trim();
+      if (a.platform) body.platform = platformToProtoEnum(a.platform);
+      if (a.startCommitSha?.trim()) body.startCommitSha = a.startCommitSha.trim();
+      if (a.endCommitSha?.trim()) body.endCommitSha = a.endCommitSha.trim();
       return postMcp("/api/mcp/list_screen_states", body);
     },
   },
   {
     kebab: "get-release",
     description:
-      "Fetch release catalog details for a version/label in the current project " +
-      "(McpGetReleaseRequest/Response: cut git SHA, prior release + SHA, focus areas, payload). " +
-      "Pass version (CLI: --version). Authenticated via project API key.",
+      "Fetch or list releases in the current project. Pass version for one release; set detail=GATE " +
+      "for gate-oriented details (scope, per-environment priority×status test stats, open issue stats, " +
+      "scan summaries, in-scope scenario/issue records). Omit version to list: optional environment, " +
+      "pageSize, pageToken, excludeArchived. Authenticated via project API key.",
     inputSchema: S.getReleaseInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getReleaseInput>;
-      // McpGetReleaseRequest — camelCase JSON field names per JsonFormat
-      const body: { version: string } = { version: a.version.trim() };
+      const body: Record<string, unknown> = {};
+      if (a.version?.trim()) body.version = a.version.trim();
+      if (a.detail) body.detail = mcpEnum("MCP_RELEASE_VIEW_", a.detail);
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.pageSize != null) body.pageSize = a.pageSize;
+      if (a.pageToken?.trim()) body.pageToken = a.pageToken.trim();
+      if (a.excludeArchived != null) body.excludeArchived = a.excludeArchived;
       return postMcp("/api/mcp/get_release", body);
     },
   },
   {
-    kebab: "get-release-details",
+    kebab: "upsert-release",
     description:
-      "Fetch gate-oriented release details for a version/label: scope, per-environment " +
-      "priority×status test stats, open issue stats, scan summaries, and detailed in-scope " +
-      "scenario/issue records (McpGetReleaseDetailsRequest/Response). Pass version (CLI: --version). " +
-      "Use for CI/agent release gating. Authenticated via project API key.",
-    inputSchema: S.getReleaseDetailsInput,
+      "Create or update a release catalog entry. version is required. Optional gitCommitSha, " +
+      "priorReleaseVersion, releaseType (MAJOR|MINOR|HOTFIX), lifecycleStatus, environment (create only), " +
+      "dueDateMillis and branchId (update only, int64 strings). Response is { release, created }.",
+    inputSchema: S.upsertReleaseInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.getReleaseDetailsInput>;
-      const body: { version: string } = { version: a.version.trim() };
-      return postMcp("/api/mcp/get_release_details", body);
+      const a = args as z.infer<typeof S.upsertReleaseInput>;
+      const body: Record<string, unknown> = { version: a.version.trim() };
+      const gitCommitSha = (a.gitCommitSha ?? a.gitSha)?.trim();
+      if (gitCommitSha) body.gitCommitSha = gitCommitSha;
+      if (a.priorReleaseVersion?.trim()) body.priorReleaseVersion = a.priorReleaseVersion.trim();
+      if (a.releaseType) body.releaseType = a.releaseType;
+      if (a.lifecycleStatus?.trim()) body.lifecycleStatus = a.lifecycleStatus.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.dueDateMillis != null) body.dueDateMillis = dueDateToInt64String(a.dueDateMillis);
+      const branchId = asInt64String(a.branchId);
+      if (branchId) body.branchId = branchId;
+      return postMcp("/api/mcp/upsert_release", body);
+    },
+  },
+  {
+    kebab: "manage-test-run",
+    description:
+      "Create or update a named test run. Omit id to create (release required). Optional title, " +
+      "environment (server defaults QA), dueDate, status (ACTIVE|COMPLETED|ARCHIVED), batchInvocationIds, " +
+      "and commitRange: FIND (discover batches in the prior-release-cut to current-cut SHA range without " +
+      "attaching) or LINK (attach the unlinked ones). Response includes id, summary, created, link counts, " +
+      "commit SHAs, discoveredBatchInvocationIds and unlinkedBatchInvocationIds.",
+    inputSchema: S.manageTestRunInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.manageTestRunInput>;
+      const body: Record<string, unknown> = {};
+      if (a.id?.trim()) body.id = a.id.trim();
+      if (a.release?.trim()) body.release = a.release.trim();
+      if (a.title?.trim()) body.title = a.title.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.dueDate != null && a.dueDate !== "") body.dueDate = dueDateToInt64String(a.dueDate);
+      if (a.status) body.status = a.status;
+      if (a.batchInvocationIds?.length) body.batchInvocationIds = a.batchInvocationIds;
+      if (a.commitRange) body.commitRange = mcpEnum("MCP_TEST_RUN_COMMIT_RANGE_", a.commitRange);
+      if (a.limitWhenNoPrior != null) body.limitWhenNoPrior = a.limitWhenNoPrior;
+      return postMcp("/api/mcp/manage_test_run", body);
     },
   },
   {
     kebab: "get-security-scan-config",
     description:
       "Fetch security scan config by scan id (detail.dastCheckConfig / detail.sastCheckConfig / " +
-      "detail.depsCheckConfig / detail.leaksCheckConfig, release label, status). Pass id (CLI: --id). " +
-      "Used by /testchimp run security scan. For DAST honour allowActiveScan / useEphemeralSandbox / scope " +
-      "on dastCheckConfig.",
+      "detail.depsCheckConfig / detail.leaksCheckConfig, release label, status). Pass scanId " +
+      "(id is accepted as an alias). Used by /testchimp run security scan. For DAST honour " +
+      "allowActiveScan / useEphemeralSandbox / scope on dastCheckConfig.",
     inputSchema: S.getSecurityScanConfigInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getSecurityScanConfigInput>;
-      return postMcp("/api/mcp/get_security_scan_config", { scanId: a.id.trim() });
+      return postMcp("/api/mcp/get_security_scan_config", { scanId: (a.scanId ?? a.id)!.trim() });
     },
   },
   {
@@ -984,82 +1054,39 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Update a scan's status. status must be one of: QUEUED, IN_PROGRESS, COMPLETED, EXCEPTION. " +
       "Call IN_PROGRESS when starting. Each scan is a single checker type: the category playbook " +
-      "sets COMPLETED after a successful report-*-findings (or EXCEPTION on hard failure).",
+      "sets COMPLETED after a successful report-scan-findings (or EXCEPTION on hard failure).",
     inputSchema: S.updateScanProgressInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.updateScanProgressInput>;
       return postMcp("/api/mcp/update_scan_progress", {
-        scanId: a.id.trim(),
+        scanId: (a.scanId ?? a.id)!.trim(),
         status: a.status,
       });
     },
   },
   {
-    kebab: "report-dast-findings",
+    kebab: "report-scan-findings",
     description:
-      "Upload a ZAP Traditional JSON report for a security scan. Pass --id and --report-file <path>. " +
-      "Backend parses alerts, dedupes by bug hash, and inserts new SECURITY bugs linked to the scan. " +
-      "Does not mark the scan COMPLETED — the DAST playbook calls update-scan-progress COMPLETED after this.",
-    inputSchema: S.reportDastFindingsInput,
+      "Upload a scanner JSON report for a security scan. Pass --id, --scanner (DAST|SAST|DEPS|SECRETS), and --report-file. " +
+      "DAST = ZAP Traditional JSON; SAST = Semgrep CLI JSON; DEPS = Trivy JSON; SECRETS = Gitleaks JSON. " +
+      "Backend parses, dedupes by bug hash, and inserts new SECURITY bugs linked to the scan. " +
+      "Optional markCompleted=true sets the scan COMPLETED after a successful ingest; otherwise the playbook " +
+      "calls update-scan-progress COMPLETED.",
+    inputSchema: S.reportScanFindingsInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.reportDastFindingsInput>;
-      const { readFile } = await import("node:fs/promises");
-      const reportJson = await readFile(a.reportFile, "utf8");
-      return postMcp("/api/mcp/report_dast_findings", {
-        scanId: a.id.trim(),
+      const a = args as z.infer<typeof S.reportScanFindingsInput>;
+      let reportJson = a.reportJson;
+      if (!reportJson && a.reportFile) {
+        const { readFile } = await import("node:fs/promises");
+        reportJson = await readFile(a.reportFile, "utf8");
+      }
+      const body: Record<string, unknown> = {
+        scanId: (a.scanId ?? a.id)!.trim(),
+        scanner: mcpEnum("MCP_SCAN_FINDER_", a.scanner),
         reportJson,
-      });
-    },
-  },
-  {
-    kebab: "report-sast-findings",
-    description:
-      "Upload a full Semgrep CLI JSON report for a SAST security scan. Pass --id and --report-file <path>. " +
-      "Backend stores the raw report, parses results, dedupes by bug hash, and inserts new SECURITY bugs. " +
-      "Does not mark the scan COMPLETED — the SAST playbook calls update-scan-progress COMPLETED after this.",
-    inputSchema: S.reportSastFindingsInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.reportSastFindingsInput>;
-      const { readFile } = await import("node:fs/promises");
-      const reportJson = await readFile(a.reportFile, "utf8");
-      return postMcp("/api/mcp/report_sast_findings", {
-        scanId: a.id.trim(),
-        reportJson,
-      });
-    },
-  },
-  {
-    kebab: "report-secrets-findings",
-    description:
-      "Upload a full Gitleaks JSON report for a secrets security scan. Pass --id and --report-file <path>. " +
-      "Backend redacts secret payloads, stores the report, dedupes by bug hash, and inserts SECURITY bugs. " +
-      "Does not mark the scan COMPLETED — the secrets playbook calls update-scan-progress COMPLETED after this.",
-    inputSchema: S.reportSecretsFindingsInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.reportSecretsFindingsInput>;
-      const { readFile } = await import("node:fs/promises");
-      const reportJson = await readFile(a.reportFile, "utf8");
-      return postMcp("/api/mcp/report_secrets_findings", {
-        scanId: a.id.trim(),
-        reportJson,
-      });
-    },
-  },
-  {
-    kebab: "report-deps-findings",
-    description:
-      "Upload a full Trivy JSON report for a dependency security scan. Pass --id and --report-file <path>. " +
-      "Backend stores the report, filters by security profile / ignore-unfixed, dedupes, and inserts SECURITY bugs. " +
-      "Does not mark the scan COMPLETED — the deps playbook calls update-scan-progress COMPLETED after this.",
-    inputSchema: S.reportDepsFindingsInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.reportDepsFindingsInput>;
-      const { readFile } = await import("node:fs/promises");
-      const reportJson = await readFile(a.reportFile, "utf8");
-      return postMcp("/api/mcp/report_deps_findings", {
-        scanId: a.id.trim(),
-        reportJson,
-      });
+      };
+      if (a.markCompleted != null) body.markCompleted = a.markCompleted;
+      return postMcp("/api/mcp/report_scan_findings", body);
     },
   },
   {
@@ -1070,7 +1097,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: S.upsertScreenStatesInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.upsertScreenStatesInput>;
-      return postMcp("/api/mcp/upsert_screen_states", { screenStates: a.screenStates });
+      const body: Record<string, unknown> = { screenStates: a.screenStates };
+      if (a.gitCommitSha?.trim()) body.gitCommitSha = a.gitCommitSha.trim();
+      return postMcp("/api/mcp/upsert_screen_states", body);
     },
   },
   {
@@ -1082,22 +1111,39 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.listSemanticSimilarTestsInput>;
       const body: Record<string, unknown> = {};
-      if (a.scope != null) body.scope = normalizeScope(a.scope);
+      if (a.scope != null) {
+        const folderPath = normalizeScope({
+          folderPath: a.scope.folderPath,
+          filePaths: a.scope.filePaths,
+        }).folderPath;
+        const scope: Record<string, unknown> = {};
+        if (folderPath?.length) scope.folderPath = folderPath;
+        if (a.scope.ids?.length) scope.ids = a.scope.ids;
+        if (a.scope.artifactType) scope.artifactType = a.scope.artifactType;
+        if (Object.keys(scope).length) body.scope = scope;
+      }
       return postMcp("/api/mcp/list_semantic_similar_tests", body);
     },
   },
   {
-    kebab: "mark-semantic-tests-distinct",
+    kebab: "select-smart-smoke-tests",
     description:
-      "Mark two SmartTests as legitimately distinct (symmetric) using TestLocators. " +
-      "Agent/API calls use marked_by_user_id = 0.",
-    inputSchema: S.markSemanticTestsDistinctInput,
+      "Select a SmartTest smoke subset from relatedTests / taggedTests / suiteCandidates with optional " +
+      "includeTags, maxTimeBudgetMins, maxTests, suitePercentage, branchName, environment.",
+    inputSchema: S.selectSmartSmokeTestsInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.markSemanticTestsDistinctInput>;
-      return postMcp("/api/mcp/mark_semantic_tests_distinct", {
-        focusTest: a.focusTest,
-        distinctTest: a.distinctTest,
-      });
+      const a = args as z.infer<typeof S.selectSmartSmokeTestsInput>;
+      const body: Record<string, unknown> = {};
+      if (a.relatedTests?.length) body.relatedTests = a.relatedTests;
+      if (a.includeTags?.length) body.includeTags = a.includeTags;
+      if (a.taggedTests?.length) body.taggedTests = a.taggedTests;
+      if (a.suiteCandidates?.length) body.suiteCandidates = a.suiteCandidates;
+      if (a.maxTimeBudgetMins != null) body.maxTimeBudgetMins = a.maxTimeBudgetMins;
+      if (a.maxTests != null) body.maxTests = a.maxTests;
+      if (a.suitePercentage != null) body.suitePercentage = a.suitePercentage;
+      if (a.branchName?.trim()) body.branchName = a.branchName.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      return postMcp("/api/mcp/select_smart_smoke_tests", body);
     },
   },
   {
@@ -1144,7 +1190,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         sourceEntityType: a.sourceEntityType,
       };
       if (a.sourceTest) body.sourceTest = a.sourceTest;
-      if (a.sourceOrdinalId != null) body.sourceOrdinalId = Number(a.sourceOrdinalId);
+      if (a.sourceOrdinalId != null) body.sourceOrdinalId = String(a.sourceOrdinalId);
       if (a.sourceEventTitle) body.sourceEventTitle = a.sourceEventTitle;
       if (a.targetEntityTypes?.length) body.targetEntityTypes = a.targetEntityTypes;
       if (a.limit != null) body.limit = a.limit;
@@ -1152,38 +1198,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    kebab: "mark-entity-distinct",
+    kebab: "set-entity-distinct",
     description:
-      "Mark two same-type entities as distinct. TEST uses TestLocators; " +
-      "STORY/SCENARIO/ISSUE use ordinals; EVENT uses titles.",
-    inputSchema: S.markEntityDistinctInput,
+      "Mark or unmark two same-type entities as distinct (distinct defaults true). " +
+      "TEST uses TestLocators (focusTest + otherTest or distinctTest); " +
+      "STORY/SCENARIO/ISSUE use ordinals; EVENT uses titles. Set distinct=false to remove a mark.",
+    inputSchema: S.setEntityDistinctInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.markEntityDistinctInput>;
-      const body: Record<string, unknown> = { entityType: a.entityType };
+      const a = args as z.infer<typeof S.setEntityDistinctInput>;
+      const otherTest = a.otherTest ?? a.distinctTest;
+      const entityType = a.entityType ?? (a.focusTest && otherTest ? "TEST" : a.entityType);
+      const body: Record<string, unknown> = {
+        entityType,
+        distinct: a.distinct !== false,
+      };
       if (a.focusTest) body.focusTest = a.focusTest;
-      if (a.otherTest) body.otherTest = a.otherTest;
-      if (a.focusOrdinalId != null) body.focusOrdinalId = Number(a.focusOrdinalId);
-      if (a.otherOrdinalId != null) body.otherOrdinalId = Number(a.otherOrdinalId);
+      if (otherTest) body.otherTest = otherTest;
+      const focusOrdinalId = asInt64String(a.focusOrdinalId);
+      const otherOrdinalId = asInt64String(a.otherOrdinalId);
+      if (focusOrdinalId) body.focusOrdinalId = focusOrdinalId;
+      if (otherOrdinalId) body.otherOrdinalId = otherOrdinalId;
       if (a.focusEventTitle) body.focusEventTitle = a.focusEventTitle;
       if (a.otherEventTitle) body.otherEventTitle = a.otherEventTitle;
-      return postMcp("/api/mcp/mark_entity_distinct", body);
-    },
-  },
-  {
-    kebab: "unmark-entity-distinct",
-    description:
-      "Remove a distinct mark between two same-type entities (same identity rules as mark-entity-distinct).",
-    inputSchema: S.markEntityDistinctInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.markEntityDistinctInput>;
-      const body: Record<string, unknown> = { entityType: a.entityType };
-      if (a.focusTest) body.focusTest = a.focusTest;
-      if (a.otherTest) body.otherTest = a.otherTest;
-      if (a.focusOrdinalId != null) body.focusOrdinalId = Number(a.focusOrdinalId);
-      if (a.otherOrdinalId != null) body.otherOrdinalId = Number(a.otherOrdinalId);
-      if (a.focusEventTitle) body.focusEventTitle = a.focusEventTitle;
-      if (a.otherEventTitle) body.otherEventTitle = a.otherEventTitle;
-      return postMcp("/api/mcp/unmark_entity_distinct", body);
+      return postMcp("/api/mcp/set_entity_distinct", body);
     },
   },
   {
@@ -1243,6 +1280,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         ...(ordinalId != null ? { ordinalId } : {}),
       };
       report.subject = mergedSubject;
+      const createdAtMillis = asInt64String(report.createdAtMillis);
+      if (createdAtMillis) report.createdAtMillis = createdAtMillis;
+      const scoresUpdatedAtMillis = asInt64String(report.scoresUpdatedAtMillis);
+      if (scoresUpdatedAtMillis) report.scoresUpdatedAtMillis = scoresUpdatedAtMillis;
 
       return postMcp("/api/mcp/report_requirement_quality_findings", { report });
     },
@@ -1280,27 +1321,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       } else if (actionNorm === "FAILED" || actionNorm === "ACTION_FAILED") {
         actionType = "ACTION_FAILED";
       }
-      const body: Record<string, unknown> = {
-        workflowId: a.workflowId,
-        workflowExecutionId: a.workflowExecutionId,
-        actionType,
-        actorType,
-        entityType: a.entityType,
-      };
-      if (sessionId) body.chimphandsSessionId = sessionId;
-      if (a.policyFile) body.policyFile = a.policyFile;
-      if (a.policyVersion) body.policyVersion = a.policyVersion;
-      const gitSha = resolveGitHeadSha(a.gitSha);
-      if (gitSha) body.gitSha = gitSha;
-      if (a.userId) body.userId = a.userId;
-      else if (!sessionId && currentRequestAuth()?.isolated !== true && process.env.TESTCHIMP_USER_ID) {
-        // ChimpHands: server resolves responsible user from SESSION_ID; do not stamp service account.
-        // Isolated (remote multi-tenant HTTP): the server attributes to the OAuth token's user.
-        body.userId = process.env.TESTCHIMP_USER_ID;
-      }
-      if (a.branchName) body.branchName = a.branchName;
-      // Nested traceability wins for agentModel / skillVersion / cliVersion;
-      // fill from flat/env/package when nested omits them.
       const { skillVersion, cliVersion } = resolveToolchainVersions({
         skillVersion: a.skillVersion,
         cliVersion: a.cliVersion,
@@ -1309,68 +1329,61 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             ? (a.traceability as Record<string, unknown>)
             : null,
       });
-      if (a.traceability && typeof a.traceability === "object") {
-        const nested = { ...a.traceability } as Record<string, unknown>;
-        const nestedModel =
-          nested.agentModel != null && String(nested.agentModel).trim() !== ""
-            ? String(nested.agentModel).trim()
-            : undefined;
-        const flatModel = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
-        if (nestedModel) {
-          nested.agentModel = nestedModel;
-        } else if (flatModel) {
-          nested.agentModel = flatModel;
-        }
-        if (skillVersion) nested.skillVersion = skillVersion;
-        if (cliVersion) nested.cliVersion = cliVersion;
-        body.traceability = nested;
-      } else {
-        const model = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
-        const nested: Record<string, unknown> = {};
-        if (model) nested.agentModel = model;
-        if (skillVersion) nested.skillVersion = skillVersion;
-        if (cliVersion) nested.cliVersion = cliVersion;
-        if (Object.keys(nested).length > 0) {
-          body.traceability = nested;
-        }
+      const trace: Record<string, unknown> = {
+        ...(a.traceability && typeof a.traceability === "object" ? a.traceability : {}),
+        workflowId: a.workflowId,
+        workflowExecutionId: a.workflowExecutionId,
+        actorType,
+      };
+      if (a.policyFile) trace.policyFile = a.policyFile;
+      if (a.policyVersion) trace.policyVersion = a.policyVersion;
+      const gitSha = resolveGitHeadSha(a.gitSha);
+      if (gitSha) trace.gitSha = gitSha;
+      if (a.userId) trace.userId = a.userId;
+      else if (!sessionId && currentRequestAuth()?.isolated !== true && process.env.TESTCHIMP_USER_ID) {
+        trace.userId = process.env.TESTCHIMP_USER_ID;
       }
-      if (a.test) {
-        body.test = a.test;
-      } else if (a.entityIdentity) {
-        body.entityIdentity = a.entityIdentity;
-      }
+      if (a.branchName) trace.branchName = a.branchName;
+      const model = a.agentModel?.trim() || process.env.TESTCHIMP_AGENT_MODEL?.trim();
+      if (model && !trace.agentModel) trace.agentModel = model;
+      if (skillVersion) trace.skillVersion = skillVersion;
+      if (cliVersion) trace.cliVersion = cliVersion;
+
+      const body: Record<string, unknown> = {
+        entityType: a.entityType,
+        actionType,
+        traceability: trace,
+      };
+      if (a.chimphandsSessionId?.trim()) body.chimphandsSessionId = a.chimphandsSessionId.trim();
+      else if (sessionId) body.chimphandsSessionId = sessionId;
+      if (a.test) body.test = a.test;
+      else if (a.entityIdentity) body.entityIdentity = a.entityIdentity;
       return postMcp("/api/mcp/report_agent_action", body);
     },
   },
   {
-    kebab: "get-last-run-workflow-detail",
+    kebab: "get-workflow-executions",
     description:
-      "Fetch the last workflow execution for a workflow-id on a branch (optional userId for per-user last run). " +
-      "Used for since-last-run scoping.",
-    inputSchema: S.getLastRunWorkflowDetailInput,
+      "List or fetch workflow executions. Omit identity args to list (optional workflowId, limit, offset, " +
+      "pendingApprovalOnly, assignedToMeOnly). Pass workflowExecutionId for one execution (includeActions defaults " +
+      "true). Pass workflowId + latestOnly=true for the last run on an optional branch / userId " +
+      "(since-last-run scoping).",
+    inputSchema: S.getWorkflowExecutionsInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.getLastRunWorkflowDetailInput>;
-      const body: Record<string, unknown> = {
-        workflowId: a.workflowId,
-        branchName: a.branchName,
-      };
-      if (a.userId) body.userId = a.userId;
-      return postMcp("/api/mcp/get_last_run_workflow_detail", body);
-    },
-  },
-  {
-    kebab: "list-workflow-executions",
-    description: "List recent workflow executions for the project, optionally filtered by workflowId.",
-    inputSchema: S.listWorkflowExecutionsInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.listWorkflowExecutionsInput>;
+      const a = args as z.infer<typeof S.getWorkflowExecutionsInput>;
       const body: Record<string, unknown> = {};
+      if (a.workflowExecutionId?.trim()) body.workflowExecutionId = a.workflowExecutionId.trim();
       if (a.workflowId) body.workflowId = a.workflowId;
+      if (a.branchName) body.branchName = a.branchName;
+      if (a.userId) body.userId = a.userId;
+      if (a.latestOnly) body.latestOnly = true;
+      if (a.includeActions != null) body.includeActions = a.includeActions;
+      else if (a.workflowExecutionId?.trim()) body.includeActions = true;
       if (a.limit != null) body.limit = a.limit;
       if (a.offset != null) body.offset = a.offset;
       if (a.pendingApprovalOnly) body.pendingApprovalOnly = true;
       if (a.assignedToMeOnly) body.assignedToMeOnly = true;
-      return postMcp("/api/mcp/list_workflow_executions", body);
+      return postMcp("/api/mcp/get_workflow_executions", body);
     },
   },
   {
@@ -1379,7 +1392,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Change the assignee and/or CC list of a workflow execution. The caller (OAuth user, or the bot's owner " +
       "with --bot) must be the current assignee or an org admin (admin override needs OAuth, not --bot); anyone " +
       "on the team may assign an unassigned execution, and a CC'd user may remove themselves. 409 means someone " +
-      "else changed it: re-read with get-workflow-execution and retry. Assignee / CC accept team member user ids or emails. New assignees and CC'd users get a " +
+      "else changed it: re-read with get-workflow-executions and retry. Assignee / CC accept team member user ids or emails. New assignees and CC'd users get a " +
       "workflow-execution-assigned bot event plus email/Slack per their notification settings. Only call after " +
       "the user explicitly approved the change. Returns the updated execution.",
     inputSchema: S.updateWorkflowExecutionAssigneesInput,
@@ -1400,43 +1413,57 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    kebab: "get-workflow-execution",
-    description: "Get a workflow execution by id; pass includeActions=true for the action timeline.",
-    inputSchema: S.getWorkflowExecutionInput,
+    kebab: "ask-user-question-async",
+    description:
+      "Ask the user a question with structured choices when this workflow is running on a cloud agent " +
+      "and no live UI session is attached. Requires workflowExecutionId. Do not call from a local IDE chat " +
+      "or when CHIMPHANDS_UI_ATTACHED is set — ask in the conversation instead. Put the recommended choice " +
+      "first. Notifies the automation's humans by email/Slack, or fans out to a live ChimpHands session " +
+      "when one is attached. One open question per execution.",
+    inputSchema: S.askUserQuestionAsyncInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.getWorkflowExecutionInput>;
-      return postMcp("/api/mcp/get_workflow_execution", {
-        workflowExecutionId: a.workflowExecutionId,
-        includeActions: a.includeActions ?? true,
-      });
+      const attached = (process.env.CHIMPHANDS_UI_ATTACHED || "").trim().toLowerCase();
+      if (attached === "true" || attached === "1") {
+        throw new Error(
+          "A live UI session is attached. Ask the user in the conversation instead of ask-user-question-async."
+        );
+      }
+      if ((process.env.TESTCHIMP_EXECUTION_SOURCE || "").trim() === "LOCAL_AGENT") {
+        throw new Error("ask-user-question-async is only for cloud agents. Ask the user in chat.");
+      }
+      const a = args as z.infer<typeof S.askUserQuestionAsyncInput>;
+      if (!a.workflowExecutionId?.trim()) {
+        throw new Error("ask-user-question-async requires workflowExecutionId");
+      }
+      const body: Record<string, unknown> = {
+        workflowExecutionId: a.workflowExecutionId.trim(),
+        question: a.question,
+        choices: a.choices,
+      };
+      if (a.chimphandsSessionId?.trim()) body.chimphandsSessionId = a.chimphandsSessionId.trim();
+      if (a.recommendedChoiceId?.trim()) body.recommendedChoiceId = a.recommendedChoiceId.trim();
+      return postMcp("/api/mcp/ask_user_question_async", body);
     },
   },
   {
-    kebab: "get-policy",
+    kebab: "get-policies",
     description:
-      "Fetch a workflow policy file by name (e.g. run-qa.policy.md) from the platform POLICY_FILE store. Filename is coerced to *.policy.md (same as upsert-policy).",
-    inputSchema: S.getPolicyInput,
+      "Fetch or list workflow policy files from the platform POLICY_FILE store. " +
+      "Pass policyFileName (e.g. run-qa.policy.md, coerced to *.policy.md) to fetch one file. " +
+      "Omit policyFileName to list (optional workflowId). List marks isDefault when filename is <workflow-id>.policy.md.",
+    inputSchema: S.getPoliciesInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.getPolicyInput>;
-      return postMcp("/api/mcp/get_policy", { policyFileName: a.policyFileName });
-    },
-  },
-  {
-    kebab: "list-policies",
-    description:
-      "List policy files for an optional workflow-id. Marks isDefault when filename is <workflow-id>.policy.md.",
-    inputSchema: S.listPoliciesInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.listPoliciesInput>;
+      const a = args as z.infer<typeof S.getPoliciesInput>;
       const body: Record<string, unknown> = {};
+      if (a.policyFileName) body.policyFileName = a.policyFileName;
       if (a.workflowId) body.workflowId = a.workflowId;
-      return postMcp("/api/mcp/list_policies", body);
+      return postMcp("/api/mcp/get_policies", body);
     },
   },
   {
     kebab: "upsert-policy",
     description:
-      "Create or update a workflow policy file on the platform (plans/knowledge/policies/*.policy.md). policyFileName is coerced to *.policy.md (same as get-policy). Prefer after writing the file locally so the policy is available immediately (git sync also works later).",
+      "Create or update a workflow policy file on the platform (plans/knowledge/policies/*.policy.md). policyFileName is coerced to *.policy.md (same as get-policies). Prefer after writing the file locally so the policy is available immediately (git sync also works later).",
     inputSchema: S.upsertPolicyInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.upsertPolicyInput>;
@@ -1484,43 +1511,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_workflow_catalog", {}),
   },
   {
-    kebab: "list-api-operation-services",
+    kebab: "get-api-operations",
     description:
-      "List API operation service resources for the project (configured OpenAPI root file paths + operation counts). " +
-      "Use rootFilePath as the service resource id for list-api-operations / get-api-operation-detail.",
-    inputSchema: S.listApiOperationServicesInput,
-    execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_api_operation_services", {}),
-  },
-  {
-    kebab: "list-api-operations",
-    description:
-      "List API operations for a service resource with covering-test previews, coverageSummary scores, " +
-      "observability mapping state, and runtimeObservation from the latest finalized production daily summary " +
-      "(with latest-hour fallback). runtimeObservation may include window bounds, requestCount/rpm, errorCount/errorRate, " +
-      "p50/p95/p99LatencyMs, status-class counts, and syncStatus. Missing observability is unknown/not configured, not zero. " +
-      "Use these signals to prioritize uncovered high-volume/high-error operations; prefer --root-file-path.",
-    inputSchema: S.listApiOperationsInput,
+      "List API operation services, list operations for a service, or fetch one operation's coverage detail. " +
+      "No identity args: configured OpenAPI root file paths + operation counts. " +
+      "rootFilePath / serviceKey: operations with covering-test previews, coverageSummary, obsMappingState, and " +
+      "runtimeObservation (requestCount/rpm, errorRate, p50/p95/p99LatencyMs). Missing observability is unknown, not zero. " +
+      "id (ULID), or oasOperationId, or httpMethod+pathTemplate: request/query/response fields, response codes, covering tests. " +
+      "Prefer --id for detail and --root-file-path for a service list.",
+    inputSchema: S.getApiOperationsInput,
     execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.listApiOperationsInput>;
-      const body: Record<string, unknown> = {};
-      if (a.rootFilePath != null && a.rootFilePath.trim() !== "") body.rootFilePath = a.rootFilePath.trim();
-      if (a.serviceKey != null && a.serviceKey.trim() !== "") body.serviceKey = a.serviceKey.trim();
-      if (a.includeManual != null) body.includeManual = a.includeManual;
-      if (a.includeRemoved != null) body.includeRemoved = a.includeRemoved;
-      return postMcp("/api/mcp/list_api_operations", body);
-    },
-  },
-  {
-    kebab: "get-api-operation-detail",
-    description:
-      "Fetch detailed API operation coverage (request/query/response fields, response codes, covering tests) — " +
-      "the operation also carries obsMappingState and the latest runtimeObservation daily summary when available. " +
-      "Use request volume/error rate to rank coverage risk and p95/p99 latency to prioritize performance-test work; " +
-      "do not treat absent observations as zero or production latency as a test threshold. Prefer TestChimp operation id (--id ULID); " +
-      "or rootFilePath + oasOperationId; or rootFilePath + httpMethod + pathTemplate.",
-    inputSchema: S.getApiOperationDetailInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.getApiOperationDetailInput>;
+      const a = args as z.infer<typeof S.getApiOperationsInput>;
       const body: Record<string, unknown> = {};
       if (a.id != null && a.id.trim() !== "") body.id = a.id.trim();
       if (a.rootFilePath != null && a.rootFilePath.trim() !== "") body.rootFilePath = a.rootFilePath.trim();
@@ -1530,17 +1531,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.pathTemplate != null && a.pathTemplate.trim() !== "") body.pathTemplate = a.pathTemplate.trim();
       if (a.includeManual != null) body.includeManual = a.includeManual;
       if (a.includeRemoved != null) body.includeRemoved = a.includeRemoved;
-      return postMcp("/api/mcp/get_api_operation_detail", body);
+      return postMcp("/api/mcp/get_api_operations", body);
     },
   },
   {
     kebab: "list-perf-runs",
     description:
-      "List performance runs, optionally filtered by TestChimp id, JOURNEY/COMPOSITE kind, branch, profile, dataset, LLM mode, or environment.",
+      "List performance runs, optionally filtered by TestChimp id, JOURNEY/COMPOSITE kind, branch, profile, dataset, LLM mode, or environment. " +
+      "Pass runId to fetch one run (optional includeRaw for the raw payload).",
     inputSchema: S.listPerfRunsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.listPerfRunsInput>;
       const body: Record<string, unknown> = {};
+      if (a.runId) body.runId = a.runId;
+      if (a.includeRaw != null) body.includeRaw = a.includeRaw;
       if (a.testchimpId) body.testchimpId = a.testchimpId;
       if (a.kind) body.kind = a.kind;
       if (a.branchName) body.branchName = a.branchName;
@@ -1548,21 +1552,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.dataset) body.dataset = a.dataset;
       if (a.llmMode) body.llmMode = a.llmMode;
       if (a.environment) body.environment = a.environment;
+      if (a.release) body.release = a.release;
+      if (a.folderPath) body.folderPath = a.folderPath;
+      if (a.fileIds?.length) body.fileIds = a.fileIds;
+      if (a.batchInvocationId) body.batchInvocationId = a.batchInvocationId;
+      if (a.groupByBatch != null) body.groupByBatch = a.groupByBatch;
       if (a.limit != null) body.limit = a.limit;
       if (a.offset != null) body.offset = a.offset;
       return postMcp("/api/mcp/list_perf_runs", body);
-    },
-  },
-  {
-    kebab: "get-perf-run",
-    description: "Fetch one performance run by runId; set includeRaw to include its raw payload.",
-    inputSchema: S.getPerfRunInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.getPerfRunInput>;
-      return postMcp("/api/mcp/get_perf_run", {
-        runId: a.runId,
-        ...(a.includeRaw != null ? { includeRaw: a.includeRaw } : {}),
-      });
     },
   },
   {
@@ -1581,17 +1578,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "promote-perf-baseline",
     description:
-      "Promote a performance run as the baseline for an environment class. Optional agent traceability records the mutation.",
+      "Promote a performance run as the baseline for an environment class (runId + envClass).",
     inputSchema: S.promotePerfBaselineInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.promotePerfBaselineInput>;
-      const body: Record<string, unknown> = {
+      return postMcp("/api/mcp/promote_perf_baseline", {
         runId: a.runId,
         envClass: a.envClass,
-      };
-      const trace = buildAgentTraceabilityPayload(a);
-      if (trace) body.agentTraceability = trace;
-      return postMcp("/api/mcp/promote_perf_baseline", body);
+      });
     },
   },
   {
@@ -1705,6 +1699,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.testId) body.testId = a.testId;
       if (a.operationId) body.operationId = a.operationId;
       if (a.limit != null) body.limit = a.limit;
+      if (a.executionId) body.executionId = a.executionId;
+      if (a.retryCount != null) body.retryCount = a.retryCount;
+      if (a.includePayloads != null) body.includePayloads = a.includePayloads;
+      if (a.interactionId) body.interactionId = a.interactionId;
       return postMcp("/api/mcp/list_api_operation_interactions", body);
     },
   },
@@ -1732,19 +1730,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (filename) body.filename = filename;
       if (a.contentType?.trim()) body.contentType = a.contentType.trim();
       return postMcp("/api/mcp/upload_attachment", body);
-    },
-  },
-  {
-    kebab: "get-batch-view-url",
-    description:
-      "Resolve the TestChimp batch execution viewer deeplink for the authenticated project. " +
-      "Pass --batch-invocation-id. Returns batchViewUrl for messaging back to the user.",
-    inputSchema: S.getBatchViewUrlInput,
-    execute: async (args, { postMcp }) => {
-      const a = args as z.infer<typeof S.getBatchViewUrlInput>;
-      return postMcp("/api/mcp/get_batch_view_url", {
-        batchInvocationId: a.batchInvocationId.trim(),
-      });
     },
   },
   {
@@ -1972,8 +1957,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 
 const TOOL_BY_KEBAB = new Map(TOOL_DEFINITIONS.map((t) => [t.kebab, t]));
 
+/** CLI / skill aliases that resolve to a registered kebab MCP tool. */
+export const TOOL_NAME_ALIASES: Record<string, string> = {
+  "ask-testchimp-question": "ask-about-testchimp",
+};
+
+function resolveToolKebab(kebab: string): string {
+  return TOOL_NAME_ALIASES[kebab] ?? kebab;
+}
+
 export function getToolDefinition(kebab: string): ToolDefinition | undefined {
-  return TOOL_BY_KEBAB.get(kebab);
+  return TOOL_BY_KEBAB.get(resolveToolKebab(kebab));
 }
 
 export async function runTool(
@@ -1981,7 +1975,8 @@ export async function runTool(
   rawArgs: unknown,
   ctx: ToolContext
 ): Promise<string> {
-  const def = TOOL_BY_KEBAB.get(kebab);
+  const resolved = resolveToolKebab(kebab);
+  const def = TOOL_BY_KEBAB.get(resolved);
   if (!def) throw new Error(`Unknown tool: ${kebab}`);
   const raw = rawArgs === undefined || rawArgs === null ? {} : rawArgs;
   const parsed = def.inputSchema.safeParse(raw);

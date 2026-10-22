@@ -7,10 +7,12 @@ import { runWithRequestAuth, TestChimpHttpError } from "./client.js";
 import { buildAgentTraceabilityPayload } from "./agentTraceability.js";
 import { annotationsForTool, TOOL_ANNOTATIONS } from "./toolAnnotations.js";
 import {
+  ASK_ABOUT_TESTCHIMP_QUESTION_MAX,
   PROJECT_INIT_STATUS_INPUT_KEYS,
   projectInitStatusFieldsSchema,
 } from "./schemas.js";
 import { getToolDefinition, parseProjectCredentialsJson, runTool, TOOL_DEFINITIONS } from "./tools.js";
+import { buildCliProgram } from "../cli/program.js";
 import { workspaceMcpJsonPath } from "../workspace/workspaceCredsFile.js";
 
 const runtimeObservation = {
@@ -70,7 +72,7 @@ describe("API operation observability", () => {
     let request: { path: string; body: unknown } | undefined;
 
     const result = await runTool(
-      "list-api-operations",
+      "get-api-operations",
       { rootFilePath: "openapi/service.json" },
       {
         postMcp: async (path, body) => {
@@ -81,7 +83,7 @@ describe("API operation observability", () => {
     );
 
     assert.deepEqual(request, {
-      path: "/api/mcp/list_api_operations",
+      path: "/api/mcp/get_api_operations",
       body: { rootFilePath: "openapi/service.json" },
     });
     assert.deepEqual(JSON.parse(result), JSON.parse(response));
@@ -99,15 +101,15 @@ describe("API operation observability", () => {
     });
 
     const result = await runTool(
-      "get-api-operation-detail",
+      "get-api-operations",
       { id: "01OBSERVABILITYOPERATION" },
       { postMcp: async () => response },
     );
 
     assert.deepEqual(JSON.parse(result), JSON.parse(response));
     assert.match(
-      getToolDefinition("get-api-operation-detail")?.description ?? "",
-      /p95\/p99 latency/,
+      getToolDefinition("get-api-operations")?.description ?? "",
+      /p50\/p95\/p99LatencyMs/,
     );
   });
 });
@@ -154,12 +156,12 @@ describe("get-meeting-transcript", () => {
   });
 });
 
-describe("get-meeting-set", () => {
-  it("posts meetingSetId to get_meeting_set", async () => {
+describe("list-meetings extra locators", () => {
+  it("forwards includeFilterOptions and meetingSetId", async () => {
     let request: { path: string; body: unknown } | undefined;
     await runTool(
-      "get-meeting-set",
-      { meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
+      "list-meetings",
+      { includeFilterOptions: true, meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
       {
         postMcp: async (path, body) => {
           request = { path, body };
@@ -168,8 +170,8 @@ describe("get-meeting-set", () => {
       },
     );
     assert.deepEqual(request, {
-      path: "/api/mcp/get_meeting_set",
-      body: { meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
+      path: "/api/mcp/list_meetings",
+      body: { includeFilterOptions: true, meetingSetId: "01J9Z3X5V4ABCDEF0123456789" },
     });
   });
 });
@@ -230,16 +232,468 @@ describe("list-meetings", () => {
   });
 });
 
-describe("list-meeting-filter-options", () => {
-  it("posts an empty body to list_meeting_filter_options", async () => {
+describe("MCP API 2.0 consolidations", () => {
+  async function capture(kebab: string, args: Record<string, unknown> = {}) {
     let request: { path: string; body: unknown } | undefined;
-    await runTool("list-meeting-filter-options", {}, {
+    const result = await runTool(kebab, args, {
       postMcp: async (path, body) => {
         request = { path, body };
         return "{}";
       },
     });
-    assert.deepEqual(request, { path: "/api/mcp/list_meeting_filter_options", body: {} });
+    return { request, result };
+  }
+
+  it("registers 88 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 88);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 88);
+  });
+
+  it("advertises extended get-org-capabilities fields", () => {
+    assert.match(
+      getToolDefinition("get-org-capabilities")?.description ?? "",
+      /planLabel/,
+    );
+    assert.match(
+      getToolDefinition("get-org-capabilities")?.description ?? "",
+      /chimphandsCredits/,
+    );
+    assert.match(
+      getToolDefinition("get-org-capabilities")?.description ?? "",
+      /freeTrialActive \/ trial/,
+    );
+  });
+
+  it("does not register replaced 1.x tools", () => {
+    const removed = [
+      "provision-ephemeral-environment",
+      "provision-ephemeral-environment-and-wait",
+      "get-ephemeral-environment-status",
+      "report-dast-findings",
+      "report-sast-findings",
+      "report-deps-findings",
+      "report-secrets-findings",
+      "list-workflow-executions",
+      "get-workflow-execution",
+      "get-last-run-workflow-detail",
+      "get-policy",
+      "list-policies",
+      "list-api-operation-services",
+      "list-api-operations",
+      "get-api-operation-detail",
+      "mark-entity-distinct",
+      "unmark-entity-distinct",
+      "mark-semantic-tests-distinct",
+      "list-meeting-filter-options",
+      "get-meeting-set",
+      "get-batch-view-url",
+      "get-suite-execution-stats",
+      "get-perf-run",
+      "get-release-details",
+      "create-issue",
+      "update-issue-status",
+    ];
+    for (const kebab of removed) {
+      assert.equal(getToolDefinition(kebab), undefined, kebab);
+    }
+  });
+
+  it("keeps destroy-ephemeral-environment destructive", () => {
+    const hints = annotationsForTool("destroy-ephemeral-environment");
+    assert.equal(hints.readOnlyHint, false);
+    assert.equal(hints.destructiveHint, true);
+    assert.equal(hints.openWorldHint, true);
+  });
+
+  it("maps get-eaas-config as a standalone connectivity check", async () => {
+    assert.deepEqual((await capture("get-eaas-config", {})).request, {
+      path: "/api/mcp/get_eaas_config",
+      body: {},
+    });
+    const hints = annotationsForTool("get-eaas-config");
+    assert.equal(hints.readOnlyHint, true);
+    assert.equal(hints.destructiveHint, false);
+    assert.match(getToolDefinition("get-eaas-config")?.description ?? "", /connectivity check/);
+  });
+
+  it("maps ephemeral-environment actions", async () => {
+    assert.deepEqual((await capture("ephemeral-environment", { action: "CONFIG" })).request, {
+      path: "/api/mcp/ephemeral_environment",
+      body: { action: "MCP_EPHEMERAL_ENVIRONMENT_ACTION_CONFIG" },
+    });
+    assert.deepEqual(
+      (await capture("ephemeral-environment", { action: "PROVISION", wait: false, branchName: "feat" })).request,
+      {
+        path: "/api/mcp/ephemeral_environment",
+        body: { action: "MCP_EPHEMERAL_ENVIRONMENT_ACTION_PROVISION", wait: false, branchName: "feat" },
+      },
+    );
+    assert.deepEqual(
+      (await capture("ephemeral-environment", { action: "STATUS", bnsEnvironmentId: "env-1" })).request,
+      {
+        path: "/api/mcp/ephemeral_environment",
+        body: { action: "MCP_EPHEMERAL_ENVIRONMENT_ACTION_STATUS", bnsEnvironmentId: "env-1" },
+      },
+    );
+  });
+
+  it("maps report-scan-findings scanner + file", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "tc-scan-"));
+    const file = join(dir, "zap.json");
+    writeFileSync(file, "{\"alerts\":[]}");
+    try {
+      assert.deepEqual(
+        (await capture("report-scan-findings", { id: "scan-1", scanner: "DAST", reportFile: file })).request,
+        {
+          path: "/api/mcp/report_scan_findings",
+          body: { scanId: "scan-1", scanner: "MCP_SCAN_FINDER_DAST", reportJson: "{\"alerts\":[]}" },
+        },
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("maps get-workflow-executions list, detail, and latestOnly", async () => {
+    assert.deepEqual(
+      (await capture("get-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true })).request,
+      {
+        path: "/api/mcp/get_workflow_executions",
+        body: { pendingApprovalOnly: true, assignedToMeOnly: true },
+      },
+    );
+    assert.deepEqual(
+      (await capture("get-workflow-executions", { workflowExecutionId: "ex1" })).request,
+      {
+        path: "/api/mcp/get_workflow_executions",
+        body: { workflowExecutionId: "ex1", includeActions: true },
+      },
+    );
+    assert.deepEqual(
+      (await capture("get-workflow-executions", { workflowId: "run-qa", latestOnly: true, branchName: "main" })).request,
+      {
+        path: "/api/mcp/get_workflow_executions",
+        body: { workflowId: "run-qa", branchName: "main", latestOnly: true },
+      },
+    );
+  });
+
+  it("maps get-policies fetch vs list", async () => {
+    assert.deepEqual((await capture("get-policies", { policyFileName: "run-qa.policy.md" })).request, {
+      path: "/api/mcp/get_policies",
+      body: { policyFileName: "run-qa.policy.md" },
+    });
+    assert.deepEqual((await capture("get-policies", { workflowId: "run-qa" })).request, {
+      path: "/api/mcp/get_policies",
+      body: { workflowId: "run-qa" },
+    });
+  });
+
+  it("maps set-entity-distinct mark/unmark and TEST locators", async () => {
+    const loc = { fileName: "a.spec.ts", testName: "checkout" };
+    assert.deepEqual(
+      (await capture("set-entity-distinct", { entityType: "TEST", focusTest: loc, distinctTest: loc })).request,
+      {
+        path: "/api/mcp/set_entity_distinct",
+        body: { entityType: "TEST", distinct: true, focusTest: loc, otherTest: loc },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("set-entity-distinct", {
+          entityType: "ISSUE",
+          focusOrdinalId: 1,
+          otherOrdinalId: 2,
+          distinct: false,
+        })
+      ).request,
+      {
+        path: "/api/mcp/set_entity_distinct",
+        body: { entityType: "ISSUE", distinct: false, focusOrdinalId: "1", otherOrdinalId: "2" },
+      },
+    );
+  });
+
+  it("maps upsert-issue create vs patch", async () => {
+    assert.deepEqual((await capture("upsert-issue", { title: "Broken checkout" })).request, {
+      path: "/api/mcp/upsert_issue",
+      body: { title: "Broken checkout" },
+    });
+    assert.deepEqual(
+      (await capture("upsert-issue", { issueId: "B-12", status: "FIXED" })).request,
+      {
+        path: "/api/mcp/upsert_issue",
+        body: { issueId: "B-12", status: "FIXED" },
+      },
+    );
+    await assert.rejects(capture("upsert-issue", {}), /Invalid input/);
+  });
+
+  it("maps list-issues, history aggregate, perf runId", async () => {
+    assert.deepEqual((await capture("list-issues", { status: "ACTIVE", limit: 10 })).request, {
+      path: "/api/mcp/list_issues",
+      body: { statuses: ["ACTIVE"], limit: 10 },
+    });
+    assert.deepEqual((await capture("get-execution-history", { aggregate: true, testId: "t1" })).request, {
+      path: "/api/mcp/list_execution_history",
+      body: { testId: "t1", aggregate: true },
+    });
+    assert.deepEqual((await capture("list-perf-runs", { runId: "01ABC", includeRaw: true })).request, {
+      path: "/api/mcp/list_perf_runs",
+      body: { runId: "01ABC", includeRaw: true },
+    });
+  });
+
+  it("maps upsert-release to server field names", async () => {
+    assert.deepEqual(
+      (
+        await capture("upsert-release", {
+          version: "1.2.0",
+          gitCommitSha: "abc",
+          priorReleaseVersion: "1.1.0",
+          releaseType: "MINOR",
+          lifecycleStatus: "ACTIVE",
+          environment: "QA",
+        })
+      ).request,
+      {
+        path: "/api/mcp/upsert_release",
+        body: {
+          version: "1.2.0",
+          gitCommitSha: "abc",
+          priorReleaseVersion: "1.1.0",
+          releaseType: "MINOR",
+          lifecycleStatus: "ACTIVE",
+          environment: "QA",
+        },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("upsert-release", {
+          version: "1.2.0",
+          gitSha: "abc",
+          dueDateMillis: 1790000000000,
+          branchId: "br-1",
+        })
+      ).request,
+      {
+        path: "/api/mcp/upsert_release",
+        body: { version: "1.2.0", gitCommitSha: "abc", dueDateMillis: "1790000000000", branchId: "br-1" },
+      },
+    );
+  });
+
+  it("maps manage-test-run create vs update and commitRange", async () => {
+    assert.deepEqual((await capture("manage-test-run", { release: "1.2.0", title: "Sprint 12" })).request, {
+      path: "/api/mcp/manage_test_run",
+      body: { release: "1.2.0", title: "Sprint 12" },
+    });
+    assert.deepEqual(
+      (
+        await capture("manage-test-run", {
+          id: "tr-1",
+          status: "COMPLETED",
+          dueDate: "2026-10-30",
+          batchInvocationIds: ["b1", "b2"],
+          commitRange: "LINK",
+        })
+      ).request,
+      {
+        path: "/api/mcp/manage_test_run",
+        body: {
+          id: "tr-1",
+          dueDate: String(Date.parse("2026-10-30")),
+          status: "COMPLETED",
+          batchInvocationIds: ["b1", "b2"],
+          commitRange: "MCP_TEST_RUN_COMMIT_RANGE_LINK",
+        },
+      },
+    );
+    assert.deepEqual(
+      (await capture("manage-test-run", { id: "tr-1", commitRange: "FIND" })).request,
+      {
+        path: "/api/mcp/manage_test_run",
+        body: { id: "tr-1", commitRange: "MCP_TEST_RUN_COMMIT_RANGE_FIND" },
+      },
+    );
+    await assert.rejects(capture("manage-test-run", {}), /Invalid input/);
+    await assert.rejects(capture("manage-test-run", { title: "Sprint 12" }), /Invalid input/);
+  });
+
+  it("maps ask-about-testchimp question and CLI alias", async () => {
+    assert.deepEqual(
+      (await capture("ask-about-testchimp", { question: "What is TestChimp's intended QA workflow?" })).request,
+      {
+        path: "/api/mcp/ask_about_testchimp",
+        body: { question: "What is TestChimp's intended QA workflow?" },
+      },
+    );
+    assert.deepEqual(
+      (await capture("ask-testchimp-question", { question: "Why prefer TrueCoverage over coverage %?" })).request,
+      {
+        path: "/api/mcp/ask_about_testchimp",
+        body: { question: "Why prefer TrueCoverage over coverage %?" },
+      },
+    );
+    await assert.rejects(capture("ask-about-testchimp", {}), /Invalid input/);
+    await assert.rejects(
+      capture("ask-about-testchimp", { question: "x".repeat(ASK_ABOUT_TESTCHIMP_QUESTION_MAX + 1) }),
+      /Invalid input/,
+    );
+    assert.deepEqual(
+      (await capture("ask-about-testchimp", { question: "x".repeat(ASK_ABOUT_TESTCHIMP_QUESTION_MAX) })).request,
+      {
+        path: "/api/mcp/ask_about_testchimp",
+        body: { question: "x".repeat(ASK_ABOUT_TESTCHIMP_QUESTION_MAX) },
+      },
+    );
+    assert.equal(ASK_ABOUT_TESTCHIMP_QUESTION_MAX, 2000);
+    assert.equal(getToolDefinition("ask-testchimp-question")?.kebab, "ask-about-testchimp");
+    const description = getToolDefinition("ask-about-testchimp")?.description ?? "";
+    assert.match(description, /max 2000 characters/);
+    assert.match(description, /20 questions per project per hour/);
+  });
+
+  it("maps OpenAPI-only 2.0 tools", async () => {
+    assert.deepEqual(
+      (await capture("ingest-scenario-execution", { scenarioOrdinalId: 12, result: "SMART_TEST_EXECUTION_COMPLETED" }))
+        .request,
+      {
+        path: "/api/mcp/ingest_scenario_execution",
+        body: { result: "SMART_TEST_EXECUTION_COMPLETED", scenarioOrdinalId: "12" },
+      },
+    );
+    assert.deepEqual(
+      (await capture("list-execution-job-dimension-values", { dimension: "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION" }))
+        .request,
+      {
+        path: "/api/mcp/list_execution_job_dimension_values",
+        body: { dimension: "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION" },
+      },
+    );
+    assert.deepEqual((await capture("list-test-planning-trends", { release: "1.2.0" })).request, {
+      path: "/api/mcp/list_test_planning_trends",
+      body: { release: "1.2.0" },
+    });
+    assert.deepEqual(
+      (await capture("select-smart-smoke-tests", { maxTests: 5, includeTags: ["smoke"] })).request,
+      {
+        path: "/api/mcp/select_smart_smoke_tests",
+        body: { includeTags: ["smoke"], maxTests: 5 },
+      },
+    );
+  });
+
+  it("maps get-release detail vs list filters", async () => {
+    assert.deepEqual((await capture("get-release", {})).request, {
+      path: "/api/mcp/get_release",
+      body: {},
+    });
+    assert.deepEqual((await capture("get-release", { version: "1.2.0", detail: "GATE" })).request, {
+      path: "/api/mcp/get_release",
+      body: { version: "1.2.0", detail: "MCP_RELEASE_VIEW_GATE" },
+    });
+    assert.deepEqual(
+      (
+        await capture("get-release", {
+          environment: "QA",
+          pageSize: 20,
+          pageToken: "tok",
+          excludeArchived: true,
+        })
+      ).request,
+      {
+        path: "/api/mcp/get_release",
+        body: { environment: "QA", pageSize: 20, pageToken: "tok", excludeArchived: true },
+      },
+    );
+  });
+
+  it("maps remaining OpenAPI request fields without extras", async () => {
+    assert.deepEqual(
+      (await capture("promote-perf-baseline", { runId: "run-1", envClass: "staging" })).request,
+      {
+        path: "/api/mcp/promote_perf_baseline",
+        body: { runId: "run-1", envClass: "staging" },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("upsert-screen-states", {
+          gitCommitSha: "abc",
+          screenStates: [
+            {
+              screen: "Login",
+              states: ["empty"],
+              stateDetails: [{ state: "empty", firstDiscoveredCommitSha: "abc", isNewInRange: true }],
+            },
+          ],
+        })
+      ).request,
+      {
+        path: "/api/mcp/upsert_screen_states",
+        body: {
+          gitCommitSha: "abc",
+          screenStates: [
+            {
+              screen: "Login",
+              states: ["empty"],
+              stateDetails: [{ state: "empty", firstDiscoveredCommitSha: "abc", isNewInRange: true }],
+            },
+          ],
+        },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("report-requirement-quality-findings", {
+          report: {
+            createdAtMillis: 1790000000000,
+            scoresUpdatedAtMillis: "1790000000001",
+            subject: { subjectType: "STORY", subjectEntityId: "ent-1", ordinalId: 3 },
+            findings: [{ title: "gap", linkedIssueOrdinalId: 9 }],
+          },
+        })
+      ).request,
+      {
+        path: "/api/mcp/report_requirement_quality_findings",
+        body: {
+          report: {
+            createdAtMillis: "1790000000000",
+            scoresUpdatedAtMillis: "1790000000001",
+            subject: { subjectType: "STORY", subjectEntityId: "ent-1", ordinalId: 3 },
+            findings: [{ title: "gap", linkedIssueOrdinalId: 9 }],
+          },
+        },
+      },
+    );
+  });
+
+  it("keeps CLI subcommand parity with MCP tool names", () => {
+    const names = new Set<string>();
+    const walk = (cmd: ReturnType<typeof buildCliProgram>) => {
+      names.add(cmd.name());
+      for (const child of cmd.commands) walk(child);
+    };
+    walk(buildCliProgram());
+    const nestedAliases: Record<string, string> = {
+      "ack-bot-events": "ack",
+      "register-bot-profile": "register-profile",
+      "approve-agentwatch-pairing": "approve-pairing",
+      "get-bot-credentials": "get-credentials",
+      "save-workspace-creds": "save-creds",
+      "ask-about-testchimp": "ask-testchimp-question",
+    };
+    for (const kebab of TOOL_DEFINITIONS.map((t) => t.kebab)) {
+      assert.ok(
+        names.has(kebab) || names.has(nestedAliases[kebab] ?? ""),
+        `CLI is missing a subcommand for ${kebab}`,
+      );
+    }
   });
 });
 
@@ -362,8 +816,31 @@ describe("bot tools", () => {
       await capture("update-workflow-execution-assignees", { workflowExecutionId: "ex1", assignee: "u9" }),
       { path: "/api/mcp/update_workflow_execution_assignees", body: { workflowExecutionId: "ex1", assigneeUserId: "u9" } },
     );
-    assert.deepEqual(await capture("list-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true }), {
-      path: "/api/mcp/list_workflow_executions",
+    assert.deepEqual(
+      await capture("ask-user-question-async", {
+        workflowExecutionId: " ex1 ",
+        question: "Which suite?",
+        choices: [
+          { id: "smoke", label: "Smoke" },
+          { id: "full", label: "Full" },
+        ],
+        recommendedChoiceId: "smoke",
+      }),
+      {
+        path: "/api/mcp/ask_user_question_async",
+        body: {
+          workflowExecutionId: "ex1",
+          question: "Which suite?",
+          choices: [
+            { id: "smoke", label: "Smoke" },
+            { id: "full", label: "Full" },
+          ],
+          recommendedChoiceId: "smoke",
+        },
+      },
+    );
+    assert.deepEqual(await capture("get-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true }), {
+      path: "/api/mcp/get_workflow_executions",
       body: { pendingApprovalOnly: true, assignedToMeOnly: true },
     });
   });
@@ -523,14 +1000,15 @@ describe("TESTCHIMP_USER_ID env fallback", () => {
     await withEnvUser(async () => {
       const body = await runWithRequestAuth({ isolated: true, bearerToken: "t" }, () => reportBody(reportArgs));
       assert.equal(body.userId, undefined);
+      assert.equal((body.traceability as { userId?: string } | undefined)?.userId, undefined);
     });
   });
 
   it("report-agent-action applies env userId outside isolated mode", async () => {
     await withEnvUser(async () => {
-      assert.equal((await reportBody(reportArgs)).userId, "env-user");
+      assert.equal(((await reportBody(reportArgs)).traceability as { userId?: string }).userId, "env-user");
       const body = await runWithRequestAuth({ isolated: false }, () => reportBody(reportArgs));
-      assert.equal(body.userId, "env-user");
+      assert.equal((body.traceability as { userId?: string }).userId, "env-user");
     });
   });
 
@@ -539,7 +1017,7 @@ describe("TESTCHIMP_USER_ID env fallback", () => {
       const body = await runWithRequestAuth({ isolated: true, bearerToken: "t" }, () =>
         reportBody({ ...reportArgs, userId: "arg-user" }),
       );
-      assert.equal(body.userId, "arg-user");
+      assert.equal((body.traceability as { userId?: string }).userId, "arg-user");
     });
   });
 
