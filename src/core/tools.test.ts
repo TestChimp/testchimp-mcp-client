@@ -7,6 +7,7 @@ import { runWithRequestAuth, TestChimpHttpError } from "./client.js";
 import { buildAgentTraceabilityPayload } from "./agentTraceability.js";
 import { annotationsForTool, TOOL_ANNOTATIONS } from "./toolAnnotations.js";
 import {
+  ASK_ABOUT_TESTCHIMP_QUESTION_MAX,
   PROJECT_INIT_STATUS_INPUT_KEYS,
   projectInitStatusFieldsSchema,
 } from "./schemas.js";
@@ -529,7 +530,22 @@ describe("MCP API 2.0 consolidations", () => {
       },
     );
     await assert.rejects(capture("ask-about-testchimp", {}), /Invalid input/);
+    await assert.rejects(
+      capture("ask-about-testchimp", { question: "x".repeat(ASK_ABOUT_TESTCHIMP_QUESTION_MAX + 1) }),
+      /Invalid input/,
+    );
+    assert.deepEqual(
+      (await capture("ask-about-testchimp", { question: "x".repeat(ASK_ABOUT_TESTCHIMP_QUESTION_MAX) })).request,
+      {
+        path: "/api/mcp/ask_about_testchimp",
+        body: { question: "x".repeat(ASK_ABOUT_TESTCHIMP_QUESTION_MAX) },
+      },
+    );
+    assert.equal(ASK_ABOUT_TESTCHIMP_QUESTION_MAX, 2000);
     assert.equal(getToolDefinition("ask-testchimp-question")?.kebab, "ask-about-testchimp");
+    const description = getToolDefinition("ask-about-testchimp")?.description ?? "";
+    assert.match(description, /max 2000 characters/);
+    assert.match(description, /20 questions per project per hour/);
   });
 
   it("maps OpenAPI-only 2.0 tools", async () => {

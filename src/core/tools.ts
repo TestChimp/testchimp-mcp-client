@@ -302,9 +302,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Answers from the same docs knowledge base as docs.testchimp.io Ask AI. Prefer this skill's " +
       "references/ and agent-quick-answers first; use only when those do not cover platform intent / " +
       "approach clarifications needed to run workflows in TestChimp's intended spirit. You may relay " +
-      "the answer to the user when education helps. question: the open-ended question (required). " +
-      "CLI/skill alias: ask-testchimp-question. Response JSON is returned as-is (OpenAPI response " +
-      "fields unverified from this client).",
+      "the answer to the user when education helps. question: the open-ended question (required, max 2000 characters). " +
+      "Server limit: 20 questions per project per hour. CLI/skill alias: ask-testchimp-question. " +
+      "Response JSON is returned as-is.",
     inputSchema: S.askAboutTestchimpInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.askAboutTestchimpInput>;

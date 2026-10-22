@@ -1484,14 +1484,16 @@ export const feedbackCategorySchema = z.enum([
   "OTHER",
 ]);
 
+/** Server limit for McpAskAboutTestchimpRequest.question (2k characters). */
+export const ASK_ABOUT_TESTCHIMP_QUESTION_MAX = 2000;
+
 /**
- * McpAskAboutTestchimpRequest — modeled from the live hosted MCP tools/list
- * (Glama / mcp.testchimp.io, added 2026-10-21). Aware OpenAPI on
- * cursor/mcp-tool-consolidation-0fc3 was not readable from this client.
+ * McpAskAboutTestchimpRequest. The 0.1.94 client work was never pushed; this
+ * matches the server: question max 2000 chars, 20 calls per project per hour.
  * Hosted `botId` / `projectApiKey` are binding args, not request-body fields.
  */
 export const askAboutTestchimpInput = z.object({
-  question: z.string().trim().min(1).max(10_000),
+  question: z.string().trim().min(1).max(ASK_ABOUT_TESTCHIMP_QUESTION_MAX),
 });
 
 export const sendFeedbackInput = z.object({
