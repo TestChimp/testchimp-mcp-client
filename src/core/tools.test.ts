@@ -108,7 +108,7 @@ describe("API operation observability", () => {
     assert.deepEqual(JSON.parse(result), JSON.parse(response));
     assert.match(
       getToolDefinition("get-api-operations")?.description ?? "",
-      /p95\/p99 latency/,
+      /p50\/p95\/p99LatencyMs/,
     );
   });
 });

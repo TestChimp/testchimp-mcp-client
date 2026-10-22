@@ -1171,7 +1171,6 @@ export function buildCliProgram(): Command {
       .addOption(jsonInputOption())
       .option("--version <version>", "Release version / label")
       .option("--name <name>", "Display name")
-      .option("--git-sha <sha>", "Cut git SHA")
       .option("--prior-version <version>", "Previous release label")
       .option("--due-date-millis <ms>", "Due date as UTC epoch millis")
       .option("--lifecycle-status <status>", "Release lifecycle status")
