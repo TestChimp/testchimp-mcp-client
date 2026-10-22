@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.2
+
+### Added
+
+- `ask-user-question-async` — `POST /api/mcp/ask_user_question_async`. Ask a person a question with structured choices when a workflow is running on a cloud agent and no live UI is attached. Requires `workflowExecutionId`. Refuses when `CHIMPHANDS_UI_ATTACHED` is true or `TESTCHIMP_EXECUTION_SOURCE=LOCAL_AGENT`.
+
+`server.json` version is 2.0.2. Do not run `mcp-publisher` from this change.
+
 ## 2.0.1
 
 ### Fixed

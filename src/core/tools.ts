@@ -1413,6 +1413,39 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "ask-user-question-async",
+    description:
+      "Ask the user a question with structured choices when this workflow is running on a cloud agent " +
+      "and no live UI session is attached. Requires workflowExecutionId. Do not call from a local IDE chat " +
+      "or when CHIMPHANDS_UI_ATTACHED is set — ask in the conversation instead. Put the recommended choice " +
+      "first. Notifies the automation's humans by email/Slack, or fans out to a live ChimpHands session " +
+      "when one is attached. One open question per execution.",
+    inputSchema: S.askUserQuestionAsyncInput,
+    execute: async (args, { postMcp }) => {
+      const attached = (process.env.CHIMPHANDS_UI_ATTACHED || "").trim().toLowerCase();
+      if (attached === "true" || attached === "1") {
+        throw new Error(
+          "A live UI session is attached. Ask the user in the conversation instead of ask-user-question-async."
+        );
+      }
+      if ((process.env.TESTCHIMP_EXECUTION_SOURCE || "").trim() === "LOCAL_AGENT") {
+        throw new Error("ask-user-question-async is only for cloud agents. Ask the user in chat.");
+      }
+      const a = args as z.infer<typeof S.askUserQuestionAsyncInput>;
+      if (!a.workflowExecutionId?.trim()) {
+        throw new Error("ask-user-question-async requires workflowExecutionId");
+      }
+      const body: Record<string, unknown> = {
+        workflowExecutionId: a.workflowExecutionId.trim(),
+        question: a.question,
+        choices: a.choices,
+      };
+      if (a.chimphandsSessionId?.trim()) body.chimphandsSessionId = a.chimphandsSessionId.trim();
+      if (a.recommendedChoiceId?.trim()) body.recommendedChoiceId = a.recommendedChoiceId.trim();
+      return postMcp("/api/mcp/ask_user_question_async", body);
+    },
+  },
+  {
     kebab: "get-policies",
     description:
       "Fetch or list workflow policy files from the platform POLICY_FILE store. " +

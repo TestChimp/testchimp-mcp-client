@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 87 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 87);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 87);
+  it("registers 88 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 88);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 88);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -815,6 +815,29 @@ describe("bot tools", () => {
     assert.deepEqual(
       await capture("update-workflow-execution-assignees", { workflowExecutionId: "ex1", assignee: "u9" }),
       { path: "/api/mcp/update_workflow_execution_assignees", body: { workflowExecutionId: "ex1", assigneeUserId: "u9" } },
+    );
+    assert.deepEqual(
+      await capture("ask-user-question-async", {
+        workflowExecutionId: " ex1 ",
+        question: "Which suite?",
+        choices: [
+          { id: "smoke", label: "Smoke" },
+          { id: "full", label: "Full" },
+        ],
+        recommendedChoiceId: "smoke",
+      }),
+      {
+        path: "/api/mcp/ask_user_question_async",
+        body: {
+          workflowExecutionId: "ex1",
+          question: "Which suite?",
+          choices: [
+            { id: "smoke", label: "Smoke" },
+            { id: "full", label: "Full" },
+          ],
+          recommendedChoiceId: "smoke",
+        },
+      },
     );
     assert.deepEqual(await capture("get-workflow-executions", { assignedToMeOnly: true, pendingApprovalOnly: true }), {
       path: "/api/mcp/get_workflow_executions",

@@ -100,6 +100,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "report-agent-action": mutating("Report Agent Action"),
   "get-workflow-executions": readOnly("Get Workflow Executions"),
   "update-workflow-execution-assignees": mutating("Update Workflow Execution Assignees", { idempotent: true }),
+  "ask-user-question-async": mutating("Ask User Question Async"),
   "get-policies": readOnly("Get Policies"),
   "upsert-policy": mutating("Upsert Policy", { destructive: true, idempotent: true }),
   "upsert-plans-support-file": mutating("Upsert Plans Support File", { destructive: true, idempotent: true }),

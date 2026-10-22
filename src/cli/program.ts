@@ -1675,6 +1675,27 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("ask-user-question-async")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "ask-user-question-async")!.description)
+    .addOption(jsonInputOption())
+    .requiredOption("--workflow-execution-id <id>", "Workflow execution id")
+    .requiredOption("--question <text>", "Question to ask the user")
+    .requiredOption("--choices <json>", "JSON array of {id,label} choices")
+    .option("--recommended-choice-id <id>", "Choice id to recommend")
+    .option("--chimphands-session-id <id>", "ChimpHands session id when known")
+    .action(async (opts) => {
+      const choices = JSON.parse(String(opts.choices));
+      const body: Record<string, unknown> = {
+        workflowExecutionId: String(opts.workflowExecutionId),
+        question: String(opts.question),
+        choices,
+      };
+      if (opts.recommendedChoiceId) body.recommendedChoiceId = String(opts.recommendedChoiceId);
+      if (opts.chimphandsSessionId) body.chimphandsSessionId = String(opts.chimphandsSessionId);
+      console.log(await runTool("ask-user-question-async", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
     .command("get-policies")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-policies")!.description)
     .addOption(jsonInputOption())

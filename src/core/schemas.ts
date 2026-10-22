@@ -1277,6 +1277,17 @@ export const updateWorkflowExecutionAssigneesInput = z.object({
   removeCc: z.array(z.string().min(1)).max(20).optional().describe("User ids to remove from CC."),
 });
 
+export const askUserQuestionAsyncInput = z.object({
+  workflowExecutionId: z.string().min(1),
+  chimphandsSessionId: z.string().min(1).optional(),
+  question: z.string().min(1),
+  choices: z
+    .array(z.object({ id: z.string().min(1), label: z.string().min(1) }))
+    .min(1)
+    .max(8),
+  recommendedChoiceId: z.string().min(1).optional(),
+});
+
 export const getPoliciesInput = z.object({
   /** When set, fetch that file (filename coerced to *.policy.md). Omit to list. */
   policyFileName: z.string().min(1).optional(),
