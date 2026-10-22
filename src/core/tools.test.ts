@@ -421,29 +421,10 @@ describe("MCP API 2.0 consolidations", () => {
     await assert.rejects(capture("upsert-issue", {}), /Invalid input/);
   });
 
-  it("maps list-issues, upsert-release, manage-test-run, get-release, history aggregate, perf runId", async () => {
+  it("maps list-issues, history aggregate, perf runId", async () => {
     assert.deepEqual((await capture("list-issues", { status: "ACTIVE", limit: 10 })).request, {
       path: "/api/mcp/list_issues",
       body: { status: "ACTIVE", limit: 10 },
-    });
-    assert.deepEqual((await capture("upsert-release", { version: "1.2.0", gitSha: "abc" })).request, {
-      path: "/api/mcp/upsert_release",
-      body: { version: "1.2.0", gitSha: "abc" },
-    });
-    assert.deepEqual(
-      (await capture("manage-test-run", { action: "CREATE", name: "Sprint 12", release: "1.2.0" })).request,
-      {
-        path: "/api/mcp/manage_test_run",
-        body: { action: "CREATE", name: "Sprint 12", release: "1.2.0" },
-      },
-    );
-    assert.deepEqual((await capture("get-release", {})).request, {
-      path: "/api/mcp/get_release",
-      body: {},
-    });
-    assert.deepEqual((await capture("get-release", { version: "1.2.0", detail: "GATE" })).request, {
-      path: "/api/mcp/get_release",
-      body: { version: "1.2.0", detail: "GATE" },
     });
     assert.deepEqual((await capture("get-execution-history", { aggregate: true, testId: "t1" })).request, {
       path: "/api/mcp/list_execution_history",
@@ -453,6 +434,108 @@ describe("MCP API 2.0 consolidations", () => {
       path: "/api/mcp/list_perf_runs",
       body: { runId: "01ABC", includeRaw: true },
     });
+  });
+
+  it("maps upsert-release to server field names", async () => {
+    assert.deepEqual(
+      (
+        await capture("upsert-release", {
+          version: "1.2.0",
+          gitCommitSha: "abc",
+          priorReleaseVersion: "1.1.0",
+          releaseType: "MINOR",
+          lifecycleStatus: "ACTIVE",
+          environment: "QA",
+        })
+      ).request,
+      {
+        path: "/api/mcp/upsert_release",
+        body: {
+          version: "1.2.0",
+          gitCommitSha: "abc",
+          priorReleaseVersion: "1.1.0",
+          releaseType: "MINOR",
+          lifecycleStatus: "ACTIVE",
+          environment: "QA",
+        },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("upsert-release", {
+          version: "1.2.0",
+          gitSha: "abc",
+          dueDateMillis: 1790000000000,
+          branchId: "br-1",
+        })
+      ).request,
+      {
+        path: "/api/mcp/upsert_release",
+        body: { version: "1.2.0", gitCommitSha: "abc", dueDateMillis: 1790000000000, branchId: "br-1" },
+      },
+    );
+  });
+
+  it("maps manage-test-run create vs update and commitRange", async () => {
+    assert.deepEqual((await capture("manage-test-run", { release: "1.2.0", title: "Sprint 12" })).request, {
+      path: "/api/mcp/manage_test_run",
+      body: { release: "1.2.0", title: "Sprint 12" },
+    });
+    assert.deepEqual(
+      (
+        await capture("manage-test-run", {
+          id: "tr-1",
+          status: "COMPLETED",
+          dueDate: "2026-10-30",
+          batchInvocationIds: ["b1", "b2"],
+          commitRange: "LINK",
+        })
+      ).request,
+      {
+        path: "/api/mcp/manage_test_run",
+        body: {
+          id: "tr-1",
+          dueDate: "2026-10-30",
+          status: "COMPLETED",
+          batchInvocationIds: ["b1", "b2"],
+          commitRange: "LINK",
+        },
+      },
+    );
+    assert.deepEqual(
+      (await capture("manage-test-run", { id: "tr-1", commitRange: "FIND" })).request,
+      {
+        path: "/api/mcp/manage_test_run",
+        body: { id: "tr-1", commitRange: "FIND" },
+      },
+    );
+    await assert.rejects(capture("manage-test-run", {}), /Invalid input/);
+    await assert.rejects(capture("manage-test-run", { title: "Sprint 12" }), /Invalid input/);
+  });
+
+  it("maps get-release detail vs list filters", async () => {
+    assert.deepEqual((await capture("get-release", {})).request, {
+      path: "/api/mcp/get_release",
+      body: {},
+    });
+    assert.deepEqual((await capture("get-release", { version: "1.2.0", detail: "GATE" })).request, {
+      path: "/api/mcp/get_release",
+      body: { version: "1.2.0", detail: "GATE" },
+    });
+    assert.deepEqual(
+      (
+        await capture("get-release", {
+          environment: "QA",
+          pageSize: 20,
+          pageToken: "tok",
+          excludeArchived: true,
+        })
+      ).request,
+      {
+        path: "/api/mcp/get_release",
+        body: { environment: "QA", pageSize: 20, pageToken: "tok", excludeArchived: true },
+      },
+    );
   });
 
   it("keeps CLI subcommand parity with MCP tool names", () => {

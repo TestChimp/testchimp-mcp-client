@@ -363,49 +363,43 @@ export const listIssuesInput = z
 export const upsertReleaseInput = z
   .object({
     version: z.string().min(1),
-    name: z.string().optional(),
-    gitSha: z.string().optional(),
-    priorVersion: z.string().optional(),
+    gitCommitSha: z.string().min(1).optional(),
+    priorReleaseVersion: z.string().min(1).optional(),
+    releaseType: z.string().min(1).optional(),
+    lifecycleStatus: z.string().min(1).optional(),
+    /** Create only. */
+    environment: z.string().min(1).optional(),
+    /** Update only. */
     dueDateMillis: z.coerce.number().optional(),
-    lifecycleStatus: z.string().optional(),
-    focusAreas: z.array(z.string()).optional(),
-    payload: z.record(z.string(), z.unknown()).optional(),
+    /** Update only. */
+    branchId: z.string().min(1).optional(),
   })
-  .merge(agentTraceabilityFieldsSchema)
-  .passthrough();
+  .merge(agentTraceabilityFieldsSchema);
 
-export const manageTestRunActionSchema = z.enum([
-  "CREATE",
-  "UPDATE",
-  "COMPLETE",
-  "ADD_SCENARIOS",
-]);
+export const manageTestRunStatusSchema = z.enum(["ACTIVE", "COMPLETED", "ARCHIVED"]);
+export const manageTestRunCommitRangeSchema = z.enum(["FIND", "LINK"]);
 
 export const manageTestRunInput = z
   .object({
-    action: manageTestRunActionSchema,
-    namedTestRunId: z.string().min(1).optional(),
-    name: z.string().min(1).optional(),
-    release: z.string().optional(),
-    environment: z.string().optional(),
-    assignee: z.string().optional(),
-    scenarioOrdinalIds: z.array(z.coerce.number().int().positive()).optional(),
+    /** Omit to create (release required). */
+    id: z.string().min(1).optional(),
+    release: z.string().min(1).optional(),
+    title: z.string().min(1).optional(),
+    /** Server defaults to QA on create. */
+    environment: z.string().min(1).optional(),
+    dueDate: z.union([z.string().min(1), z.number()]).optional(),
+    status: manageTestRunStatusSchema.optional(),
+    batchInvocationIds: z.array(z.string().min(1)).optional(),
+    /** FIND discovers batches in the prior-cut..current-cut range; LINK attaches unlinked ones. */
+    commitRange: manageTestRunCommitRangeSchema.optional(),
   })
   .merge(agentTraceabilityFieldsSchema)
-  .passthrough()
   .superRefine((v, ctx) => {
-    if (v.action === "CREATE" && !(v.name ?? "").trim() && !(v.release ?? "").trim()) {
+    if (!(v.id ?? "").trim() && !(v.release ?? "").trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "CREATE requires name and/or release",
-        path: ["name"],
-      });
-    }
-    if (v.action !== "CREATE" && !(v.namedTestRunId ?? "").trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `${v.action} requires namedTestRunId`,
-        path: ["namedTestRunId"],
+        message: "Provide release to create a test run, or id to update one",
+        path: ["release"],
       });
     }
   });
@@ -713,6 +707,11 @@ export const getReleaseInput = z.object({
   version: z.string().min(1).optional(),
   /** CATALOG (default when version is set) or GATE (replaces get-release-details). */
   detail: getReleaseDetailSchema.optional(),
+  /** List filter: environment tag. */
+  environment: z.string().min(1).optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+  pageToken: z.string().min(1).optional(),
+  excludeArchived: z.boolean().optional(),
 });
 
 export const getSecurityScanConfigInput = z.object({

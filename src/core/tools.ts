@@ -839,47 +839,41 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "get-release",
     description:
-      "Fetch or list releases in the current project. Omit version to list catalog entries. " +
-      "Pass version for one release (cut git SHA, prior release + SHA, focus areas, payload). " +
-      "Set detail=GATE with version for gate-oriented details: scope, per-environment " +
-      "priority×status test stats, open issue stats, scan summaries, and in-scope scenario/issue records. " +
-      "Authenticated via project API key.",
+      "Fetch or list releases in the current project. Pass version for one release; set detail=GATE " +
+      "for gate-oriented details (scope, per-environment priority×status test stats, open issue stats, " +
+      "scan summaries, in-scope scenario/issue records). Omit version to list: optional environment, " +
+      "pageSize, pageToken, excludeArchived. Authenticated via project API key.",
     inputSchema: S.getReleaseInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.getReleaseInput>;
       const body: Record<string, unknown> = {};
       if (a.version?.trim()) body.version = a.version.trim();
       if (a.detail) body.detail = a.detail;
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.pageSize != null) body.pageSize = a.pageSize;
+      if (a.pageToken?.trim()) body.pageToken = a.pageToken.trim();
+      if (a.excludeArchived != null) body.excludeArchived = a.excludeArchived;
       return postMcp("/api/mcp/get_release", body);
     },
   },
   {
     kebab: "upsert-release",
     description:
-      "Create or update a release catalog entry for the current project. version (label) is required. " +
-      "Optional name, gitSha, priorVersion, dueDateMillis, lifecycleStatus, focusAreas, payload. " +
-      "Optional agentTraceability records the mutation. Authenticated via project API key.",
+      "Create or update a release catalog entry. version is required. Optional gitCommitSha, " +
+      "priorReleaseVersion, releaseType, lifecycleStatus, environment (create only), dueDateMillis and " +
+      "branchId (update only). Response is { release, created }. Optional agentTraceability records the mutation.",
     inputSchema: S.upsertReleaseInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.upsertReleaseInput>;
-      const body: Record<string, unknown> = { ...a, version: a.version.trim() };
-      for (const k of [
-        "workflowId",
-        "workflowExecutionId",
-        "policyFile",
-        "policyVersion",
-        "actorType",
-        "userId",
-        "branchName",
-        "agentModel",
-        "skillVersion",
-        "cliVersion",
-        "agentTraceability",
-        "gitSha",
-      ]) {
-        delete body[k];
-      }
-      if (a.gitSha != null) body.gitSha = a.gitSha;
+      const body: Record<string, unknown> = { version: a.version.trim() };
+      const gitCommitSha = (a.gitCommitSha ?? a.gitSha)?.trim();
+      if (gitCommitSha) body.gitCommitSha = gitCommitSha;
+      if (a.priorReleaseVersion?.trim()) body.priorReleaseVersion = a.priorReleaseVersion.trim();
+      if (a.releaseType?.trim()) body.releaseType = a.releaseType.trim();
+      if (a.lifecycleStatus?.trim()) body.lifecycleStatus = a.lifecycleStatus.trim();
+      if (a.environment?.trim()) body.environment = a.environment.trim();
+      if (a.dueDateMillis != null) body.dueDateMillis = a.dueDateMillis;
+      if (a.branchId?.trim()) body.branchId = a.branchId.trim();
       const trace = buildAgentTraceabilityPayload(a);
       if (trace) body.agentTraceability = trace;
       return postMcp("/api/mcp/upsert_release", body);
@@ -888,19 +882,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     kebab: "manage-test-run",
     description:
-      "Create, update, complete, or add scenarios to a named test run. " +
-      "action=CREATE needs name and/or release; action=UPDATE|COMPLETE|ADD_SCENARIOS needs namedTestRunId. " +
-      "Optional environment, assignee, scenarioOrdinalIds. Optional agentTraceability records the mutation.",
+      "Create or update a named test run. Omit id to create (release required). Optional title, " +
+      "environment (server defaults QA), dueDate, status (ACTIVE|COMPLETED|ARCHIVED), batchInvocationIds, " +
+      "and commitRange: FIND (discover batches in the prior-release-cut to current-cut SHA range without " +
+      "attaching) or LINK (attach the unlinked ones). Response includes id, summary, created, link counts, " +
+      "commit SHAs, discoveredBatchInvocationIds and unlinkedBatchInvocationIds. " +
+      "Optional agentTraceability records the mutation.",
     inputSchema: S.manageTestRunInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.manageTestRunInput>;
-      const body: Record<string, unknown> = { action: a.action };
-      if (a.namedTestRunId?.trim()) body.namedTestRunId = a.namedTestRunId.trim();
-      if (a.name?.trim()) body.name = a.name.trim();
+      const body: Record<string, unknown> = {};
+      if (a.id?.trim()) body.id = a.id.trim();
       if (a.release?.trim()) body.release = a.release.trim();
+      if (a.title?.trim()) body.title = a.title.trim();
       if (a.environment?.trim()) body.environment = a.environment.trim();
-      if (a.assignee?.trim()) body.assignee = a.assignee.trim();
-      if (a.scenarioOrdinalIds?.length) body.scenarioOrdinalIds = a.scenarioOrdinalIds;
+      if (a.dueDate != null && a.dueDate !== "") body.dueDate = a.dueDate;
+      if (a.status) body.status = a.status;
+      if (a.batchInvocationIds?.length) body.batchInvocationIds = a.batchInvocationIds;
+      if (a.commitRange) body.commitRange = a.commitRange;
       const trace = buildAgentTraceabilityPayload(a);
       if (trace) body.agentTraceability = trace;
       return postMcp("/api/mcp/manage_test_run", body);

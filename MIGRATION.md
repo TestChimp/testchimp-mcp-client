@@ -47,6 +47,12 @@ Tool names and request shapes follow TestChimp MCP API 2.0.0. Update skills, pro
 | `create-issue` | `upsert-issue` | omit `issueId`; `title` required |
 | `update-issue-status` | `upsert-issue` | `issueId` + patch fields |
 
-New: `list-issues`, `upsert-release`, `manage-test-run`. `get-org-capabilities` now includes `planLabel`, `trial` / `freeTrialActive`, and `chimphandsCredits`. `get-release` lists catalog entries when `version` is omitted.
+New tools and 2.0 request shapes:
+
+- `list-issues` — search/filter issues.
+- `upsert-release` — `POST /api/mcp/upsert_release`. `version` is required. Optional: `gitCommitSha`, `priorReleaseVersion`, `releaseType`, `lifecycleStatus`, `environment` (create only), `dueDateMillis` and `branchId` (update only). Response `{ release, created }`.
+- `manage-test-run` — `POST /api/mcp/manage_test_run`. Omit `id` to create (`release` required). Optional: `title`, `environment` (server defaults QA), `dueDate`, `status` (`ACTIVE` / `COMPLETED` / `ARCHIVED`), `batchInvocationIds[]`, `commitRange` `FIND` (discover batches in the prior-release-cut to current-cut SHA range without attaching) or `LINK` (attach the unlinked ones). Response includes `id`, `summary`, `created`, link counts, commit SHAs, `discoveredBatchInvocationIds` and `unlinkedBatchInvocationIds`.
+- `get-org-capabilities` — includes `planLabel`, `trial` / `freeTrialActive`, and `chimphandsCredits`.
+- `get-release` — `version` plus optional `detail=GATE`. Omit `version` to list (`environment`, `pageSize`, `pageToken`, `excludeArchived`).
 
 CLI subcommands match the kebab-case MCP names. Nested `bot` / `workspace` aliases (`bot ack`, `bot register-profile`, `workspace save-creds`, …) are unchanged.

@@ -186,7 +186,7 @@ docker run -p 8080:8080 -e TESTCHIMP_MCP_PUBLIC_URL=https://mcp.example.com test
 | `list-api-operations` / `get-api-operation-detail` | `get-api-operations` |
 | `create-issue` / `update-issue-status` | `upsert-issue` |
 | `get-perf-run` | `list-perf-runs` (`runId`) |
-| `get-release-details` | `get-release` (`detail=GATE`) |
+| `get-release-details` | `get-release` (`version` + `detail=GATE`; omit `version` to list) |
 
 `destroy-ephemeral-environment` is unchanged and stays destructive. Full mapping: [CHANGELOG.md](./CHANGELOG.md) and [MIGRATION.md](./MIGRATION.md).
 

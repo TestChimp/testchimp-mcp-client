@@ -1148,19 +1148,21 @@ export function buildCliProgram(): Command {
     .addOption(jsonInputOption())
     .option("--version <version>", "Release version / label (omit to list)")
     .option("--detail <detail>", "CATALOG (default) or GATE")
+    .option("--environment <name>", "List filter: environment tag")
+    .option("--page-size <n>", "List page size")
+    .option("--page-token <token>", "List page token")
+    .option("--exclude-archived", "List: omit archived releases")
     .action(async (opts) => {
-      const body: Record<string, string> = {};
-      if (opts.version) body.version = String(opts.version);
+      const body: Record<string, unknown> = {};
+      if (opts.version) body.version = String(opts.version).trim();
       if (opts.detail) body.detail = String(opts.detail).trim().toUpperCase();
-      const merged = mergeBodies(body, opts.jsonInput) as { version?: string; detail?: string };
-      const out = await runTool(
-        "get-release",
-        {
-          ...(merged.version?.trim() ? { version: String(merged.version).trim() } : {}),
-          ...(merged.detail ? { detail: String(merged.detail).trim().toUpperCase() } : {}),
-        },
-        { postMcp },
-      );
+      if (opts.environment) body.environment = String(opts.environment).trim();
+      if (opts.pageSize != null) body.pageSize = Number(opts.pageSize);
+      if (opts.pageToken) body.pageToken = String(opts.pageToken).trim();
+      if (opts.excludeArchived) body.excludeArchived = true;
+      const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+      if (typeof merged.detail === "string") merged.detail = merged.detail.trim().toUpperCase();
+      const out = await runTool("get-release", merged, { postMcp });
       console.log(out);
     });
 
@@ -1170,24 +1172,26 @@ export function buildCliProgram(): Command {
       .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-release")!.description)
       .addOption(jsonInputOption())
       .option("--version <version>", "Release version / label")
-      .option("--name <name>", "Display name")
-      .option("--prior-version <version>", "Previous release label")
-      .option("--due-date-millis <ms>", "Due date as UTC epoch millis")
+      .option("--git-commit-sha <sha>", "Cut git SHA (also accepts --git-sha)")
+      .option("--prior-release-version <version>", "Previous release label")
+      .option("--release-type <type>", "Release type")
       .option("--lifecycle-status <status>", "Release lifecycle status")
-      .option("--focus-areas <csv>", "Comma-separated focus areas"),
+      .option("--environment <name>", "Environment tag (create only)")
+      .option("--due-date-millis <ms>", "Due date as UTC epoch millis (update only)")
+      .option("--branch-id <id>", "Branch id (update only)"),
   ).action(async (opts) => {
     const body: Record<string, unknown> = {
       ...collectAgentTraceabilityFlags(opts),
     };
     if (opts.version) body.version = String(opts.version).trim();
-    if (opts.name) body.name = String(opts.name);
-    if (opts.gitSha) body.gitSha = String(opts.gitSha).trim();
-    if (opts.priorVersion) body.priorVersion = String(opts.priorVersion).trim();
-    if (opts.dueDateMillis != null) body.dueDateMillis = Number(opts.dueDateMillis);
+    if (opts.gitCommitSha) body.gitCommitSha = String(opts.gitCommitSha).trim();
+    else if (opts.gitSha) body.gitCommitSha = String(opts.gitSha).trim();
+    if (opts.priorReleaseVersion) body.priorReleaseVersion = String(opts.priorReleaseVersion).trim();
+    if (opts.releaseType) body.releaseType = String(opts.releaseType).trim();
     if (opts.lifecycleStatus) body.lifecycleStatus = String(opts.lifecycleStatus).trim();
-    if (opts.focusAreas) {
-      body.focusAreas = String(opts.focusAreas).split(",").map((s: string) => s.trim()).filter(Boolean);
-    }
+    if (opts.environment) body.environment = String(opts.environment).trim();
+    if (opts.dueDateMillis != null) body.dueDateMillis = Number(opts.dueDateMillis);
+    if (opts.branchId) body.branchId = String(opts.branchId).trim();
     const merged = mergeBodies(body, opts.jsonInput) as { version?: string };
     if (!merged.version || String(merged.version).trim() === "") {
       throw new Error("version is required (--version or --json-input)");
@@ -1200,31 +1204,38 @@ export function buildCliProgram(): Command {
       .command("manage-test-run")
       .description(TOOL_DEFINITIONS.find((t) => t.kebab === "manage-test-run")!.description)
       .addOption(jsonInputOption())
-      .option("--action <action>", "CREATE | UPDATE | COMPLETE | ADD_SCENARIOS")
-      .option("--named-test-run-id <id>", "Named test run id")
-      .option("--name <name>", "Test run name (CREATE)")
-      .option("--release <label>", "Release label")
-      .option("--environment <name>", "Environment tag")
-      .option("--assignee <userId>", "Assignee user id")
-      .option("--scenario-ordinal-ids <csv>", "Comma-separated TS-<n> numeric ids"),
+      .option("--id <id>", "Test run id (omit to create)")
+      .option("--release <label>", "Release label (required to create)")
+      .option("--title <title>", "Test run title")
+      .option("--environment <name>", "Environment tag (server defaults QA)")
+      .option("--due-date <date>", "Due date (YYYY-MM-DD, ISO datetime, or epoch millis)")
+      .option("--status <status>", "ACTIVE | COMPLETED | ARCHIVED")
+      .option("--batch-invocation-ids <csv>", "Comma-separated batch invocation ids")
+      .option("--commit-range <mode>", "FIND (discover) or LINK (attach unlinked batches)"),
   ).action(async (opts) => {
     const body: Record<string, unknown> = {
       ...collectAgentTraceabilityFlags(opts),
     };
-    if (opts.action) body.action = String(opts.action).trim().toUpperCase();
-    if (opts.namedTestRunId) body.namedTestRunId = String(opts.namedTestRunId).trim();
-    if (opts.name) body.name = String(opts.name).trim();
+    if (opts.id) body.id = String(opts.id).trim();
     if (opts.release) body.release = String(opts.release).trim();
+    if (opts.title) body.title = String(opts.title).trim();
     if (opts.environment) body.environment = String(opts.environment).trim();
-    if (opts.assignee) body.assignee = String(opts.assignee).trim();
-    if (opts.scenarioOrdinalIds) {
-      body.scenarioOrdinalIds = String(opts.scenarioOrdinalIds)
-        .split(",")
-        .map((s: string) => Number(s.trim()))
-        .filter((n: number) => Number.isFinite(n) && n > 0);
+    if (opts.dueDate != null) {
+      const raw = String(opts.dueDate).trim();
+      body.dueDate = /^\d+$/.test(raw) ? Number(raw) : raw;
     }
-    const merged = mergeBodies(body, opts.jsonInput) as { action?: string };
-    if (!merged.action) throw new Error("action is required (CREATE | UPDATE | COMPLETE | ADD_SCENARIOS)");
+    if (opts.status) body.status = String(opts.status).trim().toUpperCase();
+    if (opts.batchInvocationIds) {
+      body.batchInvocationIds = String(opts.batchInvocationIds)
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+    }
+    if (opts.commitRange) body.commitRange = String(opts.commitRange).trim().toUpperCase();
+    const merged = mergeBodies(body, opts.jsonInput) as { id?: string; release?: string };
+    if (!(merged.id ?? "").toString().trim() && !(merged.release ?? "").toString().trim()) {
+      throw new Error("release is required to create; pass --id to update");
+    }
     console.log(await runTool("manage-test-run", merged, { postMcp }));
   });
 

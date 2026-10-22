@@ -14,8 +14,8 @@ Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 81
 - `set-entity-distinct` — `distinct` defaults true; TEST locators
 - `list-issues`
 - `upsert-issue` — omit `issueId` + `title` to create; `issueId` to patch
-- `upsert-release`
-- `manage-test-run` — CREATE / UPDATE / COMPLETE / ADD_SCENARIOS
+- `upsert-release` — `version` required; optional `gitCommitSha`, `priorReleaseVersion`, `releaseType`, `lifecycleStatus`, `environment` (create), `dueDateMillis` / `branchId` (update); response `{ release, created }`
+- `manage-test-run` — omit `id` to create (`release` required); optional `title`, `environment` (default QA), `dueDate`, `status` (ACTIVE/COMPLETED/ARCHIVED), `batchInvocationIds`, `commitRange` FIND|LINK
 
 ### Removed (replaced by the tools above)
 
@@ -34,7 +34,7 @@ Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 81
 ### Changed
 
 - `get-org-capabilities` advertises `planLabel`, `trial` / `freeTrialActive`, and `chimphandsCredits`
-- `get-release` lists when `version` is omitted; `detail=GATE` replaces `get-release-details`
+- `get-release` lists when `version` is omitted (`environment`, `pageSize`, `pageToken`, `excludeArchived`); `detail=GATE` replaces `get-release-details`
 - `list-meetings` accepts `includeFilterOptions` and `meetingSetId`
 - `fetch-execution-report` includes `batchViewUrl`
 - `get-execution-history` accepts `aggregate=true`
