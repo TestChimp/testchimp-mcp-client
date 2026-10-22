@@ -43,20 +43,24 @@ testchimp create-user-story --platform-file-path plans/stories/foo.md --title "C
 testchimp list-screen-states --json-input '{}'
 testchimp upsert-screen-states --json-input '{"screenStates":[{"screen":"Checkout","states":["empty","filled"]}]}'
 testchimp list-perf-runs --testchimp-id TC-123 --kind JOURNEY --limit 20
-testchimp get-perf-run --run-id 01ABC --include-raw
+testchimp list-perf-runs --run-id 01ABC --include-raw
 testchimp promote-perf-baseline --run-id 01ABC --env-class CI
 testchimp compare-perf-to-baseline --run-id 01ABC --max-p95-regression-percent 10
 testchimp list-related-perf-tests --scenario-titles "Checkout,Refund"
 testchimp list-api-operation-interactions --operation-id 01XYZ --interaction-type REAL --limit 100
-testchimp list-meeting-filter-options
+testchimp list-meetings --include-filter-options
 testchimp list-meetings --from 2026-09-01 --to 2026-09-30 --domain customer.com --label Sales --search "pricing"
 testchimp get-meeting-transcript --meeting-id <meeting-id> --summary-only
+testchimp ephemeral-environment --action PROVISION --branch-name feat --no-wait
+testchimp report-scan-findings --id scan-1 --scanner DAST --report-file zap.json
+testchimp upsert-issue --title "Broken checkout"
+testchimp list-issues --status ACTIVE --limit 10
 ```
 
 - **stdout:** API response JSON.
-- **stderr:** progress for `provision-ephemeral-environment-and-wait` (“still waiting…” polls).
+- **stderr:** progress for `ephemeral-environment --action PROVISION` when waiting (“still waiting…” polls). Pass `--no-wait` for create/deploy trigger only.
 - **performance gate:** `compare-perf-to-baseline` still prints its JSON response but exits nonzero when `regressed` is `true` (top-level or under `comparison`).
-- **Meetings:** `list-meetings` / `list-meeting-filter-options` cover team-wide Meeting Bots meetings only (same filters as the Meetings page). `--from` / `--to` take `YYYY-MM-DD` (inclusive local days), ISO datetimes, or epoch millis; `--label`, `--participant`, `--domain` are repeatable or comma-separated.
+- **Meetings:** `list-meetings` covers team-wide Meeting Bots meetings only (same filters as the Meetings page). `--include-filter-options` returns label / participant / domain catalogs. `--from` / `--to` take `YYYY-MM-DD` (inclusive local days), ISO datetimes, or epoch millis; `--label`, `--participant`, `--domain` are repeatable or comma-separated.
 - **Flags:** default for each subcommand; **`--json-input '<json>'`** or **`--json-input @file.json`** merges over flags (JSON wins on conflicts). Use JSON for nested bodies (e.g. TrueCoverage scopes).
 
 ## Authentication and environment
@@ -168,6 +172,23 @@ The repository `Dockerfile` builds an image that runs `testchimp mcp --http` as 
 docker build -t testchimp-mcp .
 docker run -p 8080:8080 -e TESTCHIMP_MCP_PUBLIC_URL=https://mcp.example.com testchimp-mcp
 ```
+
+## MCP API 2.0.0
+
+`@testchimp/cli` **2.0.0** matches TestChimp MCP API 2.0.0 (87 tools, including all 70 `/api/mcp/*` paths plus bot/workspace helpers). Several 1.x tools were consolidated:
+
+| Old tool | New tool |
+|---|---|
+| `provision-ephemeral-environment-and-wait` | `ephemeral-environment` (`action=PROVISION`, `wait` defaults true) |
+| `report-dast-findings` / `report-sast-findings` / … | `report-scan-findings` (`scanner=DAST\|SAST\|DEPS\|SECRETS`) |
+| `list-workflow-executions` / `get-workflow-execution` | `get-workflow-executions` |
+| `get-policy` / `list-policies` | `get-policies` |
+| `list-api-operations` / `get-api-operation-detail` | `get-api-operations` |
+| `create-issue` / `update-issue-status` | `upsert-issue` |
+| `get-perf-run` | `list-perf-runs` (`runId`) |
+| `get-release-details` | `get-release` (`version` + `detail=GATE`; omit `version` to list) |
+
+`get-eaas-config` is kept as a standalone connectivity-check tool. `destroy-ephemeral-environment` is unchanged and stays destructive. Full mapping: [CHANGELOG.md](./CHANGELOG.md) and [MIGRATION.md](./MIGRATION.md).
 
 ## Migration from `testchimp-mcp-client`
 

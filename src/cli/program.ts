@@ -279,6 +279,25 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("list-test-planning-trends")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-test-planning-trends")!.description)
+    .addOption(jsonInputOption())
+    .option("--release <s>")
+    .option("--environment <s>")
+    .option("--branch-name <s>")
+    .option("--branch-id <id>")
+    .option("--platform <web|ios|android>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.release) body.release = String(opts.release);
+      if (opts.environment) body.environment = String(opts.environment);
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.branchId) body.branchId = String(opts.branchId);
+      if (opts.platform) body.platform = String(opts.platform);
+      console.log(await runTool("list-test-planning-trends", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
     .command("get-execution-history")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-execution-history")!.description)
     .addOption(jsonInputOption())
@@ -290,6 +309,7 @@ export function buildCliProgram(): Command {
     .option("--platform <web|ios|android>")
     .option("--file-paths <csv>")
     .option("--folder-path <path>")
+    .option("--aggregate", "Return suite timing stats instead of per-test history")
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
       if (opts.release) body.release = opts.release;
@@ -298,6 +318,7 @@ export function buildCliProgram(): Command {
       if (opts.scenarioId) body.scenarioId = opts.scenarioId;
       if (opts.testId) body.testId = opts.testId;
       if (opts.platform) body.platform = opts.platform;
+      if (opts.aggregate) body.aggregate = true;
       const scope: { filePaths?: string[]; folderPath?: string } = {};
       if (opts.filePaths) scope.filePaths = String(opts.filePaths).split(",").map((s: string) => s.trim()).filter(Boolean);
       if (opts.folderPath) scope.folderPath = opts.folderPath;
@@ -308,32 +329,48 @@ export function buildCliProgram(): Command {
     });
 
   program
-    .command("get-suite-execution-stats")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-suite-execution-stats")!.description)
+    .command("list-execution-job-dimension-values")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-execution-job-dimension-values")!.description)
     .addOption(jsonInputOption())
-    .option("--release <s>")
-    .option("--environment <s>")
-    .option("--branch-name <s>")
     .option("--scenario-id <id>")
-    .option("--test-id <id>")
-    .option("--platform <web|ios|android>")
-    .option("--file-paths <csv>")
-    .option("--folder-path <path>")
+    .option("--environment <s>")
+    .option("--release <s>")
+    .option("--branch-name <s>")
+    .option("--branch-id <id>")
+    .option("--dimension <dimension>", "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION | …")
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
-      if (opts.release) body.release = opts.release;
-      if (opts.environment) body.environment = opts.environment;
-      if (opts.branchName) body.branchName = opts.branchName;
-      if (opts.scenarioId) body.scenarioId = opts.scenarioId;
-      if (opts.testId) body.testId = opts.testId;
-      if (opts.platform) body.platform = opts.platform;
-      const scope: { filePaths?: string[]; folderPath?: string } = {};
-      if (opts.filePaths) scope.filePaths = String(opts.filePaths).split(",").map((s: string) => s.trim()).filter(Boolean);
-      if (opts.folderPath) scope.folderPath = opts.folderPath;
-      if (Object.keys(scope).length) body.scope = scope;
-      const merged = mergeBodies(body, opts.jsonInput);
-      const out = await runTool("get-suite-execution-stats", merged, { postMcp });
-      console.log(out);
+      if (opts.scenarioId) body.scenarioId = String(opts.scenarioId);
+      if (opts.environment) body.environment = String(opts.environment);
+      if (opts.release) body.release = String(opts.release);
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.branchId) body.branchId = String(opts.branchId);
+      if (opts.dimension) body.dimension = String(opts.dimension);
+      console.log(await runTool("list-execution-job-dimension-values", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
+    .command("ingest-scenario-execution")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "ingest-scenario-execution")!.description)
+    .addOption(jsonInputOption())
+    .option("--scenario-ordinal-id <id>")
+    .option("--external-id <id>")
+    .requiredOption("--result <status>", "SMART_TEST_EXECUTION_* status")
+    .option("--release <s>")
+    .option("--test-run-label <s>")
+    .option("--environment <s>")
+    .option("--platform <web|ios|android>")
+    .option("--notes <text>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = { result: String(opts.result).trim() };
+      if (opts.scenarioOrdinalId) body.scenarioOrdinalId = String(opts.scenarioOrdinalId);
+      if (opts.externalId) body.externalId = String(opts.externalId);
+      if (opts.release) body.release = String(opts.release);
+      if (opts.testRunLabel) body.testRunLabel = String(opts.testRunLabel);
+      if (opts.environment) body.environment = String(opts.environment);
+      if (opts.platform) body.platform = String(opts.platform);
+      if (opts.notes) body.notes = String(opts.notes);
+      console.log(await runTool("ingest-scenario-execution", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
   program
@@ -378,26 +415,6 @@ export function buildCliProgram(): Command {
           ...(merged.filename ? { filename: String(merged.filename) } : {}),
           ...(merged.contentType ? { contentType: String(merged.contentType) } : {}),
         },
-        { postMcp },
-      );
-      console.log(out);
-    });
-
-  program
-    .command("get-batch-view-url")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-batch-view-url")!.description)
-    .addOption(jsonInputOption())
-    .option("--batch-invocation-id <id>", "Batch invocation id")
-    .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.batchInvocationId) body.batchInvocationId = String(opts.batchInvocationId);
-      const merged = mergeBodies(body, opts.jsonInput) as { batchInvocationId?: string };
-      if (!merged.batchInvocationId || String(merged.batchInvocationId).trim() === "") {
-        throw new Error("batchInvocationId is required (--batch-invocation-id)");
-      }
-      const out = await runTool(
-        "get-batch-view-url",
-        { batchInvocationId: String(merged.batchInvocationId).trim() },
         { postMcp },
       );
       console.log(out);
@@ -592,28 +609,6 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  program
-    .command("get-meeting-set")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-meeting-set")!.description)
-    .addOption(jsonInputOption())
-    .option("--meeting-set-id <id>", "meeting-set ULID (from `/testchimp using meeting-set context <id>`)")
-    .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.meetingSetId) {
-        body.meetingSetId = String(opts.meetingSetId).trim();
-      }
-      const merged = mergeBodies(body, opts.jsonInput) as { meetingSetId?: string };
-      if (!merged.meetingSetId || String(merged.meetingSetId).trim() === "") {
-        throw new Error("meetingSetId is required (--meeting-set-id)");
-      }
-      const out = await runTool(
-        "get-meeting-set",
-        { meetingSetId: String(merged.meetingSetId).trim() },
-        { postMcp },
-      );
-      console.log(out);
-    });
-
   const collectRepeatable = (value: string, previous: string[] = []): string[] => [
     ...previous,
     ...value.split(",").map((s) => s.trim()).filter(Boolean),
@@ -635,6 +630,8 @@ export function buildCliProgram(): Command {
     .option("--search <text>", "full-text search over title + transcript")
     .option("--page-size <n>", "page size (default 50, max 200; max 25 when searching)")
     .option("--page-token <token>", "nextPageToken from the previous page")
+    .option("--include-filter-options", "include label / participant / domain catalogs")
+    .option("--meeting-set-id <id>", "meeting-set ULID (from `/testchimp using meeting-set context <id>`)")
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
       if (opts.from) body.from = String(opts.from).trim();
@@ -649,16 +646,10 @@ export function buildCliProgram(): Command {
         body.pageSize = n;
       }
       if (opts.pageToken) body.pageToken = String(opts.pageToken).trim();
+      if (opts.includeFilterOptions) body.includeFilterOptions = true;
+      if (opts.meetingSetId) body.meetingSetId = String(opts.meetingSetId).trim();
       const merged = mergeBodies(body, opts.jsonInput);
       const out = await runTool("list-meetings", merged, { postMcp });
-      console.log(out);
-    });
-
-  program
-    .command("list-meeting-filter-options")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-meeting-filter-options")!.description)
-    .action(async () => {
-      const out = await runTool("list-meeting-filter-options", {}, { postMcp });
       console.log(out);
     });
 
@@ -682,46 +673,59 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  addAgentTraceabilityOptions(
-    program
-      .command("update-issue-status")
-      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-issue-status")!.description)
-      .addOption(jsonInputOption())
-      .option("--issue-id <id>", "Issue ordinal id (#B-123, B-123, B123, or 123)")
-      .option(
-        "--status <status>",
-        "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED",
-      )
-      .option(
-        "--ignore-reason <reason>",
-        "When status=IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT",
-      ),
-  ).action(async (opts) => {
-    const body: Record<string, unknown> = {
-      ...collectAgentTraceabilityFlags(opts),
-    };
-    if (opts.issueId) body.issueId = String(opts.issueId).trim();
-    if (opts.status) body.status = String(opts.status).trim();
-    if (opts.ignoreReason) body.ignoreReason = String(opts.ignoreReason).trim();
-    const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
-    if (!merged.issueId || String(merged.issueId).trim() === "") {
-      throw new Error("issueId is required (--issue-id)");
-    }
-    if (!merged.status || String(merged.status).trim() === "") {
-      throw new Error(
-        "status is required (ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED)",
-      );
-    }
-    const out = await runTool("update-issue-status", merged, { postMcp });
-    console.log(out);
-  });
+  program
+    .command("list-issues")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-issues")!.description)
+    .addOption(jsonInputOption())
+    .option("--search <text>", "Full-text search")
+    .option("--issue-id <id>", "Issue ordinal id (alias for --ordinal-ids)")
+    .option("--status <status>", "Alias for a single statuses[] value")
+    .option("--statuses <csv>", "ACTIVE | IGNORED | FIXED | …")
+    .option("--severity <severity>", "Alias for a single severities[] value")
+    .option("--severities <csv>", "LOW_SEVERITY | MEDIUM_SEVERITY | …")
+    .option("--assignee <userId>", "Assignee user id")
+    .option("--assignees <csv>", "Comma-separated assignee user ids")
+    .option("--labels <csv>", "Comma-separated labels")
+    .option("--release <label>", "Release label")
+    .option("--ordinal-ids <csv>", "Issue ordinal ids")
+    .option("--limit <n>", "Maximum results", (v) => parseInt(v, 10))
+    .option("--offset <n>", "Pagination offset", (v) => parseInt(v, 10))
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.search) body.searchText = String(opts.search);
+      if (opts.issueId) body.issueId = String(opts.issueId).trim();
+      if (opts.status) body.status = String(opts.status).trim();
+      if (opts.statuses) {
+        body.statuses = String(opts.statuses).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (opts.severity) body.severity = String(opts.severity).trim();
+      if (opts.severities) {
+        body.severities = String(opts.severities).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (opts.assignee) body.assignee = String(opts.assignee).trim();
+      if (opts.assignees) {
+        body.assignees = String(opts.assignees).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (opts.labels) {
+        body.labels = String(opts.labels).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (opts.release) body.release = String(opts.release).trim();
+      if (opts.ordinalIds) {
+        body.ordinalIds = String(opts.ordinalIds).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (opts.limit != null && !Number.isNaN(opts.limit)) body.limit = opts.limit;
+      if (opts.offset != null && !Number.isNaN(opts.offset)) body.offset = opts.offset;
+      const out = await runTool("list-issues", mergeBodies(body, opts.jsonInput), { postMcp });
+      console.log(out);
+    });
 
   addAgentTraceabilityOptions(
     program
-      .command("create-issue")
-      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-issue")!.description)
+      .command("upsert-issue")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-issue")!.description)
       .addOption(jsonInputOption())
-      .option("--title <title>", "Issue title (required unless provided via --json-input)")
+      .option("--issue-id <id>", "Issue ordinal id to patch (#B-123, B-123, B123, or 123)")
+      .option("--title <title>", "Issue title (required to create)")
       .option("--description <text>", "Issue description (markdown supported)")
       .option(
         "--issue-type <type>",
@@ -739,22 +743,30 @@ export function buildCliProgram(): Command {
         "--status <status>",
         "ACTIVE | IGNORED | FIXED | DUPLICATE | IN_PROGRESS_BUG | ARCHIVED_BUG | BLOCKED",
       )
+      .option(
+        "--ignore-reason <reason>",
+        "When status=IGNORED: INTENDED_BEHAVIOUR | INACCURATE_ASSESSMENT | NOT_IMPORTANT",
+      )
       .option("--reported-release-id <id>", "Release label/id to attach to the issue")
       .option("--due-date-millis <ms>", "Due date as UTC epoch millis")
       .option("--assignee <userId>", "Assignee user id")
       .option("--labels <csv>", "Comma-separated labels")
+      .option("--add-labels <csv>", "Labels to add on update")
+      .option("--remove-labels <csv>", "Labels to remove on update")
       .option("--source <name>", "External ingest source identifier (stored as label source:<name>)")
       .option("--environment <name>", "Environment tag (defaults to QA when omitted)"),
   ).action(async (opts) => {
     const body: Record<string, unknown> = {
       ...collectAgentTraceabilityFlags(opts),
     };
+    if (opts.issueId) body.issueId = String(opts.issueId).trim();
     if (opts.title) body.title = String(opts.title).trim();
     if (opts.description) body.description = String(opts.description);
     if (opts.issueType) body.issueType = String(opts.issueType).trim();
     if (opts.category) body.category = String(opts.category).trim();
     if (opts.severity) body.severity = String(opts.severity).trim();
     if (opts.status) body.status = String(opts.status).trim();
+    if (opts.ignoreReason) body.ignoreReason = String(opts.ignoreReason).trim();
     if (opts.reportedReleaseId) body.reportedReleaseId = String(opts.reportedReleaseId).trim();
     if (opts.dueDateMillis != null) body.dueDateMillis = Number(opts.dueDateMillis);
     if (opts.assignee) body.assignee = String(opts.assignee).trim();
@@ -764,13 +776,19 @@ export function buildCliProgram(): Command {
         .map((s: string) => s.trim())
         .filter(Boolean);
     }
+    if (opts.addLabels) {
+      body.addLabels = String(opts.addLabels).split(",").map((s: string) => s.trim()).filter(Boolean);
+    }
+    if (opts.removeLabels) {
+      body.removeLabels = String(opts.removeLabels).split(",").map((s: string) => s.trim()).filter(Boolean);
+    }
     if (opts.source) body.source = String(opts.source).trim();
     if (opts.environment) body.environment = String(opts.environment).trim();
-    const merged = mergeBodies(body, opts.jsonInput) as { title?: string };
-    if (!merged.title || String(merged.title).trim() === "") {
-      throw new Error("title is required (--title or --json-input {\"title\":\"...\"})");
+    const merged = mergeBodies(body, opts.jsonInput) as { title?: string; issueId?: string };
+    if (!merged.issueId && (!merged.title || String(merged.title).trim() === "")) {
+      throw new Error("Provide --title to create, or --issue-id to patch (or --json-input)");
     }
-    const out = await runTool("create-issue", merged, { postMcp });
+    const out = await runTool("upsert-issue", merged, { postMcp });
     console.log(out);
   });
 
@@ -989,6 +1007,33 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("ephemeral-environment")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "ephemeral-environment")!.description)
+    .addOption(jsonInputOption())
+    .requiredOption("--action <action>", "CONFIG | PROVISION | STATUS")
+    .option("--branch-name <s>")
+    .option("--wait", "PROVISION: wait until deployed (default true)")
+    .option("--no-wait", "PROVISION: create/deploy trigger only")
+    .option("--bns-environment-id <id>", "STATUS: BunnyShell environment id")
+    .option("--poll-interval-seconds <n>")
+    .option("--max-wait-minutes <n>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = { action: String(opts.action).trim().toUpperCase() };
+      if (opts.branchName) body.branchName = opts.branchName;
+      if (opts.wait === false) body.wait = false;
+      else if (opts.wait === true) body.wait = true;
+      if (opts.bnsEnvironmentId) body.bnsEnvironmentId = String(opts.bnsEnvironmentId);
+      if (opts.pollIntervalSeconds != null) body.pollIntervalSeconds = Number(opts.pollIntervalSeconds);
+      if (opts.maxWaitMinutes != null) body.maxWaitMinutes = Number(opts.maxWaitMinutes);
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("ephemeral-environment", merged, {
+        postMcp,
+        onProgress: stderrProgress,
+      });
+      console.log(out);
+    });
+
+  program
     .command("get-branch-specific-endpoint-config")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-branch-specific-endpoint-config")!.description)
     .addOption(jsonInputOption())
@@ -998,51 +1043,6 @@ export function buildCliProgram(): Command {
       if (opts.branchName) body.branchName = opts.branchName;
       const merged = mergeBodies(body, opts.jsonInput);
       const out = await runTool("get-branch-specific-endpoint-config", merged, { postMcp });
-      console.log(out);
-    });
-
-  program
-    .command("provision-ephemeral-environment-and-wait")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "provision-ephemeral-environment-and-wait")!.description)
-    .addOption(jsonInputOption())
-    .option("--branch-name <s>")
-    .option("--poll-interval-seconds <n>")
-    .option("--max-wait-minutes <n>")
-    .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.branchName) body.branchName = opts.branchName;
-      if (opts.pollIntervalSeconds != null) body.pollIntervalSeconds = Number(opts.pollIntervalSeconds);
-      if (opts.maxWaitMinutes != null) body.maxWaitMinutes = Number(opts.maxWaitMinutes);
-      const merged = mergeBodies(body, opts.jsonInput);
-      const out = await runTool("provision-ephemeral-environment-and-wait", merged, {
-        postMcp,
-        onProgress: stderrProgress,
-      });
-      console.log(out);
-    });
-
-  program
-    .command("provision-ephemeral-environment")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "provision-ephemeral-environment")!.description)
-    .addOption(jsonInputOption())
-    .option("--branch-name <s>")
-    .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.branchName) body.branchName = opts.branchName;
-      const merged = mergeBodies(body, opts.jsonInput);
-      const out = await runTool("provision-ephemeral-environment", merged, { postMcp });
-      console.log(out);
-    });
-
-  program
-    .command("get-ephemeral-environment-status")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-ephemeral-environment-status")!.description)
-    .addOption(jsonInputOption())
-    .requiredOption("--bns-environment-id <id>")
-    .action(async (opts) => {
-      const body = { bnsEnvironmentId: opts.bnsEnvironmentId };
-      const merged = mergeBodies(body, opts.jsonInput);
-      const out = await runTool("get-ephemeral-environment-status", merged, { postMcp });
       console.log(out);
     });
 
@@ -1238,37 +1238,95 @@ export function buildCliProgram(): Command {
     .command("get-release")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-release")!.description)
     .addOption(jsonInputOption())
-    .option("--version <version>", "Release version / label (McpGetReleaseRequest.version)")
+    .option("--version <version>", "Release version / label (omit to list)")
+    .option("--detail <detail>", "CATALOG (default) or GATE")
+    .option("--environment <name>", "List filter: environment tag")
+    .option("--page-size <n>", "List page size")
+    .option("--page-token <token>", "List page token")
+    .option("--exclude-archived", "List: omit archived releases")
     .action(async (opts) => {
-      const body: Record<string, string> = {};
-      if (opts.version) body.version = String(opts.version);
-      const merged = mergeBodies(body, opts.jsonInput) as { version?: string };
-      if (!merged.version || String(merged.version).trim() === "") {
-        throw new Error("version is required (--version or --json-input {\"version\":\"...\"})");
-      }
-      const out = await runTool("get-release", { version: String(merged.version).trim() }, { postMcp });
+      const body: Record<string, unknown> = {};
+      if (opts.version) body.version = String(opts.version).trim();
+      if (opts.detail) body.detail = String(opts.detail).trim().toUpperCase();
+      if (opts.environment) body.environment = String(opts.environment).trim();
+      if (opts.pageSize != null) body.pageSize = Number(opts.pageSize);
+      if (opts.pageToken) body.pageToken = String(opts.pageToken).trim();
+      if (opts.excludeArchived) body.excludeArchived = true;
+      const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
+      if (typeof merged.detail === "string") merged.detail = merged.detail.trim().toUpperCase();
+      const out = await runTool("get-release", merged, { postMcp });
       console.log(out);
     });
 
   program
-    .command("get-release-details")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-release-details")!.description)
+    .command("upsert-release")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-release")!.description)
     .addOption(jsonInputOption())
-    .option("--version <version>", "Release version / label (McpGetReleaseDetailsRequest.version)")
+    .option("--version <version>", "Release version / label")
+    .option("--git-commit-sha <sha>", "Cut git SHA")
+    .option("--git-sha <sha>", "Alias for --git-commit-sha")
+    .option("--prior-release-version <version>", "Previous release label")
+    .option("--release-type <type>", "Release type")
+    .option("--lifecycle-status <status>", "Release lifecycle status")
+    .option("--environment <name>", "Environment tag (create only)")
+    .option("--due-date-millis <ms>", "Due date as UTC epoch millis (update only)")
+    .option("--branch-id <id>", "Branch id (update only)")
     .action(async (opts) => {
-      const body: Record<string, string> = {};
-      if (opts.version) body.version = String(opts.version);
-      const merged = mergeBodies(body, opts.jsonInput) as { version?: string };
-      if (!merged.version || String(merged.version).trim() === "") {
-        throw new Error("version is required (--version or --json-input {\"version\":\"...\"})");
-      }
-      const out = await runTool(
-        "get-release-details",
-        { version: String(merged.version).trim() },
-        { postMcp },
-      );
-      console.log(out);
-    });
+    const body: Record<string, unknown> = {};
+    if (opts.version) body.version = String(opts.version).trim();
+    if (opts.gitCommitSha) body.gitCommitSha = String(opts.gitCommitSha).trim();
+    else if (opts.gitSha) body.gitCommitSha = String(opts.gitSha).trim();
+    if (opts.priorReleaseVersion) body.priorReleaseVersion = String(opts.priorReleaseVersion).trim();
+    if (opts.releaseType) body.releaseType = String(opts.releaseType).trim();
+    if (opts.lifecycleStatus) body.lifecycleStatus = String(opts.lifecycleStatus).trim();
+    if (opts.environment) body.environment = String(opts.environment).trim();
+    if (opts.dueDateMillis != null) body.dueDateMillis = Number(opts.dueDateMillis);
+    if (opts.branchId) body.branchId = String(opts.branchId).trim();
+    const merged = mergeBodies(body, opts.jsonInput) as { version?: string };
+    if (!merged.version || String(merged.version).trim() === "") {
+      throw new Error("version is required (--version or --json-input)");
+    }
+    console.log(await runTool("upsert-release", merged, { postMcp }));
+  });
+
+  program
+    .command("manage-test-run")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "manage-test-run")!.description)
+    .addOption(jsonInputOption())
+    .option("--id <id>", "Test run id (omit to create)")
+    .option("--release <label>", "Release label (required to create)")
+    .option("--title <title>", "Test run title")
+    .option("--environment <name>", "Environment tag (server defaults QA)")
+    .option("--due-date <date>", "Due date (YYYY-MM-DD, ISO datetime, or epoch millis)")
+    .option("--status <status>", "ACTIVE | COMPLETED | ARCHIVED")
+    .option("--batch-invocation-ids <csv>", "Comma-separated batch invocation ids")
+    .option("--commit-range <mode>", "FIND (discover) or LINK (attach unlinked batches)")
+    .option("--limit-when-no-prior <n>", "Max batches to consider when no prior release cut exists")
+    .action(async (opts) => {
+    const body: Record<string, unknown> = {};
+    if (opts.id) body.id = String(opts.id).trim();
+    if (opts.release) body.release = String(opts.release).trim();
+    if (opts.title) body.title = String(opts.title).trim();
+    if (opts.environment) body.environment = String(opts.environment).trim();
+    if (opts.dueDate != null) {
+      const raw = String(opts.dueDate).trim();
+      body.dueDate = /^\d+$/.test(raw) ? Number(raw) : raw;
+    }
+    if (opts.status) body.status = String(opts.status).trim().toUpperCase();
+    if (opts.batchInvocationIds) {
+      body.batchInvocationIds = String(opts.batchInvocationIds)
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+    }
+    if (opts.commitRange) body.commitRange = String(opts.commitRange).trim().toUpperCase();
+    if (opts.limitWhenNoPrior != null) body.limitWhenNoPrior = Number(opts.limitWhenNoPrior);
+    const merged = mergeBodies(body, opts.jsonInput) as { id?: string; release?: string };
+    if (!(merged.id ?? "").toString().trim() && !(merged.release ?? "").toString().trim()) {
+      throw new Error("release is required to create; pass --id to update");
+    }
+    console.log(await runTool("manage-test-run", merged, { postMcp }));
+  });
 
   program
     .command("get-security-scan-config")
@@ -1312,103 +1370,39 @@ export function buildCliProgram(): Command {
     });
 
   program
-    .command("report-dast-findings")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-dast-findings")!.description)
+    .command("report-scan-findings")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-scan-findings")!.description)
     .addOption(jsonInputOption())
-    .option("--id <scanId>", "Security scan id")
-    .option("--report-file <path>", "Path to ZAP Traditional JSON report")
+    .option("--id <scanId>", "Security scan id (alias of --scan-id)")
+    .option("--scan-id <scanId>", "Security scan id")
+    .option("--scanner <scanner>", "DAST | SAST | DEPS | SECRETS")
+    .option("--report-file <path>", "Path to the scanner JSON report")
+    .option("--mark-completed", "Mark the scan COMPLETED after ingest")
     .action(async (opts) => {
-      const body: Record<string, string> = {};
-      if (opts.id) body.id = String(opts.id);
+      const body: Record<string, unknown> = {};
+      if (opts.scanId) body.scanId = String(opts.scanId);
+      else if (opts.id) body.scanId = String(opts.id);
+      if (opts.scanner) body.scanner = String(opts.scanner).trim().toUpperCase();
       if (opts.reportFile) body.reportFile = String(opts.reportFile);
-      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; reportFile?: string };
-      if (!merged.id || String(merged.id).trim() === "") {
-        throw new Error("id is required");
+      if (opts.markCompleted) body.markCompleted = true;
+      const merged = mergeBodies(body, opts.jsonInput) as {
+        id?: string;
+        scanId?: string;
+        scanner?: string;
+        reportFile?: string;
+        reportJson?: string;
+        markCompleted?: boolean;
+      };
+      if (!(merged.scanId ?? merged.id ?? "").toString().trim()) {
+        throw new Error("scanId is required");
       }
-      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
-        throw new Error("reportFile is required (--report-file)");
+      if (!merged.scanner || String(merged.scanner).trim() === "") {
+        throw new Error("scanner is required (DAST | SAST | DEPS | SECRETS)");
       }
-      const out = await runTool(
-        "report-dast-findings",
-        { id: String(merged.id).trim(), reportFile: String(merged.reportFile).trim() },
-        { postMcp },
-      );
-      console.log(out);
-    });
-
-  program
-    .command("report-sast-findings")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-sast-findings")!.description)
-    .addOption(jsonInputOption())
-    .option("--id <scanId>", "Security scan id")
-    .option("--report-file <path>", "Path to full Semgrep CLI JSON report")
-    .action(async (opts) => {
-      const body: Record<string, string> = {};
-      if (opts.id) body.id = String(opts.id);
-      if (opts.reportFile) body.reportFile = String(opts.reportFile);
-      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; reportFile?: string };
-      if (!merged.id || String(merged.id).trim() === "") {
-        throw new Error("id is required");
+      if (!(merged.reportFile ?? "").toString().trim() && !(merged.reportJson ?? "").toString().trim()) {
+        throw new Error("reportFile or reportJson is required");
       }
-      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
-        throw new Error("reportFile is required (--report-file)");
-      }
-      const out = await runTool(
-        "report-sast-findings",
-        { id: String(merged.id).trim(), reportFile: String(merged.reportFile).trim() },
-        { postMcp },
-      );
-      console.log(out);
-    });
-
-  program
-    .command("report-secrets-findings")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-secrets-findings")!.description)
-    .addOption(jsonInputOption())
-    .option("--id <scanId>", "Security scan id")
-    .option("--report-file <path>", "Path to full Gitleaks JSON report")
-    .action(async (opts) => {
-      const body: Record<string, string> = {};
-      if (opts.id) body.id = String(opts.id);
-      if (opts.reportFile) body.reportFile = String(opts.reportFile);
-      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; reportFile?: string };
-      if (!merged.id || String(merged.id).trim() === "") {
-        throw new Error("id is required");
-      }
-      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
-        throw new Error("reportFile is required (--report-file)");
-      }
-      const out = await runTool(
-        "report-secrets-findings",
-        { id: String(merged.id).trim(), reportFile: String(merged.reportFile).trim() },
-        { postMcp },
-      );
-      console.log(out);
-    });
-
-  program
-    .command("report-deps-findings")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "report-deps-findings")!.description)
-    .addOption(jsonInputOption())
-    .option("--id <scanId>", "Security scan id")
-    .option("--report-file <path>", "Path to full Trivy JSON report")
-    .action(async (opts) => {
-      const body: Record<string, string> = {};
-      if (opts.id) body.id = String(opts.id);
-      if (opts.reportFile) body.reportFile = String(opts.reportFile);
-      const merged = mergeBodies(body, opts.jsonInput) as { id?: string; reportFile?: string };
-      if (!merged.id || String(merged.id).trim() === "") {
-        throw new Error("id is required");
-      }
-      if (!merged.reportFile || String(merged.reportFile).trim() === "") {
-        throw new Error("reportFile is required (--report-file)");
-      }
-      const out = await runTool(
-        "report-deps-findings",
-        { id: String(merged.id).trim(), reportFile: String(merged.reportFile).trim() },
-        { postMcp },
-      );
-      console.log(out);
+      console.log(await runTool("report-scan-findings", merged, { postMcp }));
     });
 
   program
@@ -1437,16 +1431,6 @@ export function buildCliProgram(): Command {
     });
 
   program
-    .command("mark-semantic-tests-distinct")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "mark-semantic-tests-distinct")!.description)
-    .addOption(jsonInputOption())
-    .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      const out = await runTool("mark-semantic-tests-distinct", merged, { postMcp });
-      console.log(out);
-    });
-
-  program
     .command("mark-tests-for-review")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "mark-tests-for-review")!.description)
     .addOption(jsonInputOption())
@@ -1454,6 +1438,29 @@ export function buildCliProgram(): Command {
       const merged = mergeBodies({}, opts.jsonInput);
       const out = await runTool("mark-tests-for-review", merged, { postMcp });
       console.log(out);
+    });
+
+  program
+    .command("select-smart-smoke-tests")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "select-smart-smoke-tests")!.description)
+    .addOption(jsonInputOption())
+    .option("--include-tags <csv>")
+    .option("--max-tests <n>")
+    .option("--max-time-budget-mins <n>")
+    .option("--suite-percentage <n>")
+    .option("--branch-name <s>")
+    .option("--environment <s>")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.includeTags) {
+        body.includeTags = String(opts.includeTags).split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (opts.maxTests != null) body.maxTests = Number(opts.maxTests);
+      if (opts.maxTimeBudgetMins != null) body.maxTimeBudgetMins = Number(opts.maxTimeBudgetMins);
+      if (opts.suitePercentage != null) body.suitePercentage = Number(opts.suitePercentage);
+      if (opts.branchName) body.branchName = String(opts.branchName);
+      if (opts.environment) body.environment = String(opts.environment);
+      console.log(await runTool("select-smart-smoke-tests", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
   program
@@ -1467,22 +1474,19 @@ export function buildCliProgram(): Command {
     });
 
   program
-    .command("mark-entity-distinct")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "mark-entity-distinct")!.description)
+    .command("set-entity-distinct")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "set-entity-distinct")!.description)
     .addOption(jsonInputOption())
+    .option("--entity-type <type>", "STORY | SCENARIO | TEST | ISSUE | EVENT")
+    .option("--distinct", "Mark as distinct (default true)")
+    .option("--no-distinct", "Remove a distinct mark")
     .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      const out = await runTool("mark-entity-distinct", merged, { postMcp });
-      console.log(out);
-    });
-
-  program
-    .command("unmark-entity-distinct")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "unmark-entity-distinct")!.description)
-    .addOption(jsonInputOption())
-    .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      const out = await runTool("unmark-entity-distinct", merged, { postMcp });
+      const body: Record<string, unknown> = {};
+      if (opts.entityType) body.entityType = String(opts.entityType).trim().toUpperCase();
+      if (opts.distinct === false) body.distinct = false;
+      else if (opts.distinct === true) body.distinct = true;
+      const merged = mergeBodies(body, opts.jsonInput);
+      const out = await runTool("set-entity-distinct", merged, { postMcp });
       console.log(out);
     });
 
@@ -1587,18 +1591,32 @@ export function buildCliProgram(): Command {
     });
 
   program
-    .command("get-last-run-workflow-detail")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-last-run-workflow-detail")!.description)
+    .command("get-workflow-executions")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-workflow-executions")!.description)
     .addOption(jsonInputOption())
-    .requiredOption("--workflow-id <id>", "Catalog workflow id")
-    .option("--branch-name <name>", "Optional branch filter (omit for any branch)")
+    .option("--workflow-execution-id <id>", "Fetch one execution by id")
+    .option("--workflow-id <id>", "Catalog workflow id")
+    .option("--branch-name <name>", "Optional branch filter")
     .option("--user-id <id>", "Optional per-user last run")
+    .option("--latest-only", "Last execution for workflow-id")
+    .option("--include-actions", "Include the action timeline")
+    .option("--limit <n>", "Maximum results", (v) => Number(v))
+    .option("--offset <n>", "Pagination offset", (v) => Number(v))
+    .option("--pending-approval-only", "Only PENDING_INVOKE_APPROVAL / PLANNED")
+    .option("--assigned-to-me-only", "Only executions assigned to the caller")
     .action(async (opts) => {
-      const body: Record<string, unknown> = { workflowId: String(opts.workflowId) };
+      const body: Record<string, unknown> = {};
+      if (opts.workflowExecutionId) body.workflowExecutionId = String(opts.workflowExecutionId);
+      if (opts.workflowId) body.workflowId = String(opts.workflowId);
       if (opts.branchName) body.branchName = String(opts.branchName);
       if (opts.userId) body.userId = String(opts.userId);
-      const merged = mergeBodies(body, opts.jsonInput);
-      console.log(await runTool("get-last-run-workflow-detail", merged, { postMcp }));
+      if (opts.latestOnly) body.latestOnly = true;
+      if (opts.includeActions) body.includeActions = true;
+      if (opts.limit != null) body.limit = opts.limit;
+      if (opts.offset != null) body.offset = opts.offset;
+      if (opts.pendingApprovalOnly) body.pendingApprovalOnly = true;
+      if (opts.assignedToMeOnly) body.assignedToMeOnly = true;
+      console.log(await runTool("get-workflow-executions", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
   program
@@ -1624,12 +1642,41 @@ export function buildCliProgram(): Command {
       console.log(await runTool("update-workflow-execution-assignees", merged, { postMcp }));
     });
 
+  program
+    .command("get-policies")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-policies")!.description)
+    .addOption(jsonInputOption())
+    .option("--policy-file-name <name>", "e.g. run-qa.policy.md (omit to list)")
+    .option("--workflow-id <id>", "Filter the list by catalog workflow id")
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.policyFileName) body.policyFileName = String(opts.policyFileName);
+      if (opts.workflowId) body.workflowId = String(opts.workflowId);
+      console.log(await runTool("get-policies", mergeBodies(body, opts.jsonInput), { postMcp }));
+    });
+
+  program
+    .command("ask-about-testchimp")
+    .alias("ask-testchimp-question")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "ask-about-testchimp")!.description)
+    .addOption(jsonInputOption())
+    .argument("[question]", "Open-ended question about TestChimp")
+    .option("--question <text>", "Open-ended question about TestChimp")
+    .action(async (questionArg, opts) => {
+      const body: Record<string, unknown> = {};
+      const fromFlag = typeof opts.question === "string" ? opts.question.trim() : "";
+      const fromArg = typeof questionArg === "string" ? questionArg.trim() : "";
+      if (fromFlag) body.question = fromFlag;
+      else if (fromArg) body.question = fromArg;
+      const merged = mergeBodies(body, opts.jsonInput) as { question?: string };
+      if (!(merged.question ?? "").toString().trim()) {
+        throw new Error("question is required (--question, positional, or --json-input)");
+      }
+      console.log(await runTool("ask-about-testchimp", merged, { postMcp }));
+    });
+
   for (const kebab of [
     "get-org-capabilities",
-    "list-workflow-executions",
-    "get-workflow-execution",
-    "get-policy",
-    "list-policies",
     "list-workflow-catalog",
   ] as const) {
     program
@@ -1708,37 +1755,10 @@ export function buildCliProgram(): Command {
     });
 
   program
-    .command("list-api-operation-services")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-api-operation-services")!.description)
+    .command("get-api-operations")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-api-operations")!.description)
     .addOption(jsonInputOption())
-    .action(async (opts) => {
-      const merged = mergeBodies({}, opts.jsonInput);
-      console.log(await runTool("list-api-operation-services", merged, { postMcp }));
-    });
-
-  program
-    .command("list-api-operations")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-api-operations")!.description)
-    .addOption(jsonInputOption())
-    .option("--root-file-path <path>", "Repo-relative OpenAPI root path (preferred service resource id)")
-    .option("--service-key <key>", "Internal service key alias")
-    .option("--include-manual", "Include MANUAL test_mode coverage in previews")
-    .option("--include-removed", "Include soft-deleted (REMOVED) operations")
-    .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.rootFilePath) body.rootFilePath = String(opts.rootFilePath);
-      if (opts.serviceKey) body.serviceKey = String(opts.serviceKey);
-      if (opts.includeManual) body.includeManual = true;
-      if (opts.includeRemoved) body.includeRemoved = true;
-      const merged = mergeBodies(body, opts.jsonInput);
-      console.log(await runTool("list-api-operations", merged, { postMcp }));
-    });
-
-  program
-    .command("get-api-operation-detail")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-api-operation-detail")!.description)
-    .addOption(jsonInputOption())
-    .option("--id <ulid>", "TestChimp operation id (ULID PK) — preferred")
+    .option("--id <ulid>", "TestChimp operation id (ULID PK) — preferred for detail")
     .option("--root-file-path <path>", "Repo-relative OpenAPI root path")
     .option("--service-key <key>", "Internal service key")
     .option("--oas-operation-id <id>", "OpenAPI operationId")
@@ -1756,8 +1776,7 @@ export function buildCliProgram(): Command {
       if (opts.pathTemplate) body.pathTemplate = String(opts.pathTemplate);
       if (opts.includeManual) body.includeManual = true;
       if (opts.includeRemoved) body.includeRemoved = true;
-      const merged = mergeBodies(body, opts.jsonInput);
-      console.log(await runTool("get-api-operation-detail", merged, { postMcp }));
+      console.log(await runTool("get-api-operations", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
   program
@@ -1771,10 +1790,18 @@ export function buildCliProgram(): Command {
     .option("--dataset <name>")
     .option("--llm-mode <mode>")
     .option("--environment <name>")
+    .option("--run-id <id>", "Fetch one run by id")
+    .option("--include-raw", "Include the raw performance payload")
+    .option("--release <label>")
+    .option("--folder-path <path>")
+    .option("--batch-invocation-id <id>")
+    .option("--group-by-batch")
     .option("--limit <n>", "Maximum results", (v) => Number(v))
     .option("--offset <n>", "Pagination offset", (v) => Number(v))
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
+      if (opts.runId) body.runId = String(opts.runId);
+      if (opts.includeRaw) body.includeRaw = true;
       if (opts.testchimpId) body.testchimpId = String(opts.testchimpId);
       if (opts.kind) body.kind = String(opts.kind);
       if (opts.branchName) body.branchName = String(opts.branchName);
@@ -1782,22 +1809,13 @@ export function buildCliProgram(): Command {
       if (opts.dataset) body.dataset = String(opts.dataset);
       if (opts.llmMode) body.llmMode = String(opts.llmMode);
       if (opts.environment) body.environment = String(opts.environment);
+      if (opts.release) body.release = String(opts.release);
+      if (opts.folderPath) body.folderPath = String(opts.folderPath);
+      if (opts.batchInvocationId) body.batchInvocationId = String(opts.batchInvocationId);
+      if (opts.groupByBatch) body.groupByBatch = true;
       if (opts.limit != null) body.limit = opts.limit;
       if (opts.offset != null) body.offset = opts.offset;
       console.log(await runTool("list-perf-runs", mergeBodies(body, opts.jsonInput), { postMcp }));
-    });
-
-  program
-    .command("get-perf-run")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-perf-run")!.description)
-    .addOption(jsonInputOption())
-    .option("--run-id <id>")
-    .option("--include-raw", "Include the raw performance payload")
-    .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.runId) body.runId = String(opts.runId);
-      if (opts.includeRaw) body.includeRaw = true;
-      console.log(await runTool("get-perf-run", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
   program
@@ -1815,17 +1833,14 @@ export function buildCliProgram(): Command {
       console.log(await runTool("list-perf-baselines", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
-  addAgentTraceabilityOptions(
-    program
-      .command("promote-perf-baseline")
-      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "promote-perf-baseline")!.description)
-      .addOption(jsonInputOption())
-      .option("--run-id <id>")
-      .option("--env-class <name>"),
-  ).action(async (opts) => {
-    const body: Record<string, unknown> = {
-      ...collectAgentTraceabilityFlags(opts),
-    };
+  program
+    .command("promote-perf-baseline")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "promote-perf-baseline")!.description)
+    .addOption(jsonInputOption())
+    .option("--run-id <id>")
+    .option("--env-class <name>")
+    .action(async (opts) => {
+    const body: Record<string, unknown> = {};
     if (opts.runId) body.runId = String(opts.runId);
     if (opts.envClass) body.envClass = String(opts.envClass);
     console.log(await runTool("promote-perf-baseline", mergeBodies(body, opts.jsonInput), { postMcp }));
@@ -2510,7 +2525,7 @@ export function buildCliProgram(): Command {
 
   program.addHelpText(
     "after",
-    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set (else read from the nearest .testchimp/mcp.json)\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  provision-ephemeral-environment-and-wait progress on stderr.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
+    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set (else read from the nearest .testchimp/mcp.json)\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  ephemeral-environment --action PROVISION progress on stderr.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
   );
 
   return program;
