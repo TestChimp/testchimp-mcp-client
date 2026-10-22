@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 86 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 86);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 86);
+  it("registers 87 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 87);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 87);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -266,7 +266,6 @@ describe("MCP API 2.0 consolidations", () => {
 
   it("does not register replaced 1.x tools", () => {
     const removed = [
-      "get-eaas-config",
       "provision-ephemeral-environment",
       "provision-ephemeral-environment-and-wait",
       "get-ephemeral-environment-status",
@@ -304,6 +303,17 @@ describe("MCP API 2.0 consolidations", () => {
     assert.equal(hints.readOnlyHint, false);
     assert.equal(hints.destructiveHint, true);
     assert.equal(hints.openWorldHint, true);
+  });
+
+  it("maps get-eaas-config as a standalone connectivity check", async () => {
+    assert.deepEqual((await capture("get-eaas-config", {})).request, {
+      path: "/api/mcp/get_eaas_config",
+      body: {},
+    });
+    const hints = annotationsForTool("get-eaas-config");
+    assert.equal(hints.readOnlyHint, true);
+    assert.equal(hints.destructiveHint, false);
+    assert.match(getToolDefinition("get-eaas-config")?.description ?? "", /connectivity check/);
   });
 
   it("maps ephemeral-environment actions", async () => {

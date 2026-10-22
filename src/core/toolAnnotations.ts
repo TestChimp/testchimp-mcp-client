@@ -64,6 +64,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "mark-plan-items-implementation-done": mutating("Mark Plan Items Implementation Done", { idempotent: true }),
   "update-plan-items-lifecycle-status": mutating("Update Plan Items Lifecycle Status", { idempotent: true }),
   "get-spec-lifecycle-details": readOnly("Get Spec Lifecycle Details"),
+  "get-eaas-config": readOnly("Get EaaS Config"),
   "ephemeral-environment": mutating("Ephemeral Environment", { openWorld: true }),
   "get-branch-specific-endpoint-config": readOnly("Get Branch Specific Endpoint Config"),
   "destroy-ephemeral-environment": mutating("Destroy Ephemeral Environment", {

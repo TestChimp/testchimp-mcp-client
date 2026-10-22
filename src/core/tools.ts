@@ -736,6 +736,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-eaas-config",
+    description:
+      "Return the project's BunnyShell (Environment-as-a-Service) settings. Secrets are never returned. " +
+      "Skill connectivity check: prefer this over ephemeral-environment action=CONFIG.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_eaas_config", {}),
+  },
+  {
     kebab: "ephemeral-environment",
     description:
       "BunnyShell (Environment-as-a-Service) lifecycle. action=CONFIG returns project settings (secrets never returned). " +

@@ -175,7 +175,7 @@ docker run -p 8080:8080 -e TESTCHIMP_MCP_PUBLIC_URL=https://mcp.example.com test
 
 ## MCP API 2.0.0
 
-`@testchimp/cli` **2.0.0** matches TestChimp MCP API 2.0.0 (86 tools, including all 69 `/api/mcp/*` paths plus bot/workspace helpers). Several 1.x tools were consolidated:
+`@testchimp/cli` **2.0.0** matches TestChimp MCP API 2.0.0 (87 tools, including all 70 `/api/mcp/*` paths plus bot/workspace helpers). Several 1.x tools were consolidated:
 
 | Old tool | New tool |
 |---|---|
@@ -188,7 +188,7 @@ docker run -p 8080:8080 -e TESTCHIMP_MCP_PUBLIC_URL=https://mcp.example.com test
 | `get-perf-run` | `list-perf-runs` (`runId`) |
 | `get-release-details` | `get-release` (`version` + `detail=GATE`; omit `version` to list) |
 
-`destroy-ephemeral-environment` is unchanged and stays destructive. Full mapping: [CHANGELOG.md](./CHANGELOG.md) and [MIGRATION.md](./MIGRATION.md).
+`get-eaas-config` is kept as a standalone connectivity-check tool. `destroy-ephemeral-environment` is unchanged and stays destructive. Full mapping: [CHANGELOG.md](./CHANGELOG.md) and [MIGRATION.md](./MIGRATION.md).
 
 ## Migration from `testchimp-mcp-client`
 

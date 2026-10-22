@@ -997,6 +997,16 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-eaas-config")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-eaas-config")!.description)
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies({}, opts.jsonInput);
+      const out = await runTool("get-eaas-config", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("ephemeral-environment")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "ephemeral-environment")!.description)
     .addOption(jsonInputOption())

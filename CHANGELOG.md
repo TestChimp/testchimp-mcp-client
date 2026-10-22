@@ -2,7 +2,7 @@
 
 ## 2.0.0
 
-Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 86 tools.
+Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 87 tools.
 
 ### Added
 
@@ -21,7 +21,7 @@ Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 86
 
 ### Removed (replaced by the tools above)
 
-- `get-eaas-config`, `provision-ephemeral-environment`, `provision-ephemeral-environment-and-wait`, `get-ephemeral-environment-status`
+- `provision-ephemeral-environment`, `provision-ephemeral-environment-and-wait`, `get-ephemeral-environment-status`
 - `report-dast-findings`, `report-sast-findings`, `report-deps-findings`, `report-secrets-findings`
 - `list-workflow-executions`, `get-workflow-execution`, `get-last-run-workflow-detail`
 - `get-policy`, `list-policies`
@@ -31,7 +31,7 @@ Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 86
 - `get-batch-view-url`, `get-suite-execution-stats`, `get-perf-run`, `get-release-details`
 - `create-issue`, `update-issue-status`
 
-`destroy-ephemeral-environment` is unchanged and stays destructive.
+`get-eaas-config` is kept as a standalone tool (`POST /api/mcp/get_eaas_config`, empty body) — the skill connectivity check. `destroy-ephemeral-environment` is unchanged and stays destructive.
 
 ### Changed
 

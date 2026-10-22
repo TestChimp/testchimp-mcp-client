@@ -18,7 +18,7 @@ Tool names and request shapes follow TestChimp MCP API 2.0.0. Update skills, pro
 
 | Old tool | New tool | Notes |
 |---|---|---|
-| `get-eaas-config` | `ephemeral-environment` | `action=CONFIG` |
+| `get-eaas-config` | unchanged | standalone connectivity check; `POST /api/mcp/get_eaas_config` |
 | `provision-ephemeral-environment` | `ephemeral-environment` | `action=PROVISION`, `wait=false` |
 | `provision-ephemeral-environment-and-wait` | `ephemeral-environment` | `action=PROVISION` (`wait` defaults true) |
 | `get-ephemeral-environment-status` | `ephemeral-environment` | `action=STATUS`, `bnsEnvironmentId` |
