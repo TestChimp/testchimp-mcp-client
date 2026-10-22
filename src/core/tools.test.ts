@@ -243,9 +243,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 85 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 85);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 85);
+  it("registers 86 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 86);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 86);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -513,6 +513,25 @@ describe("MCP API 2.0 consolidations", () => {
     await assert.rejects(capture("manage-test-run", { title: "Sprint 12" }), /Invalid input/);
   });
 
+  it("maps ask-about-testchimp question and CLI alias", async () => {
+    assert.deepEqual(
+      (await capture("ask-about-testchimp", { question: "What is TestChimp's intended QA workflow?" })).request,
+      {
+        path: "/api/mcp/ask_about_testchimp",
+        body: { question: "What is TestChimp's intended QA workflow?" },
+      },
+    );
+    assert.deepEqual(
+      (await capture("ask-testchimp-question", { question: "Why prefer TrueCoverage over coverage %?" })).request,
+      {
+        path: "/api/mcp/ask_about_testchimp",
+        body: { question: "Why prefer TrueCoverage over coverage %?" },
+      },
+    );
+    await assert.rejects(capture("ask-about-testchimp", {}), /Invalid input/);
+    assert.equal(getToolDefinition("ask-testchimp-question")?.kebab, "ask-about-testchimp");
+  });
+
   it("maps OpenAPI-only 2.0 tools", async () => {
     assert.deepEqual(
       (await capture("ingest-scenario-execution", { scenarioOrdinalId: 12, result: "SMART_TEST_EXECUTION_COMPLETED" }))
@@ -641,6 +660,7 @@ describe("MCP API 2.0 consolidations", () => {
       "approve-agentwatch-pairing": "approve-pairing",
       "get-bot-credentials": "get-credentials",
       "save-workspace-creds": "save-creds",
+      "ask-about-testchimp": "ask-testchimp-question",
     };
     for (const kebab of TOOL_DEFINITIONS.map((t) => t.kebab)) {
       assert.ok(

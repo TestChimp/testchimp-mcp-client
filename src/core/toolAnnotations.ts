@@ -41,6 +41,7 @@ function mutating(
 /** Complete annotations for every tool in TOOL_DEFINITIONS, keyed by kebab-case name. */
 export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "get-org-capabilities": readOnly("Get Org Capabilities"),
+  "ask-about-testchimp": readOnly("Ask About TestChimp", true),
   "get-requirement-coverage": readOnly("Get Requirement Coverage"),
   "list-test-planning-trends": readOnly("List Test Planning Trends"),
   "get-execution-history": readOnly("Get Execution History"),

@@ -1645,6 +1645,26 @@ export function buildCliProgram(): Command {
       console.log(await runTool("get-policies", mergeBodies(body, opts.jsonInput), { postMcp }));
     });
 
+  program
+    .command("ask-about-testchimp")
+    .alias("ask-testchimp-question")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "ask-about-testchimp")!.description)
+    .addOption(jsonInputOption())
+    .argument("[question]", "Open-ended question about TestChimp")
+    .option("--question <text>", "Open-ended question about TestChimp")
+    .action(async (questionArg, opts) => {
+      const body: Record<string, unknown> = {};
+      const fromFlag = typeof opts.question === "string" ? opts.question.trim() : "";
+      const fromArg = typeof questionArg === "string" ? questionArg.trim() : "";
+      if (fromFlag) body.question = fromFlag;
+      else if (fromArg) body.question = fromArg;
+      const merged = mergeBodies(body, opts.jsonInput) as { question?: string };
+      if (!(merged.question ?? "").toString().trim()) {
+        throw new Error("question is required (--question, positional, or --json-input)");
+      }
+      console.log(await runTool("ask-about-testchimp", merged, { postMcp }));
+    });
+
   for (const kebab of [
     "get-org-capabilities",
     "list-workflow-catalog",

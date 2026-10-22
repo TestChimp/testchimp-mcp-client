@@ -1484,6 +1484,16 @@ export const feedbackCategorySchema = z.enum([
   "OTHER",
 ]);
 
+/**
+ * McpAskAboutTestchimpRequest — modeled from the live hosted MCP tools/list
+ * (Glama / mcp.testchimp.io, added 2026-10-21). Aware OpenAPI on
+ * cursor/mcp-tool-consolidation-0fc3 was not readable from this client.
+ * Hosted `botId` / `projectApiKey` are binding args, not request-body fields.
+ */
+export const askAboutTestchimpInput = z.object({
+  question: z.string().trim().min(1).max(10_000),
+});
+
 export const sendFeedbackInput = z.object({
   category: feedbackCategorySchema.default("OTHER"),
   message: z.string().trim().min(1).max(10_000),

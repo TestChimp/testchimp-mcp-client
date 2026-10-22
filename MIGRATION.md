@@ -53,6 +53,7 @@ New tools and 2.0 request shapes:
 - `upsert-release` — `POST /api/mcp/upsert_release`. `version` is required. Optional: `gitCommitSha`, `priorReleaseVersion`, `releaseType`, `lifecycleStatus`, `environment` (create only), `dueDateMillis` and `branchId` (update only). Response `{ release, created }`.
 - `manage-test-run` — `POST /api/mcp/manage_test_run`. Omit `id` to create (`release` required). Optional: `title`, `environment` (server defaults QA), `dueDate` (int64 millis string), `status` (`ACTIVE` / `COMPLETED` / `ARCHIVED`), `batchInvocationIds[]`, `commitRange` `FIND`|`LINK` (sent as `MCP_TEST_RUN_COMMIT_RANGE_*`), `limitWhenNoPrior`. Response includes `id`, `summary`, `created`, link counts, commit SHAs, `discoveredBatchInvocationIds` and `unlinkedBatchInvocationIds`.
 - Also new: `ingest-scenario-execution`, `list-execution-job-dimension-values`, `list-test-planning-trends`, `select-smart-smoke-tests`.
+- `ask-about-testchimp` — `POST /api/mcp/ask_about_testchimp`. Request `{ question }` (required). CLI/skill alias `ask-testchimp-question`. Response JSON is returned as-is (OpenAPI response fields unverified from this client).
 - `get-org-capabilities` — includes `planLabel`, `trial` / `freeTrialActive`, and `chimphandsCredits`.
 - `get-release` — `version` plus optional `detail=GATE`. Omit `version` to list (`environment`, `pageSize`, `pageToken`, `excludeArchived`).
 

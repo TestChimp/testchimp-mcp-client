@@ -296,6 +296,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_org_capabilities", {}),
   },
   {
+    kebab: "ask-about-testchimp",
+    description:
+      "Last-resort open-ended question about TestChimp (purpose, philosophy, intended testing approach). " +
+      "Answers from the same docs knowledge base as docs.testchimp.io Ask AI. Prefer this skill's " +
+      "references/ and agent-quick-answers first; use only when those do not cover platform intent / " +
+      "approach clarifications needed to run workflows in TestChimp's intended spirit. You may relay " +
+      "the answer to the user when education helps. question: the open-ended question (required). " +
+      "CLI/skill alias: ask-testchimp-question. Response JSON is returned as-is (OpenAPI response " +
+      "fields unverified from this client).",
+    inputSchema: S.askAboutTestchimpInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.askAboutTestchimpInput>;
+      return postMcp("/api/mcp/ask_about_testchimp", { question: a.question });
+    },
+  },
+  {
     kebab: "get-requirement-coverage",
     description:
       "Fetch requirement (scenario) coverage under an optional platform-rooted folder scope (tests/... or plans/...). " +
@@ -1900,8 +1916,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 
 const TOOL_BY_KEBAB = new Map(TOOL_DEFINITIONS.map((t) => [t.kebab, t]));
 
+/** CLI / skill aliases that resolve to a registered kebab MCP tool. */
+export const TOOL_NAME_ALIASES: Record<string, string> = {
+  "ask-testchimp-question": "ask-about-testchimp",
+};
+
+function resolveToolKebab(kebab: string): string {
+  return TOOL_NAME_ALIASES[kebab] ?? kebab;
+}
+
 export function getToolDefinition(kebab: string): ToolDefinition | undefined {
-  return TOOL_BY_KEBAB.get(kebab);
+  return TOOL_BY_KEBAB.get(resolveToolKebab(kebab));
 }
 
 export async function runTool(
@@ -1909,7 +1934,8 @@ export async function runTool(
   rawArgs: unknown,
   ctx: ToolContext
 ): Promise<string> {
-  const def = TOOL_BY_KEBAB.get(kebab);
+  const resolved = resolveToolKebab(kebab);
+  const def = TOOL_BY_KEBAB.get(resolved);
   if (!def) throw new Error(`Unknown tool: ${kebab}`);
   const raw = rawArgs === undefined || rawArgs === null ? {} : rawArgs;
   const parsed = def.inputSchema.safeParse(raw);
