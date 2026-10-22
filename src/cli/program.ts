@@ -7,6 +7,12 @@ import { runTool } from "../core/tools.js";
 import { TOOL_DEFINITIONS } from "../core/tools.js";
 import { resolveGitHeadSha } from "../core/gitSha.js";
 import { PACKAGE_VERSION } from "../core/version.js";
+import {
+  addReleaseLabelOption,
+  cliReleaseLabel,
+  cliReleaseVersionField,
+  installStrayReleaseVersionGuard,
+} from "./releaseFlag.js";
 
 export { PACKAGE_VERSION };
 
@@ -147,7 +153,11 @@ function stderrProgress(msg: string): void {
 
 export function buildCliProgram(): Command {
   const program = new Command();
-  program.name("testchimp").description("TestChimp CLI — call project MCP HTTP APIs").version(PACKAGE_VERSION);
+  program
+    .name("testchimp")
+    .description("TestChimp CLI — call project MCP HTTP APIs")
+    .version(PACKAGE_VERSION, "-V, --version", "Print the CLI version");
+  installStrayReleaseVersionGuard(program);
   program.option(
     "--bot <botId>",
     "QA bots: use this bot's stored project binding (~/.testchimp/bots/<botId>.json from `bot save-binding`)",
@@ -204,31 +214,35 @@ export function buildCliProgram(): Command {
     relativeWindow?: string;
     platform?: string;
     release?: string;
+    releaseVersion?: string;
     branchName?: string;
   }): Record<string, unknown> | undefined {
     const scope: Record<string, unknown> = {};
     if (opts.environment) scope.environment = String(opts.environment);
     if (opts.relativeWindow) scope.timeWindow = { relativeWindow: String(opts.relativeWindow) };
     if (opts.platform) scope.platform = String(opts.platform);
-    if (opts.release) scope.release = String(opts.release);
+    const release = cliReleaseLabel(opts);
+    if (release) scope.release = release;
     if (opts.branchName) scope.branchName = String(opts.branchName);
     return Object.keys(scope).length > 0 ? scope : undefined;
   }
 
   function addTruecoverageScopeFlags(cmd: Command): Command {
-    return cmd
-      .option("--environment <s>", "RUM environment tag (seeds base scope)")
-      .option("--relative-window <duration>", 'Duration string ending in s, e.g. 604800s (seeds base scope timeWindow)')
-      .option("--platform <web|ios|android>", "Platform filter on base scope (aliases or WEB_/IOS_/ANDROID_EXECUTION_PLATFORM)")
-      .option("--release <s>", "Optional release filter on base scope")
-      .option("--branch-name <s>", "Optional branchName on base scope");
+    return addReleaseLabelOption(
+      cmd
+        .option("--environment <s>", "RUM environment tag (seeds base scope)")
+        .option("--relative-window <duration>", 'Duration string ending in s, e.g. 604800s (seeds base scope timeWindow)')
+        .option("--platform <web|ios|android>", "Platform filter on base scope (aliases or WEB_/IOS_/ANDROID_EXECUTION_PLATFORM)"),
+      "Optional release filter on base scope",
+    ).option("--branch-name <s>", "Optional branchName on base scope");
   }
 
-  program
-    .command("get-requirement-coverage")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-requirement-coverage")!.description)
-    .addOption(jsonInputOption())
-    .option("--release <s>")
+  addReleaseLabelOption(
+    program
+      .command("get-requirement-coverage")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-requirement-coverage")!.description)
+      .addOption(jsonInputOption()),
+  )
     .option("--environment <s>")
     .option("--branch-name <s>")
     .option("--platform <web|ios|android>")
@@ -246,7 +260,8 @@ export function buildCliProgram(): Command {
     .option("--folder-path <path>", "folder under tests root, slash-separated")
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
-      if (opts.release) body.release = opts.release;
+      const release = cliReleaseLabel(opts);
+      if (release) body.release = release;
       if (opts.environment) body.environment = opts.environment;
       if (opts.branchName) body.branchName = opts.branchName;
       if (opts.platform) body.platform = opts.platform;
@@ -283,13 +298,15 @@ export function buildCliProgram(): Command {
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-test-planning-trends")!.description)
     .addOption(jsonInputOption())
     .option("--release <s>")
+    .option("--release-version <label>", "Alias for --release")
     .option("--environment <s>")
     .option("--branch-name <s>")
     .option("--branch-id <id>")
     .option("--platform <web|ios|android>")
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
-      if (opts.release) body.release = String(opts.release);
+      const release = cliReleaseLabel(opts);
+      if (release) body.release = release;
       if (opts.environment) body.environment = String(opts.environment);
       if (opts.branchName) body.branchName = String(opts.branchName);
       if (opts.branchId) body.branchId = String(opts.branchId);
@@ -302,6 +319,7 @@ export function buildCliProgram(): Command {
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-execution-history")!.description)
     .addOption(jsonInputOption())
     .option("--release <s>")
+    .option("--release-version <label>", "Alias for --release")
     .option("--environment <s>")
     .option("--branch-name <s>")
     .option("--scenario-id <id>")
@@ -312,7 +330,8 @@ export function buildCliProgram(): Command {
     .option("--aggregate", "Return suite timing stats instead of per-test history")
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
-      if (opts.release) body.release = opts.release;
+      const release = cliReleaseLabel(opts);
+      if (release) body.release = release;
       if (opts.environment) body.environment = opts.environment;
       if (opts.branchName) body.branchName = opts.branchName;
       if (opts.scenarioId) body.scenarioId = opts.scenarioId;
@@ -335,6 +354,7 @@ export function buildCliProgram(): Command {
     .option("--scenario-id <id>")
     .option("--environment <s>")
     .option("--release <s>")
+    .option("--release-version <label>", "Alias for --release")
     .option("--branch-name <s>")
     .option("--branch-id <id>")
     .option("--dimension <dimension>", "PLATFORM_EXECUTION_JOB_FILTER_DIMENSION | …")
@@ -342,7 +362,8 @@ export function buildCliProgram(): Command {
       const body: Record<string, unknown> = {};
       if (opts.scenarioId) body.scenarioId = String(opts.scenarioId);
       if (opts.environment) body.environment = String(opts.environment);
-      if (opts.release) body.release = String(opts.release);
+      const release = cliReleaseLabel(opts);
+      if (release) body.release = release;
       if (opts.branchName) body.branchName = String(opts.branchName);
       if (opts.branchId) body.branchId = String(opts.branchId);
       if (opts.dimension) body.dimension = String(opts.dimension);
@@ -357,6 +378,7 @@ export function buildCliProgram(): Command {
     .option("--external-id <id>")
     .requiredOption("--result <status>", "SMART_TEST_EXECUTION_* status")
     .option("--release <s>")
+    .option("--release-version <label>", "Alias for --release")
     .option("--test-run-label <s>")
     .option("--environment <s>")
     .option("--platform <web|ios|android>")
@@ -365,7 +387,8 @@ export function buildCliProgram(): Command {
       const body: Record<string, unknown> = { result: String(opts.result).trim() };
       if (opts.scenarioOrdinalId) body.scenarioOrdinalId = String(opts.scenarioOrdinalId);
       if (opts.externalId) body.externalId = String(opts.externalId);
-      if (opts.release) body.release = String(opts.release);
+      const release = cliReleaseLabel(opts);
+      if (release) body.release = release;
       if (opts.testRunLabel) body.testRunLabel = String(opts.testRunLabel);
       if (opts.environment) body.environment = String(opts.environment);
       if (opts.platform) body.platform = String(opts.platform);
@@ -536,6 +559,7 @@ export function buildCliProgram(): Command {
     .addOption(jsonInputOption())
     .option("--named-test-run-id <id>", "named test run id")
     .option("--release <label>", "release catalog version / label")
+    .option("--release-version <label>", "Alias for --release")
     .option(
       "--plans-path <path>",
       "platform plans folder or .md file (e.g. plans/scenarios/checkout or plans/scenarios/checkout/login.md)",
@@ -543,7 +567,8 @@ export function buildCliProgram(): Command {
     .action(async (opts) => {
       const body: Record<string, unknown> = {};
       if (opts.namedTestRunId) body.namedTestRunId = String(opts.namedTestRunId).trim();
-      if (opts.release) body.release = String(opts.release).trim();
+      const release = cliReleaseLabel(opts);
+      if (release) body.release = release;
       if (opts.plansPath) body.plansPath = String(opts.plansPath).trim();
       const merged = mergeBodies(body, opts.jsonInput) as Record<string, unknown>;
       for (const key of ["namedTestRunId", "release", "plansPath"] as const) {
@@ -687,6 +712,7 @@ export function buildCliProgram(): Command {
     .option("--assignees <csv>", "Comma-separated assignee user ids")
     .option("--labels <csv>", "Comma-separated labels")
     .option("--release <label>", "Release label")
+    .option("--release-version <label>", "Alias for --release")
     .option("--ordinal-ids <csv>", "Issue ordinal ids")
     .option("--limit <n>", "Maximum results", (v) => parseInt(v, 10))
     .option("--offset <n>", "Pagination offset", (v) => parseInt(v, 10))
@@ -709,7 +735,8 @@ export function buildCliProgram(): Command {
       if (opts.labels) {
         body.labels = String(opts.labels).split(",").map((s: string) => s.trim()).filter(Boolean);
       }
-      if (opts.release) body.release = String(opts.release).trim();
+      const release = cliReleaseLabel(opts);
+      if (release) body.release = release;
       if (opts.ordinalIds) {
         body.ordinalIds = String(opts.ordinalIds).split(",").map((s: string) => s.trim()).filter(Boolean);
       }
@@ -1234,19 +1261,21 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  program
-    .command("get-release")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-release")!.description)
-    .addOption(jsonInputOption())
-    .option("--version <version>", "Release version / label (omit to list)")
+  addReleaseLabelOption(
+    program
+      .command("get-release")
+      .alias("get-release-details")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-release")!.description)
+      .addOption(jsonInputOption()),
+    "Release version / label (omit to list). --release-version is an alias. --version / -V prints the CLI version only.",
+  )
     .option("--detail <detail>", "CATALOG (default) or GATE")
     .option("--environment <name>", "List filter: environment tag")
     .option("--page-size <n>", "List page size")
     .option("--page-token <token>", "List page token")
     .option("--exclude-archived", "List: omit archived releases")
     .action(async (opts) => {
-      const body: Record<string, unknown> = {};
-      if (opts.version) body.version = String(opts.version).trim();
+      const body: Record<string, unknown> = { ...cliReleaseVersionField(opts) };
       if (opts.detail) body.detail = String(opts.detail).trim().toUpperCase();
       if (opts.environment) body.environment = String(opts.environment).trim();
       if (opts.pageSize != null) body.pageSize = Number(opts.pageSize);
@@ -1258,11 +1287,13 @@ export function buildCliProgram(): Command {
       console.log(out);
     });
 
-  program
-    .command("upsert-release")
-    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-release")!.description)
-    .addOption(jsonInputOption())
-    .option("--version <version>", "Release version / label")
+  addReleaseLabelOption(
+    program
+      .command("upsert-release")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "upsert-release")!.description)
+      .addOption(jsonInputOption()),
+    "Release version / label. --release-version is an alias. --version / -V prints the CLI version only.",
+  )
     .option("--git-commit-sha <sha>", "Cut git SHA")
     .option("--git-sha <sha>", "Alias for --git-commit-sha")
     .option("--prior-release-version <version>", "Previous release label")
@@ -1272,8 +1303,7 @@ export function buildCliProgram(): Command {
     .option("--due-date-millis <ms>", "Due date as UTC epoch millis (update only)")
     .option("--branch-id <id>", "Branch id (update only)")
     .action(async (opts) => {
-    const body: Record<string, unknown> = {};
-    if (opts.version) body.version = String(opts.version).trim();
+    const body: Record<string, unknown> = { ...cliReleaseVersionField(opts) };
     if (opts.gitCommitSha) body.gitCommitSha = String(opts.gitCommitSha).trim();
     else if (opts.gitSha) body.gitCommitSha = String(opts.gitSha).trim();
     if (opts.priorReleaseVersion) body.priorReleaseVersion = String(opts.priorReleaseVersion).trim();
@@ -1284,7 +1314,7 @@ export function buildCliProgram(): Command {
     if (opts.branchId) body.branchId = String(opts.branchId).trim();
     const merged = mergeBodies(body, opts.jsonInput) as { version?: string };
     if (!merged.version || String(merged.version).trim() === "") {
-      throw new Error("version is required (--version or --json-input)");
+      throw new Error("version is required (--release or --json-input)");
     }
     console.log(await runTool("upsert-release", merged, { postMcp }));
   });
@@ -1295,6 +1325,7 @@ export function buildCliProgram(): Command {
     .addOption(jsonInputOption())
     .option("--id <id>", "Test run id (omit to create)")
     .option("--release <label>", "Release label (required to create)")
+    .option("--release-version <label>", "Alias for --release")
     .option("--title <title>", "Test run title")
     .option("--environment <name>", "Environment tag (server defaults QA)")
     .option("--due-date <date>", "Due date (YYYY-MM-DD, ISO datetime, or epoch millis)")
@@ -1305,7 +1336,8 @@ export function buildCliProgram(): Command {
     .action(async (opts) => {
     const body: Record<string, unknown> = {};
     if (opts.id) body.id = String(opts.id).trim();
-    if (opts.release) body.release = String(opts.release).trim();
+    const release = cliReleaseLabel(opts);
+    if (release) body.release = release;
     if (opts.title) body.title = String(opts.title).trim();
     if (opts.environment) body.environment = String(opts.environment).trim();
     if (opts.dueDate != null) {
@@ -1793,6 +1825,7 @@ export function buildCliProgram(): Command {
     .option("--run-id <id>", "Fetch one run by id")
     .option("--include-raw", "Include the raw performance payload")
     .option("--release <label>")
+    .option("--release-version <label>", "Alias for --release")
     .option("--folder-path <path>")
     .option("--batch-invocation-id <id>")
     .option("--group-by-batch")
@@ -1809,7 +1842,8 @@ export function buildCliProgram(): Command {
       if (opts.dataset) body.dataset = String(opts.dataset);
       if (opts.llmMode) body.llmMode = String(opts.llmMode);
       if (opts.environment) body.environment = String(opts.environment);
-      if (opts.release) body.release = String(opts.release);
+      const release = cliReleaseLabel(opts);
+      if (release) body.release = release;
       if (opts.folderPath) body.folderPath = String(opts.folderPath);
       if (opts.batchInvocationId) body.batchInvocationId = String(opts.batchInvocationId);
       if (opts.groupByBatch) body.groupByBatch = true;
@@ -2525,7 +2559,7 @@ export function buildCliProgram(): Command {
 
   program.addHelpText(
     "after",
-    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set (else read from the nearest .testchimp/mcp.json)\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  ephemeral-environment --action PROVISION progress on stderr.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
+    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set (else read from the nearest .testchimp/mcp.json)\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  ephemeral-environment --action PROVISION progress on stderr.\n\nRelease labels:\n  Use --release <label> (alias --release-version). --version / -V prints the CLI version only.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
   );
 
   return program;

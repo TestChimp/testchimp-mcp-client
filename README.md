@@ -55,6 +55,9 @@ testchimp ephemeral-environment --action PROVISION --branch-name feat --no-wait
 testchimp report-scan-findings --id scan-1 --scanner DAST --report-file zap.json
 testchimp upsert-issue --title "Broken checkout"
 testchimp list-issues --status ACTIVE --limit 10
+testchimp get-release --release 1.2.0
+testchimp upsert-release --release 1.2.0
+testchimp manage-test-run --release 1.2.0 --title "Sprint 12"
 ```
 
 - **stdout:** API response JSON.
@@ -62,6 +65,7 @@ testchimp list-issues --status ACTIVE --limit 10
 - **performance gate:** `compare-perf-to-baseline` still prints its JSON response but exits nonzero when `regressed` is `true` (top-level or under `comparison`).
 - **Meetings:** `list-meetings` covers team-wide Meeting Bots meetings only (same filters as the Meetings page). `--include-filter-options` returns label / participant / domain catalogs. `--from` / `--to` take `YYYY-MM-DD` (inclusive local days), ISO datetimes, or epoch millis; `--label`, `--participant`, `--domain` are repeatable or comma-separated.
 - **Flags:** default for each subcommand; **`--json-input '<json>'`** or **`--json-input @file.json`** merges over flags (JSON wins on conflicts). Use JSON for nested bodies (e.g. TrueCoverage scopes).
+- **Release labels:** use **`--release <label>`** (alias **`--release-version`**) on `get-release`, `upsert-release`, `manage-test-run`, and other release-filter commands. **`--version` / `-V`** print the CLI version only.
 
 ## Authentication and environment
 

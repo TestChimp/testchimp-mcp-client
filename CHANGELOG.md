@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1
+
+### Fixed
+
+- CLI `--version <label>` on release commands was captured as the global version flag and printed the CLI version instead of calling the API. Use `--release <label>` (alias `--release-version`) for a release catalog version. `--version` / `-V` only print the CLI version. A stray `--version <label>` on a release command errors and tells you to use `--release`. MCP tool field names are unchanged (`version` on `get-release` / `upsert-release`).
+
+`server.json` version is 2.0.1. Do not run `mcp-publisher` from this change.
+
 ## 2.0.0
 
 Breaking client update for TestChimp MCP API 2.0.0 (Aware PRs #496 and #497). 87 tools.
