@@ -319,7 +319,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "(aggregates branch copies; execution jobs deduped by stable hash of tests-root-relative path + test name). " +
       "Pass branchName only when results must be limited to one Git branch. Optional platform (web|ios|android) filters rollup. " +
       "For top-N gap recommendations: set scenarioLifecycleStatuses, considerScenarioPriority / considerSemanticCoverage, and limit; " +
-      "prefer response rankedScenarios (gaps only). Server excludes verification_strategy=manual by default (autoVerificationOnly).",
+      "prefer response rankedScenarios (gaps only). Ranked/limit mode includes non-covered plan scenarios even when no SmartTests are linked " +
+      "(folderPath plans or plans/stories|scenarios). Server excludes verification_strategy=manual by default (autoVerificationOnly).",
     inputSchema: S.listCoverageInput,
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_requirement_coverage", listCoverageBody(args as z.infer<typeof S.listCoverageInput>));
