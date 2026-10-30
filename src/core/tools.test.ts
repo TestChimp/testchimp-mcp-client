@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 88 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 88);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 88);
+  it("registers 89 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 89);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 89);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -483,6 +483,39 @@ describe("MCP API 2.0 consolidations", () => {
       {
         path: "/api/mcp/upsert_release",
         body: { version: "1.2.0", gitCommitSha: "abc", dueDateMillis: "1790000000000", branchId: "br-1" },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("upsert-release", {
+          version: "1.2.0",
+          focusAreas: [{ folderPath: ["plans", "scenarios", "checkout"], artifactType: "SCENARIO_ARTIFACT" }],
+        })
+      ).request,
+      {
+        path: "/api/mcp/upsert_release",
+        body: {
+          version: "1.2.0",
+          focusAreas: [{ folderPath: ["plans", "scenarios", "checkout"], artifactType: "SCENARIO_ARTIFACT" }],
+        },
+      },
+    );
+  });
+
+  it("maps create-security-scan", async () => {
+    assert.deepEqual(
+      (
+        await capture("create-security-scan", {
+          version: "1.2.0",
+          sastCheckConfig: { scope: "RELEASE_SCOPED", rules: "STANDARD" },
+        })
+      ).request,
+      {
+        path: "/api/mcp/create_security_scan",
+        body: {
+          version: "1.2.0",
+          sastCheckConfig: { scope: "RELEASE_SCOPED", rules: "STANDARD" },
+        },
       },
     );
   });

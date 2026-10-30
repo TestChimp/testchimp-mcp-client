@@ -996,7 +996,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Create or update a release catalog entry. version is required. Optional gitCommitSha, " +
       "priorReleaseVersion, releaseType (MAJOR|MINOR|HOTFIX), lifecycleStatus, environment (create only), " +
-      "dueDateMillis and branchId (update only, int64 strings). Response is { release, created }.",
+      "dueDateMillis and branchId (update only, int64 strings), focusAreas (plans FileScope entries; " +
+      "non-empty replaces; omit on create = full scenario set; omit/empty on update = unchanged). " +
+      "Response is { release, created }.",
     inputSchema: S.upsertReleaseInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.upsertReleaseInput>;
@@ -1010,7 +1012,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.dueDateMillis != null) body.dueDateMillis = dueDateToInt64String(a.dueDateMillis);
       const branchId = asInt64String(a.branchId);
       if (branchId) body.branchId = branchId;
+      if (a.focusAreas?.length) body.focusAreas = a.focusAreas;
       return postMcp("/api/mcp/upsert_release", body);
+    },
+  },
+  {
+    kebab: "create-security-scan",
+    description:
+      "Create a queued security scan on a release. version (release label) is required. Provide " +
+      "exactly one of dastCheckConfig, sastCheckConfig, depsCheckConfig, or leaksCheckConfig. " +
+      "Returns { scanId, prompt }. Then run /testchimp run security scan for <scanId> " +
+      "(run-release-check). Ask the user before creating DAST scans.",
+    inputSchema: S.createSecurityScanInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.createSecurityScanInput>;
+      const body: Record<string, unknown> = { version: a.version.trim() };
+      if (a.dastCheckConfig) body.dastCheckConfig = a.dastCheckConfig;
+      if (a.sastCheckConfig) body.sastCheckConfig = a.sastCheckConfig;
+      if (a.depsCheckConfig) body.depsCheckConfig = a.depsCheckConfig;
+      if (a.leaksCheckConfig) body.leaksCheckConfig = a.leaksCheckConfig;
+      return postMcp("/api/mcp/create_security_scan", body);
     },
   },
   {

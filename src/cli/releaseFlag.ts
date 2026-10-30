@@ -12,6 +12,7 @@ export const RELEASE_LABEL_COMMANDS = new Set([
   "get-release",
   "get-release-details",
   "upsert-release",
+  "create-security-scan",
   "manage-test-run",
   "get-requirement-coverage",
   "list-test-planning-trends",

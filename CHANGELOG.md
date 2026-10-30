@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.3
+
+### Added
+
+- `create-security-scan` — `POST /api/mcp/create_security_scan`. Create a queued release security scan (`version` + exactly one of `dastCheckConfig` / `sastCheckConfig` / `depsCheckConfig` / `leaksCheckConfig`). Returns `{ scanId, prompt }` for `/testchimp run security scan`.
+- `upsert-release` optional `focusAreas` (plans `FileScope` entries). Omit or empty = full scenario set.
+
+`server.json` version is 2.0.3. Do not run `mcp-publisher` from this change.
+
 ## 2.0.2
 
 ### Added

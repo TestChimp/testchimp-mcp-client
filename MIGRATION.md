@@ -50,7 +50,8 @@ Tool names and request shapes follow TestChimp MCP API 2.0.0. Update skills, pro
 New tools and 2.0 request shapes:
 
 - `list-issues` — search/filter issues.
-- `upsert-release` — `POST /api/mcp/upsert_release`. `version` is required. Optional: `gitCommitSha`, `priorReleaseVersion`, `releaseType`, `lifecycleStatus`, `environment` (create only), `dueDateMillis` and `branchId` (update only). Response `{ release, created }`.
+- `upsert-release` — `POST /api/mcp/upsert_release`. `version` is required. Optional: `gitCommitSha`, `priorReleaseVersion`, `releaseType`, `lifecycleStatus`, `environment` (create only), `dueDateMillis` and `branchId` (update only), `focusAreas` (CLI ≥ 2.0.3). Response `{ release, created }`.
+- `create-security-scan` — `POST /api/mcp/create_security_scan` (CLI ≥ 2.0.3). `version` + exactly one check config. Response `{ scanId, prompt }`.
 - `manage-test-run` — `POST /api/mcp/manage_test_run`. Omit `id` to create (`release` required). Optional: `title`, `environment` (server defaults QA), `dueDate` (int64 millis string), `status` (`ACTIVE` / `COMPLETED` / `ARCHIVED`), `batchInvocationIds[]`, `commitRange` `FIND`|`LINK` (sent as `MCP_TEST_RUN_COMMIT_RANGE_*`), `limitWhenNoPrior`. Response includes `id`, `summary`, `created`, link counts, commit SHAs, `discoveredBatchInvocationIds` and `unlinkedBatchInvocationIds`.
 - Also new: `ingest-scenario-execution`, `list-execution-job-dimension-values`, `list-test-planning-trends`, `select-smart-smoke-tests`.
 - `ask-about-testchimp` — `POST /api/mcp/ask_about_testchimp`. Request `{ question }` (required, max 2000 characters; server limit 20 questions per project per hour). CLI/skill alias `ask-testchimp-question`. The 0.1.94 client work was never pushed; this matches that server spec. Response JSON is returned as-is (OpenAPI response fields unverified from this client).

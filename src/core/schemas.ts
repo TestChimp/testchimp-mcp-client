@@ -390,6 +390,14 @@ export const listIssuesInput = z.object({
 
 export const releaseTypeSchema = z.enum(["UNKNOWN_RELEASE_TYPE", "MAJOR", "MINOR", "HOTFIX"]);
 
+export const releaseFocusAreaSchema = z.object({
+  folderPath: z.array(z.string()).optional(),
+  ids: z.array(z.string().min(1)).optional(),
+  artifactType: z
+    .enum(["UNKNOWN_ARTIFACT_TYPE", "USER_STORY_ARTIFACT", "SCENARIO_ARTIFACT"])
+    .optional(),
+});
+
 export const upsertReleaseInput = z.object({
   version: z.string().min(1),
   gitCommitSha: z.string().min(1).optional(),
@@ -404,7 +412,36 @@ export const upsertReleaseInput = z.object({
   dueDateMillis: z.union([z.string().min(1), z.coerce.number()]).optional(),
   /** Update only; int64 string on the wire. */
   branchId: z.union([z.string().min(1), z.coerce.number()]).optional(),
+  /**
+   * Non-empty replaces release focus areas. Omit/empty leaves unchanged on update;
+   * omit on create = full scenario set.
+   */
+  focusAreas: z.array(releaseFocusAreaSchema).optional(),
 });
+
+export const createSecurityScanInput = z
+  .object({
+    version: z.string().min(1),
+    dastCheckConfig: z.record(z.string(), z.unknown()).optional(),
+    sastCheckConfig: z.record(z.string(), z.unknown()).optional(),
+    depsCheckConfig: z.record(z.string(), z.unknown()).optional(),
+    leaksCheckConfig: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((v, ctx) => {
+    const typed =
+      (v.dastCheckConfig ? 1 : 0) +
+      (v.sastCheckConfig ? 1 : 0) +
+      (v.depsCheckConfig ? 1 : 0) +
+      (v.leaksCheckConfig ? 1 : 0);
+    if (typed !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Provide exactly one of dastCheckConfig, sastCheckConfig, depsCheckConfig, or leaksCheckConfig",
+        path: ["dastCheckConfig"],
+      });
+    }
+  });
 
 export const manageTestRunStatusSchema = z.enum([
   "UNKNOWN_NAMED_TEST_RUN_STATUS",

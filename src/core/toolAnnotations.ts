@@ -85,6 +85,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "list-screen-states": readOnly("List Screen States"),
   "get-release": readOnly("Get Release"),
   "upsert-release": mutating("Upsert Release", { destructive: true, idempotent: true }),
+  "create-security-scan": mutating("Create Security Scan"),
   "manage-test-run": mutating("Manage Test Run"),
   "get-security-scan-config": readOnly("Get Security Scan Config"),
   "update-scan-progress": mutating("Update Scan Progress", { idempotent: true }),
