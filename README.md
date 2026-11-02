@@ -198,6 +198,8 @@ docker run -p 8080:8080 -e TESTCHIMP_MCP_PUBLIC_URL=https://mcp.example.com test
 
 The npm package **`testchimp-mcp-client`** is superseded by **`@testchimp/cli`**. Update MCP `args` to `["-y", "@testchimp/cli@latest", "mcp"]` and rename tool references to **kebab-case**. See [MIGRATION.md](./MIGRATION.md).
 
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/testchimp/testchimp-mcp-client)
+
 ## License
 
 MIT
