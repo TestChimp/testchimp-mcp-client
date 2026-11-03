@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 89 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 89);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 89);
+  it("registers 90 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 90);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 90);
   });
 
   it("advertises extended get-org-capabilities fields", () => {

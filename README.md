@@ -58,6 +58,7 @@ testchimp list-issues --status ACTIVE --limit 10
 testchimp get-release --release 1.2.0
 testchimp upsert-release --release 1.2.0
 testchimp create-security-scan --release 1.2.0 --json-input '{"sastCheckConfig":{"scope":"RELEASE_SCOPED","rules":"STANDARD"}}'
+testchimp get-proof-points
 testchimp manage-test-run --release 1.2.0 --title "Sprint 12"
 ```
 

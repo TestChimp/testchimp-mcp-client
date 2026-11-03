@@ -312,6 +312,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-proof-points",
+    description:
+      "Project QA proof points for listings and Dealpuffin-style integrations: releasesLast30Days " +
+      "(non-archived catalog releases), scenarioCoveragePercent (automation-candidate scenarios with a " +
+      "linked SmartTest), testScenarioCount, windowDays (30), and asOfMillis. Authenticated via project " +
+      "API key; typically used with a restricted key that allows only this tool.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_proof_points", {}),
+  },
+  {
     kebab: "get-requirement-coverage",
     description:
       "Fetch requirement (scenario) coverage under an optional platform-rooted folder scope (tests/... or plans/...). " +

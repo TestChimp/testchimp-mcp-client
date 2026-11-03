@@ -1763,6 +1763,7 @@ export function buildCliProgram(): Command {
 
   for (const kebab of [
     "get-org-capabilities",
+    "get-proof-points",
     "list-workflow-catalog",
   ] as const) {
     program

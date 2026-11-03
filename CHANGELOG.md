@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.4
+
+### Added
+
+- `get-proof-points` — `POST /api/mcp/get_proof_points`. Project QA proof points for listings and Dealpuffin-style integrations (`releasesLast30Days`, `scenarioCoveragePercent`, `testScenarioCount`, `windowDays`, `asOfMillis`). Empty body; typically used with a restricted project API key that allows only this tool.
+
+`server.json` version is 2.0.4. Do not run `mcp-publisher` from this change.
+
 ## 2.0.3
 
 ### Added
