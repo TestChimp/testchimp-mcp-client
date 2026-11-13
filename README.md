@@ -1,5 +1,7 @@
 # @testchimp/cli
 
+[![mcptry](https://mcptry.com/badge/io.testchimp/qa)](https://mcptry.com/servers/io.testchimp/qa)
+
 **TestChimp CLI** and **MCP server** for calling TestChimp [`/api/mcp/*`](https://featureservice.testchimp.io) endpoints with `TESTCHIMP-API-KEY`.
 
 This repository folder may still be named `testchimp-mcp-client` locally; the **published npm package** is **`@testchimp/cli`**.
