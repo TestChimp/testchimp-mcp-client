@@ -960,6 +960,17 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-onboarding-status")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-onboarding-status")!.description)
+    .option("--user-id <id>", "User the agent acts for")
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies(opts.userId ? { userId: opts.userId } : {}, opts.jsonInput);
+      const out = await runTool("get-onboarding-status", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("update-project-init-status")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-project-init-status")!.description)
     .addOption(jsonInputOption())

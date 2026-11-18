@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 90 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 90);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 90);
+  it("registers 91 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 91);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 91);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -1267,5 +1267,38 @@ describe("save-workspace-creds", () => {
     );
     assert.equal(creds.projectApiKey, KEY);
     assert.equal(creds.projectId, PROJECT);
+  });
+});
+
+describe("get-onboarding-status", () => {
+  async function capture(args: Record<string, unknown>) {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool("get-onboarding-status", args, {
+      postMcp: async (path, body) => {
+        request = { path, body };
+        return "{}";
+      },
+    });
+    return request;
+  }
+
+  afterEach(() => {
+    delete process.env.TESTCHIMP_USER_ID;
+  });
+
+  it("posts to get_onboarding_status with the given user", async () => {
+    const request = await capture({ userId: " u-1 " });
+    assert.deepEqual(request, { path: "/api/mcp/get_onboarding_status", body: { userId: "u-1" } });
+  });
+
+  it("falls back to TESTCHIMP_USER_ID, else sends an empty body", async () => {
+    process.env.TESTCHIMP_USER_ID = "u-env";
+    assert.deepEqual((await capture({}))?.body, { userId: "u-env" });
+    delete process.env.TESTCHIMP_USER_ID;
+    assert.deepEqual((await capture({}))?.body, {});
+  });
+
+  it("is annotated read-only", () => {
+    assert.equal(annotationsForTool("get-onboarding-status").readOnlyHint, true);
   });
 });

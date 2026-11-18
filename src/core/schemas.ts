@@ -485,6 +485,13 @@ export const manageTestRunInput = z
 
 export const emptyInput = z.object({});
 
+export const getOnboardingStatusInput = z.object({
+  userId: z
+    .string()
+    .optional()
+    .describe("User the agent acts for (defaults to TESTCHIMP_USER_ID, then the API key's user)."),
+});
+
 const projectInitItemStatusSchema = z.enum([
   "PROJECT_INIT_ITEM_STATUS_INCOMPLETE",
   "PROJECT_INIT_ITEM_STATUS_DONE",

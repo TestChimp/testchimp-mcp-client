@@ -1649,6 +1649,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_project_init_status", {}),
   },
   {
+    kebab: "get-onboarding-status",
+    description:
+      "Return this project's onboarding progress (repo, project-init, agent connected, plans, run QA, first " +
+      "results, verified test, release test run) and `nextStepCommand`: the /testchimp command to suggest next, " +
+      "or empty when the next step happens in the TestChimp UI. Read-only. Call at the end of a workflow and " +
+      "tell the user the next step.",
+    inputSchema: S.getOnboardingStatusInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getOnboardingStatusInput>;
+      const userId =
+        a.userId?.trim() ||
+        (currentRequestAuth()?.isolated !== true ? process.env.TESTCHIMP_USER_ID?.trim() : undefined);
+      return postMcp("/api/mcp/get_onboarding_status", userId ? { userId } : {});
+    },
+  },
+  {
     kebab: "update-project-init-status",
     description:
       "Merge project-init progress fields for the current project. Pass a `status` object with snake_case keys " +

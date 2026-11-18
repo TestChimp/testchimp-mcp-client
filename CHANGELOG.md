@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `get-onboarding-status` — `POST /api/mcp/get_onboarding_status`. Project onboarding progress (the TestChimp setup launchpad steps) plus `nextStepCommand`, the `/testchimp` command to suggest next (empty when the next step is in the TestChimp UI). Optional `userId` (defaults to `TESTCHIMP_USER_ID`). Read-only; needs a backend with the launchpad endpoint.
+
 ## 2.0.4
 
 ### Added
