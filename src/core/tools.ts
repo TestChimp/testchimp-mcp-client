@@ -1706,8 +1706,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "invite-team-members",
     description:
       "Invite teammates (by email) to the TestChimp organization so they can access this project. Each invitee " +
-      "joins as a Viewer and gets a sign-up email. Needs an OAuth user session whose user is an org admin: QA bots " +
-      "call this MCP tool through the connector with their binding arguments (the CLI's --bot key can't invite). " +
+      "joins as a Viewer and gets a sign-up email. The caller must be an org admin: the OAuth user (hosted MCP / QA " +
+      "bot connector), or with a project API key the user in TESTCHIMP_USER_ID (sent as the user-id header). " +
       "Returns a per-email outcome (INVITED, ALREADY_MEMBER, " +
       "ALREADY_INVITED, FAILED with failureReason) and teamSettingsUrl for role changes / seats. Only call with " +
       "emails the user explicitly confirmed.",

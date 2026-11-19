@@ -165,8 +165,15 @@ function envBotId(): string | undefined {
   return undefined;
 }
 
+const USER_ID_PATTERN = /^[A-Za-z0-9._@:-]{1,128}$/;
+
+function envUserId(): string | undefined {
+  const raw = process.env.TESTCHIMP_USER_ID?.trim();
+  return raw && USER_ID_PATTERN.test(raw) ? raw : undefined;
+}
+
 /** Headers for featureservice / ingress calls. API-key-only callers get exactly the legacy header set. */
-export function buildRequestHeaders(): Record<string, string> {
+export function buildRequestHeaders(opts: { includeUserId?: boolean } = {}): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const requestAuth = requestAuthStorage.getStore();
   if (requestAuth?.isolated) {
@@ -184,6 +191,10 @@ export function buildRequestHeaders(): Record<string, string> {
   const apiKey = process.env.TESTCHIMP_API_KEY?.trim();
   if (!bearer) {
     headers["TestChimp-Api-Key"] = requireApiKey();
+    // A project key is not per user: TESTCHIMP_USER_ID (from mcp.json) tells TestChimp who is calling.
+    // Featureservice only: ingress endpoints do not need it and would look the user up on every call.
+    const userId = opts.includeUserId ? envUserId() : undefined;
+    if (userId) headers["user-id"] = userId;
   } else {
     if (apiKey) headers["TestChimp-Api-Key"] = apiKey;
     headers.Authorization = `Bearer ${bearer}`;
@@ -205,11 +216,16 @@ export class TestChimpHttpError extends Error {
   }
 }
 
-async function postJson(url: string, body: unknown, redirectHint: string): Promise<string> {
+async function postJson(
+  url: string,
+  body: unknown,
+  redirectHint: string,
+  opts: { includeUserId?: boolean } = {}
+): Promise<string> {
   const res = await fetch(url, {
     method: "POST",
     redirect: "manual",
-    headers: buildRequestHeaders(),
+    headers: buildRequestHeaders(opts),
     body: JSON.stringify(body ?? {}),
   });
   if (res.status >= 300 && res.status < 400) {
@@ -231,6 +247,7 @@ export async function postMcp(path: string, body: unknown): Promise<string> {
     `${getBackendUrl()}${path}`,
     body,
     "set TESTCHIMP_BACKEND_URL to the final HTTPS featureservice URL.",
+    { includeUserId: true },
   );
 }
 
