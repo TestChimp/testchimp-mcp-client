@@ -1180,6 +1180,7 @@ export const agentActionTypeSchema = z.enum([
   "ACTION_COMPLETED",
   "ACTION_FAILED",
   "IMPLEMENTED",
+  "WORKFLOW_STARTED",
   "created",
   "updated",
   "deleted",
@@ -1189,6 +1190,7 @@ export const agentActionTypeSchema = z.enum([
   "action_completed",
   "action_failed",
   "implemented",
+  "workflow_started",
 ]);
 
 export const reportAgentActionInput = z
@@ -1220,12 +1222,15 @@ export const reportAgentActionInput = z
       actionNorm === "ACTION_FAILED" ||
       actionNorm === "COMPLETED" ||
       actionNorm === "FAILED";
+    const isWorkflowStarted = actionNorm === "WORKFLOW_STARTED";
+    const isWorkflowLifecycle = isCompletion || isWorkflowStarted;
 
-    if (isCompletion) {
+    if (isWorkflowLifecycle) {
       if (val.entityType !== "WORKFLOW") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "ACTION_COMPLETED / ACTION_FAILED require entityType WORKFLOW",
+          message:
+            "WORKFLOW_STARTED / ACTION_COMPLETED / ACTION_FAILED require entityType WORKFLOW",
           path: ["entityType"],
         });
       }
@@ -1233,14 +1238,14 @@ export const reportAgentActionInput = z
       if (identity === "" || identity !== val.workflowId.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "entityIdentity must equal workflowId for WORKFLOW completion",
+          message: "entityIdentity must equal workflowId for WORKFLOW lifecycle actions",
           path: ["entityIdentity"],
         });
       }
       if (val.test) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "test must not be set for WORKFLOW completion",
+          message: "test must not be set for WORKFLOW lifecycle actions",
           path: ["test"],
         });
       }
@@ -1250,7 +1255,8 @@ export const reportAgentActionInput = z
     if (val.entityType === "WORKFLOW") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "WORKFLOW entityType is only valid with ACTION_COMPLETED / ACTION_FAILED",
+        message:
+          "WORKFLOW entityType is only valid with WORKFLOW_STARTED / ACTION_COMPLETED / ACTION_FAILED",
         path: ["entityType"],
       });
       return;

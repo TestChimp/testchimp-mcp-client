@@ -1326,13 +1326,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Report a mutating agent action under a stable workflow-execution-id (ULID). " +
       "First call for an id creates the workflow_executions row; later calls append Activity " +
       "timeline rows (AGENT_WORKFLOW_ACTIVITY). " +
+      "Preferred first call after minting a ULID: entityType WORKFLOW + actionType WORKFLOW_STARTED " +
+      "(opens RUNNING without completing). Plan-done is upsert-plans-support-file of the .plan.md " +
+      "(parks PLANNED when approval is pending). Close with ACTION_COMPLETED / ACTION_FAILED. " +
       "Actions land on the entity's Activity timeline (plans, issues, SmartTest file). " +
       "entityType: USER_STORY | SCENARIO | SMART_TEST | POLICY | ISSUE | TEST_EXECUTION | " +
       "TEST_INVOCATION_BATCH | EXPLORATION | EVENT | WORKFLOW. " +
-      "actionType: CREATED | UPDATED | DELETED | ANALYZED | IMPLEMENTED | ACTION_COMPLETED | ACTION_FAILED. " +
+      "actionType: CREATED | UPDATED | DELETED | ANALYZED | IMPLEMENTED | WORKFLOW_STARTED | " +
+      "ACTION_COMPLETED | ACTION_FAILED. " +
       "Identity: SMART_TEST uses `test` (TestLocator: folderPath/fileName/testSuite/testName); " +
       "other artifact types use `entityIdentity` (ordinal / filename / opaque id). Do not use platform UUIDs. " +
-      "Completion (ACTION_COMPLETED / ACTION_FAILED): entityType WORKFLOW and entityIdentity = catalog workflow_id.",
+      "WORKFLOW lifecycle (WORKFLOW_STARTED / ACTION_COMPLETED / ACTION_FAILED): entityIdentity = catalog workflow_id.",
     inputSchema: S.reportAgentActionInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.reportAgentActionInput>;
@@ -1352,6 +1356,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         actionType = "ACTION_COMPLETED";
       } else if (actionNorm === "FAILED" || actionNorm === "ACTION_FAILED") {
         actionType = "ACTION_FAILED";
+      } else if (actionNorm === "WORKFLOW_STARTED") {
+        actionType = "WORKFLOW_STARTED";
       }
       const { skillVersion, cliVersion } = resolveToolchainVersions({
         skillVersion: a.skillVersion,

@@ -1626,7 +1626,7 @@ export function buildCliProgram(): Command {
     .requiredOption("--workflow-execution-id <ulid>", "Stable ULID for the whole run")
     .requiredOption(
       "--action-type <type>",
-      "CREATED|UPDATED|DELETED|ANALYZED|IMPLEMENTED|ACTION_COMPLETED|ACTION_FAILED",
+      "CREATED|UPDATED|DELETED|ANALYZED|IMPLEMENTED|WORKFLOW_STARTED|ACTION_COMPLETED|ACTION_FAILED",
     )
     .option("--policy-file <name>", "Policy filename")
     .option("--policy-version <semver>", "Policy version from frontmatter")
