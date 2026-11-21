@@ -1328,7 +1328,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "timeline rows (AGENT_WORKFLOW_ACTIVITY). " +
       "Preferred first call after minting a ULID: entityType WORKFLOW + actionType WORKFLOW_STARTED " +
       "(opens RUNNING without completing). Plan-done is upsert-plans-support-file of the .plan.md " +
-      "(parks PLANNED when approval is pending). Close with ACTION_COMPLETED / ACTION_FAILED. " +
+      "(parks PLANNED when approval is pending; PlanApproved re-upsert → PLAN_APPROVED). Close with ACTION_COMPLETED / ACTION_FAILED. " +
       "Actions land on the entity's Activity timeline (plans, issues, SmartTest file). " +
       "entityType: USER_STORY | SCENARIO | SMART_TEST | POLICY | ISSUE | TEST_EXECUTION | " +
       "TEST_INVOCATION_BATCH | EXPLORATION | EVENT | WORKFLOW. " +
