@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 88 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 88);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 88);
+  it("registers 91 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 91);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 91);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -483,6 +483,39 @@ describe("MCP API 2.0 consolidations", () => {
       {
         path: "/api/mcp/upsert_release",
         body: { version: "1.2.0", gitCommitSha: "abc", dueDateMillis: "1790000000000", branchId: "br-1" },
+      },
+    );
+    assert.deepEqual(
+      (
+        await capture("upsert-release", {
+          version: "1.2.0",
+          focusAreas: [{ folderPath: ["plans", "scenarios", "checkout"], artifactType: "SCENARIO_ARTIFACT" }],
+        })
+      ).request,
+      {
+        path: "/api/mcp/upsert_release",
+        body: {
+          version: "1.2.0",
+          focusAreas: [{ folderPath: ["plans", "scenarios", "checkout"], artifactType: "SCENARIO_ARTIFACT" }],
+        },
+      },
+    );
+  });
+
+  it("maps create-security-scan", async () => {
+    assert.deepEqual(
+      (
+        await capture("create-security-scan", {
+          version: "1.2.0",
+          sastCheckConfig: { scope: "RELEASE_SCOPED", rules: "STANDARD" },
+        })
+      ).request,
+      {
+        path: "/api/mcp/create_security_scan",
+        body: {
+          version: "1.2.0",
+          sastCheckConfig: { scope: "RELEASE_SCOPED", rules: "STANDARD" },
+        },
       },
     );
   });
@@ -1234,5 +1267,38 @@ describe("save-workspace-creds", () => {
     );
     assert.equal(creds.projectApiKey, KEY);
     assert.equal(creds.projectId, PROJECT);
+  });
+});
+
+describe("get-onboarding-status", () => {
+  async function capture(args: Record<string, unknown>) {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool("get-onboarding-status", args, {
+      postMcp: async (path, body) => {
+        request = { path, body };
+        return "{}";
+      },
+    });
+    return request;
+  }
+
+  afterEach(() => {
+    delete process.env.TESTCHIMP_USER_ID;
+  });
+
+  it("posts to get_onboarding_status with the given user", async () => {
+    const request = await capture({ userId: " u-1 " });
+    assert.deepEqual(request, { path: "/api/mcp/get_onboarding_status", body: { userId: "u-1" } });
+  });
+
+  it("falls back to TESTCHIMP_USER_ID, else sends an empty body", async () => {
+    process.env.TESTCHIMP_USER_ID = "u-env";
+    assert.deepEqual((await capture({}))?.body, { userId: "u-env" });
+    delete process.env.TESTCHIMP_USER_ID;
+    assert.deepEqual((await capture({}))?.body, {});
+  });
+
+  it("is annotated read-only", () => {
+    assert.equal(annotationsForTool("get-onboarding-status").readOnlyHint, true);
   });
 });

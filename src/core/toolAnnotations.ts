@@ -42,6 +42,7 @@ function mutating(
 export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "get-org-capabilities": readOnly("Get Org Capabilities"),
   "ask-about-testchimp": readOnly("Ask About TestChimp", true),
+  "get-proof-points": readOnly("Get Proof Points"),
   "get-requirement-coverage": readOnly("Get Requirement Coverage"),
   "list-test-planning-trends": readOnly("List Test Planning Trends"),
   "get-execution-history": readOnly("Get Execution History"),
@@ -85,6 +86,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "list-screen-states": readOnly("List Screen States"),
   "get-release": readOnly("Get Release"),
   "upsert-release": mutating("Upsert Release", { destructive: true, idempotent: true }),
+  "create-security-scan": mutating("Create Security Scan"),
   "manage-test-run": mutating("Manage Test Run"),
   "get-security-scan-config": readOnly("Get Security Scan Config"),
   "update-scan-progress": mutating("Update Scan Progress", { idempotent: true }),
@@ -112,6 +114,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "promote-perf-baseline": mutating("Promote Perf Baseline", { destructive: true, idempotent: true }),
   "compare-perf-to-baseline": readOnly("Compare Perf To Baseline"),
   "get-project-init-status": readOnly("Get Project Init Status"),
+  "get-onboarding-status": readOnly("Get Onboarding Status"),
   "update-project-init-status": mutating("Update Project Init Status", { idempotent: true }),
   "get-git-folder-mapping": readOnly("Get Git Folder Mapping"),
   "update-git-folder-mapping": mutating("Update Git Folder Mapping", { destructive: true, idempotent: true }),

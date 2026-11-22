@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+## 2.0.5
+
+### Added
+
+- API-key calls to featureservice send `TESTCHIMP_USER_ID` as the `user-id` header (the project key is not per user). Used for per-user agent connectivity and for `invite-team-members` with a project key.
+
+- `get-onboarding-status` — `POST /api/mcp/get_onboarding_status`. Project onboarding progress (the TestChimp setup launchpad steps) plus `nextStepCommand`, the `/testchimp` command to suggest next (empty when the next step is in the TestChimp UI). Optional `userId` (defaults to `TESTCHIMP_USER_ID`). Read-only; needs a backend with the launchpad endpoint.
+
+- `WORKFLOW_STARTED` on `report-agent-action` (preferred first call after minting a ULID).
+
+### Changed
+
+- `report-agent-action` docs: plan re-upsert with `PlanApproved` moves the execution to `PLAN_APPROVED` (after `PLANNED`), so launchpad can show waiting-for-agent instead of awaiting-approval.
+
+`server.json` version is 2.0.5. Do not run `mcp-publisher` from this change.
+
+## 2.0.4
+
+### Added
+
+- `get-proof-points` — `POST /api/mcp/get_proof_points`. Project QA proof points for listings and Dealpuffin-style integrations (`releasesLast30Days`, `scenarioCoveragePercent`, `testScenarioCount`, `windowDays`, `asOfMillis`). Empty body; typically used with a restricted project API key that allows only this tool.
+
+`server.json` version is 2.0.4. Do not run `mcp-publisher` from this change.
+
+## 2.0.3
+
+### Added
+
+- `create-security-scan` — `POST /api/mcp/create_security_scan`. Create a queued release security scan (`version` + exactly one of `dastCheckConfig` / `sastCheckConfig` / `depsCheckConfig` / `leaksCheckConfig`). Returns `{ scanId, prompt }` for `/testchimp run security scan`.
+- `upsert-release` optional `focusAreas` (plans `FileScope` entries). Omit or empty = full scenario set.
+
+`server.json` version is 2.0.3. Do not run `mcp-publisher` from this change.
+
 ## 2.0.2
 
 ### Added

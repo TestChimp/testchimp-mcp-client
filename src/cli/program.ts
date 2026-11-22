@@ -960,6 +960,17 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("get-onboarding-status")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-onboarding-status")!.description)
+    .option("--user-id <id>", "User the agent acts for")
+    .addOption(jsonInputOption())
+    .action(async (opts) => {
+      const merged = mergeBodies(opts.userId ? { userId: opts.userId } : {}, opts.jsonInput);
+      const out = await runTool("get-onboarding-status", merged, { postMcp });
+      console.log(out);
+    });
+
+  program
     .command("update-project-init-status")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "update-project-init-status")!.description)
     .addOption(jsonInputOption())
@@ -1302,6 +1313,10 @@ export function buildCliProgram(): Command {
     .option("--environment <name>", "Environment tag (create only)")
     .option("--due-date-millis <ms>", "Due date as UTC epoch millis (update only)")
     .option("--branch-id <id>", "Branch id (update only)")
+    .option(
+      "--focus-areas <json>",
+      "JSON array of FileScope focus areas (plans paths). Prefer --json-input for nested bodies.",
+    )
     .action(async (opts) => {
     const body: Record<string, unknown> = { ...cliReleaseVersionField(opts) };
     if (opts.gitCommitSha) body.gitCommitSha = String(opts.gitCommitSha).trim();
@@ -1312,12 +1327,41 @@ export function buildCliProgram(): Command {
     if (opts.environment) body.environment = String(opts.environment).trim();
     if (opts.dueDateMillis != null) body.dueDateMillis = Number(opts.dueDateMillis);
     if (opts.branchId) body.branchId = String(opts.branchId).trim();
+    if (opts.focusAreas) {
+      try {
+        body.focusAreas = JSON.parse(String(opts.focusAreas));
+      } catch {
+        throw new Error("--focus-areas must be a JSON array");
+      }
+    }
     const merged = mergeBodies(body, opts.jsonInput) as { version?: string };
     if (!merged.version || String(merged.version).trim() === "") {
       throw new Error("version is required (--release or --json-input)");
     }
     console.log(await runTool("upsert-release", merged, { postMcp }));
   });
+
+  addReleaseLabelOption(
+    program
+      .command("create-security-scan")
+      .description(TOOL_DEFINITIONS.find((t) => t.kebab === "create-security-scan")!.description)
+      .addOption(jsonInputOption()),
+    "Release version / label for the scan. Prefer --json-input for check config bodies.",
+  )
+    .action(async (opts) => {
+      const body: Record<string, unknown> = { ...cliReleaseVersionField(opts) };
+      const merged = mergeBodies(body, opts.jsonInput) as {
+        version?: string;
+        dastCheckConfig?: unknown;
+        sastCheckConfig?: unknown;
+        depsCheckConfig?: unknown;
+        leaksCheckConfig?: unknown;
+      };
+      if (!merged.version || String(merged.version).trim() === "") {
+        throw new Error("version is required (--release or --json-input)");
+      }
+      console.log(await runTool("create-security-scan", merged, { postMcp }));
+    });
 
   program
     .command("manage-test-run")
@@ -1582,7 +1626,7 @@ export function buildCliProgram(): Command {
     .requiredOption("--workflow-execution-id <ulid>", "Stable ULID for the whole run")
     .requiredOption(
       "--action-type <type>",
-      "CREATED|UPDATED|DELETED|ANALYZED|IMPLEMENTED|ACTION_COMPLETED|ACTION_FAILED",
+      "CREATED|UPDATED|DELETED|ANALYZED|IMPLEMENTED|WORKFLOW_STARTED|ACTION_COMPLETED|ACTION_FAILED",
     )
     .option("--policy-file <name>", "Policy filename")
     .option("--policy-version <semver>", "Policy version from frontmatter")
@@ -1730,6 +1774,7 @@ export function buildCliProgram(): Command {
 
   for (const kebab of [
     "get-org-capabilities",
+    "get-proof-points",
     "list-workflow-catalog",
   ] as const) {
     program

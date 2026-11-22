@@ -312,6 +312,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "get-proof-points",
+    description:
+      "Project QA proof points for listings and Dealpuffin-style integrations: releasesLast30Days " +
+      "(non-archived catalog releases), scenarioCoveragePercent (automation-candidate scenarios with a " +
+      "linked SmartTest), testScenarioCount, windowDays (30), and asOfMillis. Authenticated via project " +
+      "API key; typically used with a restricted key that allows only this tool.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_proof_points", {}),
+  },
+  {
     kebab: "get-requirement-coverage",
     description:
       "Fetch requirement (scenario) coverage under an optional platform-rooted folder scope (tests/... or plans/...). " +
@@ -319,7 +329,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "(aggregates branch copies; execution jobs deduped by stable hash of tests-root-relative path + test name). " +
       "Pass branchName only when results must be limited to one Git branch. Optional platform (web|ios|android) filters rollup. " +
       "For top-N gap recommendations: set scenarioLifecycleStatuses, considerScenarioPriority / considerSemanticCoverage, and limit; " +
-      "prefer response rankedScenarios (gaps only). Server excludes verification_strategy=manual by default (autoVerificationOnly).",
+      "prefer response rankedScenarios (gaps only). Ranked/limit mode includes non-covered plan scenarios even when no SmartTests are linked " +
+      "(folderPath plans or plans/stories|scenarios). Server excludes verification_strategy=manual by default (autoVerificationOnly).",
     inputSchema: S.listCoverageInput,
     execute: async (args, { postMcp }) => {
       const json = await postMcp("/api/mcp/list_requirement_coverage", listCoverageBody(args as z.infer<typeof S.listCoverageInput>));
@@ -995,7 +1006,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Create or update a release catalog entry. version is required. Optional gitCommitSha, " +
       "priorReleaseVersion, releaseType (MAJOR|MINOR|HOTFIX), lifecycleStatus, environment (create only), " +
-      "dueDateMillis and branchId (update only, int64 strings). Response is { release, created }.",
+      "dueDateMillis and branchId (update only, int64 strings), focusAreas (plans FileScope entries; " +
+      "non-empty replaces; omit on create = full scenario set; omit/empty on update = unchanged). " +
+      "Response is { release, created }.",
     inputSchema: S.upsertReleaseInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.upsertReleaseInput>;
@@ -1009,7 +1022,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       if (a.dueDateMillis != null) body.dueDateMillis = dueDateToInt64String(a.dueDateMillis);
       const branchId = asInt64String(a.branchId);
       if (branchId) body.branchId = branchId;
+      if (a.focusAreas?.length) body.focusAreas = a.focusAreas;
       return postMcp("/api/mcp/upsert_release", body);
+    },
+  },
+  {
+    kebab: "create-security-scan",
+    description:
+      "Create a queued security scan on a release. version (release label) is required. Provide " +
+      "exactly one of dastCheckConfig, sastCheckConfig, depsCheckConfig, or leaksCheckConfig. " +
+      "Returns { scanId, prompt }. Then run /testchimp run security scan for <scanId> " +
+      "(run-release-check). Ask the user before creating DAST scans.",
+    inputSchema: S.createSecurityScanInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.createSecurityScanInput>;
+      const body: Record<string, unknown> = { version: a.version.trim() };
+      if (a.dastCheckConfig) body.dastCheckConfig = a.dastCheckConfig;
+      if (a.sastCheckConfig) body.sastCheckConfig = a.sastCheckConfig;
+      if (a.depsCheckConfig) body.depsCheckConfig = a.depsCheckConfig;
+      if (a.leaksCheckConfig) body.leaksCheckConfig = a.leaksCheckConfig;
+      return postMcp("/api/mcp/create_security_scan", body);
     },
   },
   {
@@ -1294,13 +1326,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Report a mutating agent action under a stable workflow-execution-id (ULID). " +
       "First call for an id creates the workflow_executions row; later calls append Activity " +
       "timeline rows (AGENT_WORKFLOW_ACTIVITY). " +
+      "Preferred first call after minting a ULID: entityType WORKFLOW + actionType WORKFLOW_STARTED " +
+      "(opens RUNNING without completing). Plan-done is upsert-plans-support-file of the .plan.md " +
+      "(parks PLANNED when approval is pending; PlanApproved re-upsert → PLAN_APPROVED). Close with ACTION_COMPLETED / ACTION_FAILED. " +
       "Actions land on the entity's Activity timeline (plans, issues, SmartTest file). " +
       "entityType: USER_STORY | SCENARIO | SMART_TEST | POLICY | ISSUE | TEST_EXECUTION | " +
       "TEST_INVOCATION_BATCH | EXPLORATION | EVENT | WORKFLOW. " +
-      "actionType: CREATED | UPDATED | DELETED | ANALYZED | IMPLEMENTED | ACTION_COMPLETED | ACTION_FAILED. " +
+      "actionType: CREATED | UPDATED | DELETED | ANALYZED | IMPLEMENTED | WORKFLOW_STARTED | " +
+      "ACTION_COMPLETED | ACTION_FAILED. " +
       "Identity: SMART_TEST uses `test` (TestLocator: folderPath/fileName/testSuite/testName); " +
       "other artifact types use `entityIdentity` (ordinal / filename / opaque id). Do not use platform UUIDs. " +
-      "Completion (ACTION_COMPLETED / ACTION_FAILED): entityType WORKFLOW and entityIdentity = catalog workflow_id.",
+      "WORKFLOW lifecycle (WORKFLOW_STARTED / ACTION_COMPLETED / ACTION_FAILED): entityIdentity = catalog workflow_id.",
     inputSchema: S.reportAgentActionInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.reportAgentActionInput>;
@@ -1320,6 +1356,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         actionType = "ACTION_COMPLETED";
       } else if (actionNorm === "FAILED" || actionNorm === "ACTION_FAILED") {
         actionType = "ACTION_FAILED";
+      } else if (actionNorm === "WORKFLOW_STARTED") {
+        actionType = "WORKFLOW_STARTED";
       }
       const { skillVersion, cliVersion } = resolveToolchainVersions({
         skillVersion: a.skillVersion,
@@ -1617,6 +1655,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_project_init_status", {}),
   },
   {
+    kebab: "get-onboarding-status",
+    description:
+      "Return this project's onboarding progress (repo, project-init, agent connected, plans, run QA, first " +
+      "results, verified test, release test run) and `nextStepCommand`: the /testchimp command to suggest next, " +
+      "or empty when the next step happens in the TestChimp UI. Read-only. Call at the end of a workflow and " +
+      "tell the user the next step.",
+    inputSchema: S.getOnboardingStatusInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getOnboardingStatusInput>;
+      const userId =
+        a.userId?.trim() ||
+        (currentRequestAuth()?.isolated !== true ? process.env.TESTCHIMP_USER_ID?.trim() : undefined);
+      return postMcp("/api/mcp/get_onboarding_status", userId ? { userId } : {});
+    },
+  },
+  {
     kebab: "update-project-init-status",
     description:
       "Merge project-init progress fields for the current project. Pass a `status` object with snake_case keys " +
@@ -1658,8 +1712,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "invite-team-members",
     description:
       "Invite teammates (by email) to the TestChimp organization so they can access this project. Each invitee " +
-      "joins as a Viewer and gets a sign-up email. Needs an OAuth user session whose user is an org admin: QA bots " +
-      "call this MCP tool through the connector with their binding arguments (the CLI's --bot key can't invite). " +
+      "joins as a Viewer and gets a sign-up email. The caller must be an org admin: the OAuth user (hosted MCP / QA " +
+      "bot connector), or with a project API key the user in TESTCHIMP_USER_ID (sent as the user-id header). " +
       "Returns a per-email outcome (INVITED, ALREADY_MEMBER, " +
       "ALREADY_INVITED, FAILED with failureReason) and teamSettingsUrl for role changes / seats. Only call with " +
       "emails the user explicitly confirmed.",

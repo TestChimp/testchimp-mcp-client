@@ -390,6 +390,14 @@ export const listIssuesInput = z.object({
 
 export const releaseTypeSchema = z.enum(["UNKNOWN_RELEASE_TYPE", "MAJOR", "MINOR", "HOTFIX"]);
 
+export const releaseFocusAreaSchema = z.object({
+  folderPath: z.array(z.string()).optional(),
+  ids: z.array(z.string().min(1)).optional(),
+  artifactType: z
+    .enum(["UNKNOWN_ARTIFACT_TYPE", "USER_STORY_ARTIFACT", "SCENARIO_ARTIFACT"])
+    .optional(),
+});
+
 export const upsertReleaseInput = z.object({
   version: z.string().min(1),
   gitCommitSha: z.string().min(1).optional(),
@@ -404,7 +412,36 @@ export const upsertReleaseInput = z.object({
   dueDateMillis: z.union([z.string().min(1), z.coerce.number()]).optional(),
   /** Update only; int64 string on the wire. */
   branchId: z.union([z.string().min(1), z.coerce.number()]).optional(),
+  /**
+   * Non-empty replaces release focus areas. Omit/empty leaves unchanged on update;
+   * omit on create = full scenario set.
+   */
+  focusAreas: z.array(releaseFocusAreaSchema).optional(),
 });
+
+export const createSecurityScanInput = z
+  .object({
+    version: z.string().min(1),
+    dastCheckConfig: z.record(z.string(), z.unknown()).optional(),
+    sastCheckConfig: z.record(z.string(), z.unknown()).optional(),
+    depsCheckConfig: z.record(z.string(), z.unknown()).optional(),
+    leaksCheckConfig: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((v, ctx) => {
+    const typed =
+      (v.dastCheckConfig ? 1 : 0) +
+      (v.sastCheckConfig ? 1 : 0) +
+      (v.depsCheckConfig ? 1 : 0) +
+      (v.leaksCheckConfig ? 1 : 0);
+    if (typed !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Provide exactly one of dastCheckConfig, sastCheckConfig, depsCheckConfig, or leaksCheckConfig",
+        path: ["dastCheckConfig"],
+      });
+    }
+  });
 
 export const manageTestRunStatusSchema = z.enum([
   "UNKNOWN_NAMED_TEST_RUN_STATUS",
@@ -447,6 +484,13 @@ export const manageTestRunInput = z
   });
 
 export const emptyInput = z.object({});
+
+export const getOnboardingStatusInput = z.object({
+  userId: z
+    .string()
+    .optional()
+    .describe("User the agent acts for (defaults to TESTCHIMP_USER_ID, then the API key's user)."),
+});
 
 const projectInitItemStatusSchema = z.enum([
   "PROJECT_INIT_ITEM_STATUS_INCOMPLETE",
@@ -1136,6 +1180,7 @@ export const agentActionTypeSchema = z.enum([
   "ACTION_COMPLETED",
   "ACTION_FAILED",
   "IMPLEMENTED",
+  "WORKFLOW_STARTED",
   "created",
   "updated",
   "deleted",
@@ -1145,6 +1190,7 @@ export const agentActionTypeSchema = z.enum([
   "action_completed",
   "action_failed",
   "implemented",
+  "workflow_started",
 ]);
 
 export const reportAgentActionInput = z
@@ -1176,12 +1222,15 @@ export const reportAgentActionInput = z
       actionNorm === "ACTION_FAILED" ||
       actionNorm === "COMPLETED" ||
       actionNorm === "FAILED";
+    const isWorkflowStarted = actionNorm === "WORKFLOW_STARTED";
+    const isWorkflowLifecycle = isCompletion || isWorkflowStarted;
 
-    if (isCompletion) {
+    if (isWorkflowLifecycle) {
       if (val.entityType !== "WORKFLOW") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "ACTION_COMPLETED / ACTION_FAILED require entityType WORKFLOW",
+          message:
+            "WORKFLOW_STARTED / ACTION_COMPLETED / ACTION_FAILED require entityType WORKFLOW",
           path: ["entityType"],
         });
       }
@@ -1189,14 +1238,14 @@ export const reportAgentActionInput = z
       if (identity === "" || identity !== val.workflowId.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "entityIdentity must equal workflowId for WORKFLOW completion",
+          message: "entityIdentity must equal workflowId for WORKFLOW lifecycle actions",
           path: ["entityIdentity"],
         });
       }
       if (val.test) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "test must not be set for WORKFLOW completion",
+          message: "test must not be set for WORKFLOW lifecycle actions",
           path: ["test"],
         });
       }
@@ -1206,7 +1255,8 @@ export const reportAgentActionInput = z
     if (val.entityType === "WORKFLOW") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "WORKFLOW entityType is only valid with ACTION_COMPLETED / ACTION_FAILED",
+        message:
+          "WORKFLOW entityType is only valid with WORKFLOW_STARTED / ACTION_COMPLETED / ACTION_FAILED",
         path: ["entityType"],
       });
       return;
