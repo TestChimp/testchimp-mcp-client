@@ -2,13 +2,7 @@
 
 ## Unreleased
 
-## 2.0.5-rc.4
-
-### Changed
-
-- `report-agent-action` docs: plan re-upsert with `PlanApproved` moves the execution to `PLAN_APPROVED` (after `PLANNED`), so launchpad can show waiting-for-agent instead of awaiting-approval.
-
-## 2.0.5-rc.3
+## 2.0.5
 
 ### Added
 
@@ -17,6 +11,12 @@
 - `get-onboarding-status` — `POST /api/mcp/get_onboarding_status`. Project onboarding progress (the TestChimp setup launchpad steps) plus `nextStepCommand`, the `/testchimp` command to suggest next (empty when the next step is in the TestChimp UI). Optional `userId` (defaults to `TESTCHIMP_USER_ID`). Read-only; needs a backend with the launchpad endpoint.
 
 - `WORKFLOW_STARTED` on `report-agent-action` (preferred first call after minting a ULID).
+
+### Changed
+
+- `report-agent-action` docs: plan re-upsert with `PlanApproved` moves the execution to `PLAN_APPROVED` (after `PLANNED`), so launchpad can show waiting-for-agent instead of awaiting-approval.
+
+`server.json` version is 2.0.5. Do not run `mcp-publisher` from this change.
 
 ## 2.0.4
 
