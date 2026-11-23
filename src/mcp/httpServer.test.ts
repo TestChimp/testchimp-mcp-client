@@ -45,6 +45,42 @@ describe("remote MCP over HTTP", () => {
     assert.equal(res.status, 200);
   });
 
+  it("serves the SEP-2127 MCP Server Card without auth", async () => {
+    process.env.TESTCHIMP_MCP_PUBLIC_URL = "https://mcp.example.com";
+    const res = await originalFetch(`${baseUrl}/mcp/server-card`, {
+      headers: { Accept: "application/mcp-server-card+json" },
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /application\/mcp-server-card\+json/);
+    assert.equal(res.headers.get("access-control-allow-origin"), "*");
+    assert.match(res.headers.get("cache-control") ?? "", /max-age=3600/);
+    const card = (await res.json()) as {
+      name: string;
+      version: string;
+      description: string;
+      remotes: Array<{ type: string; url: string }>;
+    };
+    assert.equal(card.name, "io.testchimp/qa");
+    assert.ok(card.version);
+    assert.ok(card.description.length <= 100);
+    assert.deepEqual(card.remotes, [{ type: "streamable-http", url: "https://mcp.example.com/mcp" }]);
+  });
+
+  it("serves /.well-known/ai-catalog.json pointing at the Server Card", async () => {
+    process.env.TESTCHIMP_MCP_PUBLIC_URL = "https://mcp.example.com";
+    const res = await originalFetch(`${baseUrl}/.well-known/ai-catalog.json`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /application\/ai-catalog\+json/);
+    const catalog = (await res.json()) as {
+      specVersion: string;
+      entries: Array<{ identifier: string; type: string; url: string }>;
+    };
+    assert.equal(catalog.specVersion, "1.0");
+    assert.equal(catalog.entries.length, 1);
+    assert.equal(catalog.entries[0].type, "application/mcp-server-card+json");
+    assert.equal(catalog.entries[0].url, "https://mcp.example.com/mcp/server-card");
+  });
+
   it("rejects /mcp without a bearer and points at the resource metadata", async () => {
     process.env.TESTCHIMP_MCP_PUBLIC_URL = "https://mcp.example.com";
     const res = await originalFetch(`${baseUrl}/mcp`, {

@@ -1,13 +1,28 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { getBackendUrl, isValidProjectId, runWithRequestAuth } from "../core/client.js";
+import {
+  AI_CATALOG_MEDIA_TYPE,
+  SERVER_CARD_MEDIA_TYPE,
+  buildAiCatalog,
+  buildServerCard,
+} from "./serverCard.js";
 import { createMcpServer } from "./server.js";
 
 export const MAX_MCP_BODY_BYTES = 1024 * 1024;
 const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource";
 const AUTH_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
+const AI_CATALOG_PATH = "/.well-known/ai-catalog.json";
+const SERVER_CARD_PATH = "/mcp/server-card";
 const AUTH_SERVER_METADATA_TTL_MS = 5 * 60 * 1000;
 const SCOPE = "testchimp";
+const DISCOVERY_CACHE_HEADERS: Record<string, string> = {
+  "Cache-Control": "public, max-age=3600",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET",
+  "Access-Control-Allow-Headers": "Content-Type, If-None-Match, Accept",
+  "Access-Control-Expose-Headers": "ETag",
+};
 
 /**
  * Bearer-only API (no cookies), so any origin may call it: browser-hosted MCP clients and inspectors
@@ -226,6 +241,30 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
   if (path === "/healthz") {
     sendJson(res, 200, { status: "ok" });
+    return;
+  }
+  if (path === SERVER_CARD_PATH) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      sendJson(res, 405, { error: "Method not allowed" }, { Allow: "GET" });
+      return;
+    }
+    const mcpUrl = `${publicBaseUrl(req)}/mcp`;
+    sendJson(res, 200, buildServerCard(mcpUrl), {
+      "Content-Type": SERVER_CARD_MEDIA_TYPE,
+      ...DISCOVERY_CACHE_HEADERS,
+    });
+    return;
+  }
+  if (path === AI_CATALOG_PATH) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      sendJson(res, 405, { error: "Method not allowed" }, { Allow: "GET" });
+      return;
+    }
+    const cardUrl = `${publicBaseUrl(req)}${SERVER_CARD_PATH}`;
+    sendJson(res, 200, buildAiCatalog(cardUrl), {
+      "Content-Type": AI_CATALOG_MEDIA_TYPE,
+      ...DISCOVERY_CACHE_HEADERS,
+    });
     return;
   }
   if (path === PROTECTED_RESOURCE_PATH || path === `${PROTECTED_RESOURCE_PATH}/mcp`) {
