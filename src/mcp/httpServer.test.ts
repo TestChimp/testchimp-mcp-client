@@ -136,6 +136,13 @@ describe("remote MCP over HTTP", () => {
       assert.deepEqual(await res.json(), metadata);
     }
     assert.deepEqual(upstream, ["https://featureservice.example.com/.well-known/oauth-authorization-server"]);
+
+    const botRes = await originalFetch(`${baseUrl}/.well-known/oauth-authorization-server/bot/mcp`);
+    assert.equal(botRes.status, 200);
+    assert.deepEqual(await botRes.json(), {
+      ...metadata,
+      authorization_endpoint: "https://featureservice.example.com/oauth/bot/authorize",
+    });
   });
 
   it("returns 502 when the authorization server metadata is unreachable", async () => {
@@ -170,6 +177,12 @@ describe("remote MCP over HTTP", () => {
         scopes_supported: ["testchimp"],
       });
     }
+    const botMeta = await originalFetch(`${baseUrl}/.well-known/oauth-protected-resource/bot/mcp`, {
+      headers: { "X-Forwarded-Proto": "https" },
+    });
+    assert.equal(botMeta.status, 200);
+    const host = new URL(baseUrl).host;
+    assert.equal(((await botMeta.json()) as { resource: string }).resource, `https://${host}/bot/mcp`);
   });
 
   it("rejects oversized bodies", async () => {

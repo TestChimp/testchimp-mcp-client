@@ -91,9 +91,18 @@ function scopeQuery(scope: ProjectScope): string {
   return scope.projectId ? `?projectId=${encodeURIComponent(scope.projectId)}` : "";
 }
 
+function mcpResourcePath(req: IncomingMessage): "/mcp" | "/bot/mcp" {
+  const path = new URL(req.url ?? "/", "http://localhost").pathname.replace(/\/+$/, "") || "/";
+  return path === "/bot/mcp" || path.endsWith("/bot/mcp") ? "/bot/mcp" : "/mcp";
+}
+
 /** RFC 9728 metadata URL for this resource; scoped URLs get path-inserted metadata echoing their query. */
 function resourceMetadataUrl(req: IncomingMessage, scope: ProjectScope): string {
+  const mcpPath = mcpResourcePath(req);
   const base = `${publicBaseUrl(req)}${PROTECTED_RESOURCE_PATH}`;
+  if (mcpPath === "/bot/mcp") {
+    return `${base}/bot/mcp${scopeQuery(scope)}`;
+  }
   return scope.projectId ? `${base}/mcp${scopeQuery(scope)}` : base;
 }
 
@@ -182,30 +191,41 @@ async function handleMcpPost(req: IncomingMessage, res: ServerResponse): Promise
 }
 
 /**
- * Older MCP clients (2025-03-26 spec) skip protected-resource metadata and look for authorization-server
- * metadata on the MCP origin. Serve TestChimp's (endpoints are absolute, so they lead to the real issuer).
+ * Rewrite authorization_endpoint to the QA-bot authorize path for Bonobi MCP discovery
+ * (older clients that read AS metadata from the MCP origin).
  */
-async function handleAuthServerMetadata(res: ServerResponse): Promise<void> {
+function withBotAuthorizeEndpoint(body: string, issuer: string): string {
+  try {
+    const meta = JSON.parse(body) as { authorization_endpoint?: string };
+    meta.authorization_endpoint = `${issuer.replace(/\/+$/, "")}/oauth/bot/authorize`;
+    return JSON.stringify(meta);
+  } catch {
+    return body;
+  }
+}
+
+async function handleAuthServerMetadata(res: ServerResponse, opts?: { qaBot?: boolean }): Promise<void> {
   const issuer = authorizationServer();
   const cached = authServerMetadataCache;
+  let body: string;
   if (cached && cached.issuer === issuer && Date.now() - cached.fetchedAt < AUTH_SERVER_METADATA_TTL_MS) {
-    sendRaw(res, cached.body);
-    return;
+    body = cached.body;
+  } else {
+    let upstream: Response;
+    try {
+      upstream = await fetch(`${issuer}${AUTH_SERVER_METADATA_PATH}`, { headers: { Accept: "application/json" } });
+    } catch {
+      sendJson(res, 502, { error: "Authorization server metadata unavailable" });
+      return;
+    }
+    if (!upstream.ok) {
+      sendJson(res, 502, { error: "Authorization server metadata unavailable" });
+      return;
+    }
+    body = await upstream.text();
+    authServerMetadataCache = { issuer, body, fetchedAt: Date.now() };
   }
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${issuer}${AUTH_SERVER_METADATA_PATH}`, { headers: { Accept: "application/json" } });
-  } catch {
-    sendJson(res, 502, { error: "Authorization server metadata unavailable" });
-    return;
-  }
-  if (!upstream.ok) {
-    sendJson(res, 502, { error: "Authorization server metadata unavailable" });
-    return;
-  }
-  const body = await upstream.text();
-  authServerMetadataCache = { issuer, body, fetchedAt: Date.now() };
-  sendRaw(res, body);
+  sendRaw(res, opts?.qaBot ? withBotAuthorizeEndpoint(body, issuer) : body);
 }
 
 function sendRaw(res: ServerResponse, body: string): void {
@@ -231,12 +251,16 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
-  if (path === AUTH_SERVER_METADATA_PATH || path === `${AUTH_SERVER_METADATA_PATH}/mcp`) {
+  if (
+    path === AUTH_SERVER_METADATA_PATH
+    || path === `${AUTH_SERVER_METADATA_PATH}/mcp`
+    || path === `${AUTH_SERVER_METADATA_PATH}/bot/mcp`
+  ) {
     if (req.method !== "GET" && req.method !== "HEAD") {
       sendJson(res, 405, { error: "Method not allowed" }, { Allow: "GET" });
       return;
     }
-    await handleAuthServerMetadata(res);
+    await handleAuthServerMetadata(res, { qaBot: path.endsWith("/bot/mcp") });
     return;
   }
   if (path === "/healthz") {
@@ -267,7 +291,11 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     });
     return;
   }
-  if (path === PROTECTED_RESOURCE_PATH || path === `${PROTECTED_RESOURCE_PATH}/mcp`) {
+  if (
+    path === PROTECTED_RESOURCE_PATH
+    || path === `${PROTECTED_RESOURCE_PATH}/mcp`
+    || path === `${PROTECTED_RESOURCE_PATH}/bot/mcp`
+  ) {
     if (req.method !== "GET" && req.method !== "HEAD") {
       sendJson(res, 405, { error: "Method not allowed" }, { Allow: "GET" });
       return;
@@ -277,16 +305,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       sendJson(res, 400, { error: "Invalid projectId query parameter" });
       return;
     }
+    const qaBot = path.endsWith("/bot/mcp");
+    const mcpPath = qaBot ? "/bot/mcp" : "/mcp";
     // RFC 9728 protected-resource metadata keys are spec-mandated snake_case.
     sendJson(res, 200, {
-      resource: `${publicBaseUrl(req)}/mcp${scopeQuery(scope)}`,
+      resource: `${publicBaseUrl(req)}${mcpPath}${scopeQuery(scope)}`,
       authorization_servers: [authorizationServer()],
       bearer_methods_supported: ["header"],
       scopes_supported: [SCOPE],
     });
     return;
   }
-  if (path === "/mcp") {
+  if (path === "/mcp" || path === "/bot/mcp") {
     if (req.method === "POST") {
       await handleMcpPost(req, res);
       return;
