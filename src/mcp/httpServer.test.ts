@@ -279,6 +279,70 @@ describe("remote MCP over HTTP", () => {
     ]);
   });
 
+  describe("projectId argument", () => {
+    const callTool = (
+      id: number,
+      args: Record<string, unknown>,
+      path = "/mcp",
+      name = "get-project-init-status",
+    ) =>
+      originalFetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer caller-jwt",
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }),
+      });
+    const captureUpstream = () => {
+      const upstream: Array<{ headers: Record<string, string>; body: string }> = [];
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).startsWith(baseUrl)) return originalFetch(input, init);
+        upstream.push({ headers: init?.headers as Record<string, string>, body: String(init?.body) });
+        return new Response(JSON.stringify({}));
+      }) as typeof fetch;
+      return upstream;
+    };
+
+    it("sends a projectId argument as TestChimp-Project-Id and strips it from the body", async () => {
+      process.env.TESTCHIMP_BACKEND_URL = "https://featureservice.example.com";
+      const upstream = captureUpstream();
+      assert.equal((await callTool(20, { projectId: "proj-3" })).status, 200);
+      assert.deepEqual(upstream, [
+        {
+          headers: { "Content-Type": "application/json", Authorization: "Bearer caller-jwt", "TestChimp-Project-Id": "proj-3" },
+          body: "{}",
+        },
+      ]);
+    });
+
+    it("a projectId argument overrides ?projectId= on the URL", async () => {
+      process.env.TESTCHIMP_BACKEND_URL = "https://featureservice.example.com";
+      const upstream = captureUpstream();
+      assert.equal((await callTool(21, { projectId: "proj-3" }, "/mcp?projectId=proj-2")).status, 200);
+      assert.equal(upstream[0]?.headers["TestChimp-Project-Id"], "proj-3");
+    });
+
+    it("projectApiKey wins over a projectId argument", async () => {
+      process.env.TESTCHIMP_BACKEND_URL = "https://featureservice.example.com";
+      const upstream = captureUpstream();
+      assert.equal((await callTool(22, { projectApiKey: "project-b-key", projectId: "proj-3" })).status, 200);
+      assert.equal(upstream[0]?.headers["TestChimp-Api-Key"], "project-b-key");
+      assert.equal("TestChimp-Project-Id" in (upstream[0]?.headers ?? {}), false);
+    });
+
+    it("rejects a malformed projectId argument without calling TestChimp", async () => {
+      process.env.TESTCHIMP_BACKEND_URL = "https://featureservice.example.com";
+      const upstream = captureUpstream();
+      const res = await callTool(23, { projectId: "../x y" });
+      const payload = (await res.json()) as { result?: { isError?: boolean; content?: Array<{ text?: string }> } };
+      assert.equal(payload.result?.isError, true);
+      assert.match(payload.result?.content?.[0]?.text ?? "", /Invalid projectId/);
+      assert.equal(upstream.length, 0);
+    });
+  });
+
   it("advertises the binding arguments on every tool", async () => {
     const res = await originalFetch(`${baseUrl}/mcp`, {
       method: "POST",
@@ -297,6 +361,7 @@ describe("remote MCP over HTTP", () => {
     for (const tool of tools) {
       assert.ok(tool.inputSchema?.properties?.projectApiKey, `${tool.name} lacks projectApiKey`);
       assert.ok(tool.inputSchema?.properties?.botId, `${tool.name} lacks botId`);
+      assert.ok(tool.inputSchema?.properties?.projectId, `${tool.name} lacks projectId`);
     }
   });
 
