@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 91 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 91);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 91);
+  it("registers 92 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 92);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 92);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -1255,7 +1255,7 @@ describe("save-workspace-creds", () => {
           },
         ),
       ),
-      /hosted MCP server cannot write[\s\S]*get-project-credentials[\s\S]*\.testchimp\/mcp\.json/,
+      /hosted MCP server cannot write[\s\S]*get-project-credentials[\s\S]*\.testchimp\/creds\.json/,
     );
   });
 
@@ -1300,5 +1300,31 @@ describe("get-onboarding-status", () => {
 
   it("is annotated read-only", () => {
     assert.equal(annotationsForTool("get-onboarding-status").readOnlyHint, true);
+  });
+});
+
+describe("list-projects", () => {
+  it("posts to /api/mcp/list_my_projects with an empty body and returns the JSON unchanged", async () => {
+    const response = JSON.stringify({
+      projects: [
+        { projectId: "p1", projectName: "Alpha" },
+        { projectId: "p2", projectName: "Beta", repoUrl: "https://github.com/acme/beta" },
+      ],
+    });
+    let request: { path: string; body: unknown } | undefined;
+
+    const result = await runTool(
+      "list-projects",
+      {},
+      {
+        postMcp: async (path, body) => {
+          request = { path, body };
+          return response;
+        },
+      },
+    );
+
+    assert.deepEqual(request, { path: "/api/mcp/list_my_projects", body: {} });
+    assert.deepEqual(JSON.parse(result), JSON.parse(response));
   });
 });

@@ -1851,13 +1851,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_bot_credentials", {}),
   },
   {
+    kebab: "list-projects",
+    description:
+      "OAuth connections: list the TestChimp projects the signed-in user belongs to ({projectId, projectName, " +
+      "repoUrl?}). Used by /testchimp connect-project to bind a repo to a project. Needs no projectId.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_my_projects", {}),
+  },
+  {
     kebab: "get-project-credentials",
     description:
       "Normal (non-bot) OAuth connections: fetch the project key local test runners (Playwright reporter, CLI, " +
       "k6) need. Returns {projectId, projectName, projectApiKey, userId, backendUrl, ingressUrl} for the " +
-      "connection's project (the MCP URL's ?projectId= when set, else the one picked on the consent page). " +
+      "project named by the projectId argument, or by projectApiKey (which also tells you a key-only file's " +
+      "projectId); without either, the connection's default project (the MCP URL's ?projectId= when set, else the " +
+      "one picked on the consent page). " +
       "To persist the runner key without putting it in a shell command: local stdio MCP should call " +
-      "save-workspace-creds; hosted / plugin agents should write <repo>/.testchimp/mcp.json themselves " +
+      "save-workspace-creds; hosted / plugin agents should write <repo>/.testchimp/creds.json themselves " +
       "(mode 0600, dir 0700) from this response and never print projectApiKey. This tool still returns " +
       "projectApiKey for those callers. Not needed with an API key (stdio already has it).",
     inputSchema: S.emptyInput,
@@ -1871,7 +1881,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "dir 0700, .testchimp/ gitignored) and map the folder in ~/.testchimp/projects.json. Fetches the key with " +
       "the current MCP auth — do not pass the key, and the response never includes it. Local stdio MCP only " +
       "(omitted on hosted mcp.testchimp.io). Hosted / plugin agents: call get-project-credentials and write " +
-      "<repo>/.testchimp/mcp.json with a file-write tool (never put the key in a shell command).",
+      "<repo>/.testchimp/creds.json with a file-write tool (never put the key in a shell command).",
     inputSchema: S.saveWorkspaceCredsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.saveWorkspaceCredsInput>;
@@ -1903,7 +1913,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         if (msg.startsWith("NOT_FOUND:") && currentRequestAuth()?.isolated === true) {
           throw new Error(
             `${msg}. The hosted MCP server cannot write your laptop's repo. Call get-project-credentials, then ` +
-              `write <repo>/.testchimp/mcp.json yourself with a file-write tool (mode 0600, dir 0700; ` +
+              `write <repo>/.testchimp/creds.json yourself with a file-write tool (mode 0600, dir 0700; ` +
               `never put the key in a shell command). projectId=${projectId}.`,
           );
         }

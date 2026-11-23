@@ -114,6 +114,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "promote-perf-baseline": mutating("Promote Perf Baseline", { destructive: true, idempotent: true }),
   "compare-perf-to-baseline": readOnly("Compare Perf To Baseline"),
   "get-project-init-status": readOnly("Get Project Init Status"),
+  "list-projects": readOnly("List Projects"),
   "get-onboarding-status": readOnly("Get Onboarding Status"),
   "update-project-init-status": mutating("Update Project Init Status", { idempotent: true }),
   "get-git-folder-mapping": readOnly("Get Git Folder Mapping"),

@@ -10,6 +10,7 @@ import {
   ensureGitignoreHasTestchimp,
   findWorkspaceCredsEnv,
   planWorkspaceCreds,
+  workspaceCredsJsonPath,
   workspaceMcpJsonPath,
   writePlannedWorkspaceCreds,
 } from "./workspaceCredsFile.js";
@@ -358,10 +359,104 @@ describe("testchimp workspace save-creds (CLI)", () => {
   });
 });
 
+function writeCreds(dir: string, body: Record<string, unknown>, mode = 0o600) {
+  mkdirSync(join(dir, ".testchimp"), { recursive: true, mode: 0o700 });
+  const path = workspaceCredsJsonPath(dir);
+  writeFileSync(path, `${JSON.stringify({ schemaVersion: 1, ...body }, null, 2)}\n`, { mode });
+  chmodSync(path, mode);
+  return path;
+}
+
+describe("repo creds.json for the CLI", () => {
+  const FULL = {
+    projectId: "proj-creds-1",
+    projectApiKey: "fake-creds-key-0001",
+    userId: "user-7",
+    backendUrl: "https://featureservice-staging.testchimp.io",
+    ingressUrl: "https://ingress-staging.testchimp.io",
+  };
+
+  it("maps every creds.json field to its TESTCHIMP_* env var", () => {
+    const path = writeCreds(root, FULL);
+    const nested = join(root, "tests", "e2e");
+    mkdirSync(nested, { recursive: true });
+    const found = findWorkspaceCredsEnv(nested);
+    assert.equal(found?.path, path);
+    assert.deepEqual(found?.env, {
+      TESTCHIMP_API_KEY: "fake-creds-key-0001",
+      TESTCHIMP_PROJECT_ID: "proj-creds-1",
+      TESTCHIMP_USER_ID: "user-7",
+      TESTCHIMP_BACKEND_URL: "https://featureservice-staging.testchimp.io",
+      TESTCHIMP_INGRESS_URL: "https://ingress-staging.testchimp.io",
+    });
+  });
+
+  it("prefers creds.json over a legacy .testchimp/mcp.json in the same directory", () => {
+    save(PROD);
+    const path = writeCreds(root, FULL);
+    const found = findWorkspaceCredsEnv(root);
+    assert.equal(found?.path, path);
+    assert.equal(found?.env.TESTCHIMP_PROJECT_ID, "proj-creds-1");
+  });
+
+  it("falls back to the legacy .testchimp/mcp.json when there is no creds.json", () => {
+    save(PROD);
+    const found = findWorkspaceCredsEnv(root);
+    assert.equal(found?.path, workspaceMcpJsonPath(root));
+    assert.equal(found?.env.TESTCHIMP_PROJECT_ID, PROJECT);
+  });
+
+  it("ignores a group-readable creds.json, reports its path, and does not read the key", { skip: process.platform === "win32" }, () => {
+    const path = writeCreds(root, FULL, 0o644);
+    const ignored: string[] = [];
+    assert.equal(findWorkspaceCredsEnv(root, (p) => ignored.push(p)), null);
+    assert.deepEqual(ignored, [path]);
+    const warnings: string[] = [];
+    const env: NodeJS.ProcessEnv = {};
+    assert.equal(applyWorkspaceCredsFallback(env, root, (m) => warnings.push(m)), null);
+    assert.equal(env.TESTCHIMP_API_KEY, undefined);
+    assert.match(warnings[0] ?? "", /chmod 600/);
+    assert.ok(!warnings.join("").includes(FULL.projectApiKey));
+  });
+
+  it("skips a placeholder or missing key in creds.json", () => {
+    writeCreds(root, { ...FULL, projectApiKey: "${TESTCHIMP_API_KEY}" });
+    assert.equal(findWorkspaceCredsEnv(root), null);
+    writeCreds(root, { projectId: "proj-creds-1" });
+    assert.equal(findWorkspaceCredsEnv(root), null);
+  });
+
+  it("surfaces cliVersion without exporting it", () => {
+    writeCreds(root, { ...FULL, cliVersion: "2.0.6-rc.1" });
+    const found = findWorkspaceCredsEnv(root);
+    assert.equal(found?.cliVersion, "2.0.6-rc.1");
+    assert.ok(!Object.values(found?.env ?? {}).includes("2.0.6-rc.1"));
+  });
+
+  it("the CLI fallback fills only unset env from creds.json, including the user id", () => {
+    const path = writeCreds(root, FULL);
+    const env: NodeJS.ProcessEnv = { TESTCHIMP_INGRESS_URL: "https://ingress.example.com" };
+    assert.equal(applyWorkspaceCredsFallback(env, root), path);
+    assert.equal(env.TESTCHIMP_API_KEY, FULL.projectApiKey);
+    assert.equal(env.TESTCHIMP_USER_ID, "user-7");
+    assert.equal(env.TESTCHIMP_INGRESS_URL, "https://ingress.example.com");
+  });
+
+  it("keeps walking up past an unreadable creds.json to a parent's file", () => {
+    const parent = join(root, "mono");
+    const child = join(parent, "pkg");
+    mkdirSync(child, { recursive: true });
+    mkdirSync(join(child, ".testchimp"));
+    writeFileSync(workspaceCredsJsonPath(child), "{ not json");
+    const path = writeCreds(parent, FULL);
+    assert.equal(findWorkspaceCredsEnv(child)?.path, path);
+  });
+});
+
 describe("CLI key fallback end to end", () => {
   async function runIn(cwd: string, extraEnv: NodeJS.ProcessEnv): Promise<{ code: number | null; stderr: string }> {
     const env: NodeJS.ProcessEnv = { ...process.env, TESTCHIMP_HOME: join(root, "home"), ...extraEnv };
-    for (const k of ["TESTCHIMP_API_KEY", "TESTCHIMP_OAUTH_TOKEN", "TESTCHIMP_BOT_ID", "TESTCHIMP_BACKEND_URL", "TESTCHIMP_INGRESS_URL"]) {
+    for (const k of ["TESTCHIMP_API_KEY", "TESTCHIMP_OAUTH_TOKEN", "TESTCHIMP_BOT_ID", "TESTCHIMP_BACKEND_URL", "TESTCHIMP_INGRESS_URL", "TESTCHIMP_USER_ID"]) {
       if (!(k in extraEnv)) delete env[k];
     }
     const { spawn } = await import("node:child_process");
@@ -396,6 +491,35 @@ describe("CLI key fallback end to end", () => {
       const viaEnv = await runIn(nested, { TESTCHIMP_API_KEY: "fake-env-key", TESTCHIMP_BACKEND_URL: `http://127.0.0.1:${port}` });
       assert.equal(viaEnv.code, 0, viaEnv.stderr);
       assert.deepEqual(seen, [KEY, "fake-env-key"]);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it("uses .testchimp/creds.json and sends its user id", async () => {
+    const { createServer } = await import("node:http");
+    const seen: Array<{ key?: string; user?: string }> = [];
+    const server = createServer((req, res) => {
+      seen.push({ key: req.headers["testchimp-api-key"] as string | undefined, user: req.headers["user-id"] as string | undefined });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("{}");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      writeCreds(root, {
+        projectId: "proj-creds-1",
+        projectApiKey: "fake-creds-key-0001",
+        userId: "user-7",
+        backendUrl: `http://127.0.0.1:${port}`,
+      });
+      const nested = join(root, "tests");
+      mkdirSync(nested);
+      const run = await runIn(nested, {});
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stderr, /Using the project API key from/);
+      assert.ok(!run.stderr.includes("fake-creds-key-0001"));
+      assert.deepEqual(seen, [{ key: "fake-creds-key-0001", user: "user-7" }]);
     } finally {
       await new Promise<void>((r) => server.close(() => r()));
     }

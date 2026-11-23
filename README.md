@@ -110,7 +110,7 @@ testchimp workspace save-creds --folder . --project-id <id> \
   [--project-name "Shop"] [--backend-url <backendUrl>] [--ingress-url <ingressUrl>] [--reassign]
 
 # Local stdio MCP: tool save-workspace-creds { folder, projectId? } — never returns the key
-# Hosted / plugin: get-project-credentials, then write .testchimp/mcp.json with a file-write tool
+# Hosted / plugin: get-project-credentials, then write .testchimp/creds.json with a file-write tool (the skill does this in /testchimp connect-project)
 # Legacy: pipe the key on stdin (never as a command-line argument)
 printf '%s' "$KEY" | testchimp workspace save-creds --folder . --project-id <id>
 ```
@@ -119,7 +119,7 @@ printf '%s' "$KEY" | testchimp workspace save-creds --folder . --project-id <id>
 - The file uses Studio's exact format (pinned by `fixtures/workspace-mcp-json/`, mirrored in the Studio repo): mode `0600` in a `0700` `.testchimp/` directory, other servers in the file kept, `.testchimp/` added to `.gitignore`. The folder is also mapped in `projects.json` like `workspace map`.
 - An existing entry for the same project is kept as is (including Studio's managed binary); only a changed key is refreshed. Another project's entry is refused unless `--reassign`.
 
-**Fallback:** when neither `TESTCHIMP_API_KEY` nor `TESTCHIMP_OAUTH_TOKEN` is set, the CLI reads `TESTCHIMP_API_KEY`, `TESTCHIMP_PROJECT_ID`, `TESTCHIMP_BACKEND_URL` and `TESTCHIMP_INGRESS_URL` from the nearest `.testchimp/mcp.json` at or above the current directory. Exported variables always win, and `--bot` bindings are unaffected. The file must be private to you (mode 0600, as Studio and `save-creds` write it); a group- or world-readable copy, such as one committed to a cloned repo, is ignored with a warning. Other runners (Playwright, k6) still need the variables exported in their own shell.
+**Fallback:** when neither `TESTCHIMP_API_KEY` nor `TESTCHIMP_OAUTH_TOKEN` is set, the CLI reads `TESTCHIMP_API_KEY`, `TESTCHIMP_PROJECT_ID`, `TESTCHIMP_BACKEND_URL` and `TESTCHIMP_INGRESS_URL` from the nearest `.testchimp/creds.json` (else `.testchimp/mcp.json`) at or above the current directory. `creds.json` is the flat repo identity the skill writes — `projectId`, `projectApiKey`, `userId`, `backendUrl`, `ingressUrl` — and also sets `TESTCHIMP_USER_ID`; its optional `cliVersion` is read by the skill, not exported. When both files exist in one directory, `creds.json` wins. Exported variables always win, and `--bot` bindings are unaffected. The file must be private to you (mode 0600, as Studio and `save-creds` write it); a group- or world-readable copy, such as one committed to a cloned repo, is ignored with a warning. Other runners (Playwright, k6) still need the variables exported in their own shell.
 
 ## QA bots
 

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 2.0.6
+
+### Added
+
+- Hosted MCP: every tool takes an optional `projectId` argument, sent as `TestChimp-Project-Id`. One user-scoped connector can now serve many repos; a repo names its project with the `projectId` from its `.testchimp/creds.json`. `projectApiKey` still wins when both are given, and a malformed `projectId` is rejected before any upstream call.
+- `list-projects` (`POST /api/mcp/list_my_projects`, OAuth connections only): the signed-in user's projects as `{projectId, projectName}`. Used by `/testchimp connect-project`. Needs a backend with the endpoint.
+- The CLI reads `<repo>/.testchimp/creds.json` (flat: `projectId`, `projectApiKey`, `userId`, `backendUrl`, `ingressUrl`, optional `cliVersion`) before `.testchimp/mcp.json`, and exports `TESTCHIMP_USER_ID` from it. `mcp.json` (Studio's file) is still read and still written by `save-workspace-creds`, unchanged.
+
+### Changed
+
+- Tool descriptions and errors point hosted / plugin agents at `.testchimp/creds.json`.
+
 ## 2.0.5
 
 ### Added

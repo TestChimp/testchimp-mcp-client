@@ -2,7 +2,8 @@
 FROM node:20-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
-RUN npm ci
+# Host umask can leave package.json mode 600; USER node needs to read it at runtime.
+RUN chmod a+r package.json package-lock.json tsconfig.json && npm ci
 COPY src ./src
 RUN npm run build
 
@@ -10,7 +11,8 @@ FROM node:20-slim
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN chmod a+r package.json package-lock.json \
+  && npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 USER node
 EXPOSE 8080
