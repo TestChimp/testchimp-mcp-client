@@ -2442,7 +2442,7 @@ export function buildCliProgram(): Command {
         "Accepts the key on stdin or copies TESTCHIMP_API_KEY already in the environment " +
         "(`testchimp workspace save-creds --folder <repo> --project-id <id>`). Also fetches via get-project-credentials " +
         "when TESTCHIMP_OAUTH_TOKEN is set. Local stdio MCP: save-workspace-creds (never prints the key). " +
-        "Hosted / plugin agents: call get-project-credentials and write `.testchimp/mcp.json` with a file-write tool. " +
+        "Hosted / plugin agents: call get-project-credentials and write `.testchimp/creds.json` with a file-write tool. " +
         "Never pass the key as a command-line argument.",
     )
     .requiredOption("--folder <path>", "Repository root folder")
@@ -2460,7 +2460,7 @@ export function buildCliProgram(): Command {
         "  CLI            TESTCHIMP_API_KEY in the environment, or pipe the key on stdin\n" +
         "                 (optional: TESTCHIMP_OAUTH_TOKEN fetches via get-project-credentials)\n" +
         "  Local stdio    MCP tool save-workspace-creds --folder <repo> (optional projectId)\n" +
-        "  Hosted/plugin  get-project-credentials, then write <repo>/.testchimp/mcp.json (0600) yourself\n" +
+        "  Hosted/plugin  get-project-credentials, then write <repo>/.testchimp/creds.json (0600) yourself\n" +
         "  Legacy         printf '%s' \"$KEY\" | testchimp workspace save-creds --folder <repo> --project-id <id>\n",
     )
     .action(async (opts) => {
@@ -2495,7 +2495,7 @@ export function buildCliProgram(): Command {
             throw new Error(
               "No project API key on stdin or TESTCHIMP_API_KEY. Set TESTCHIMP_API_KEY, pipe the key on stdin, " +
                 "or set TESTCHIMP_OAUTH_TOKEN so this command can fetch it. Local stdio MCP: save-workspace-creds. " +
-                "Hosted / plugin agents: call get-project-credentials and write <repo>/.testchimp/mcp.json " +
+                "Hosted / plugin agents: call get-project-credentials and write <repo>/.testchimp/creds.json " +
                 "with a file-write tool (never put the key in a command).",
             );
           }
@@ -2515,7 +2515,7 @@ export function buildCliProgram(): Command {
             throw new Error(
               `Fetching the project API key failed (${detail}). ` +
                 "Set TESTCHIMP_API_KEY or pipe the key on stdin. Hosted / plugin agents: call " +
-                "get-project-credentials and write <repo>/.testchimp/mcp.json with a file-write tool.",
+                "get-project-credentials and write <repo>/.testchimp/creds.json with a file-write tool.",
             );
           }
         }
@@ -2632,7 +2632,7 @@ export function buildCliProgram(): Command {
 
   program.addHelpText(
     "after",
-    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set (else read from the nearest .testchimp/mcp.json)\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  ephemeral-environment --action PROVISION progress on stderr.\n\nRelease labels:\n  Use --release <label> (alias --release-version). --version / -V prints the CLI version only.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
+    `\nEnvironment:\n  TESTCHIMP_API_KEY          required unless TESTCHIMP_OAUTH_TOKEN is set (else read from the nearest .testchimp/creds.json or .testchimp/mcp.json)\n  TESTCHIMP_OAUTH_TOKEN      optional OAuth access token (sent as Authorization: Bearer)\n  TESTCHIMP_BOT_ID           optional QA bot id (sent as bot-id header)\n  TESTCHIMP_BACKEND_URL      optional (default ${DEFAULT_BACKEND})\n  TESTCHIMP_INGRESS_URL      optional (default ${DEFAULT_INGRESS})\n  TESTCHIMP_HOME             optional Studio/CLI home for workspace mappings (default ~/.testchimp)\n\nOutput:\n  Response JSON on stdout.\n  ephemeral-environment --action PROVISION progress on stderr.\n\nRelease labels:\n  Use --release <label> (alias --release-version). --version / -V prints the CLI version only.\n\nAdvanced:\n  --json-input merges a JSON object over flags (JSON wins on key conflicts). Use @file.json to read from disk.\n`
   );
 
   return program;

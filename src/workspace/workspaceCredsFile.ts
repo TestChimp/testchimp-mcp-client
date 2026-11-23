@@ -2,6 +2,10 @@
  * Project API key for local runners in `<repo>/.testchimp/mcp.json` — the file TestChimp Studio writes when a
  * folder is mapped (desktop `src/main/workspace/mcpLifecycle.ts`). Same shape, mode 0600, gitignored
  * `.testchimp/`, other servers kept. `fixtures/workspace-mcp-json/` (mirrored in the desktop repo) pins the bytes.
+ *
+ * Reading also accepts `<repo>/.testchimp/creds.json`, the flat project identity the skill's
+ * `/testchimp connect-project` writes (projectId, projectApiKey, userId, backendUrl, ingressUrl, cliVersion).
+ * It wins over `mcp.json` in the same directory. This module only reads it; Studio's `mcp.json` writer is unchanged.
  */
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -42,6 +46,12 @@ export function serializeMcpJson(servers: Record<string, unknown>): string {
 
 export function workspaceMcpJsonPath(root: string): string {
   return join(root, WORKSPACE_DIR, "mcp.json");
+}
+
+export const WORKSPACE_CREDS_FILE = "creds.json";
+
+export function workspaceCredsJsonPath(root: string): string {
+  return join(root, WORKSPACE_DIR, WORKSPACE_CREDS_FILE);
 }
 
 function writeAtomic(path: string, contents: string, mode: number): void {
@@ -181,6 +191,15 @@ export function persistWorkspaceCreds(
 
 const FALLBACK_ENV_KEYS = ["TESTCHIMP_API_KEY", "TESTCHIMP_PROJECT_ID", "TESTCHIMP_BACKEND_URL", "TESTCHIMP_INGRESS_URL"];
 
+/** creds.json field → runner env var (the table the skill uses too). */
+const CREDS_JSON_ENV_FIELDS: ReadonlyArray<readonly [string, string]> = [
+  ["projectApiKey", "TESTCHIMP_API_KEY"],
+  ["projectId", "TESTCHIMP_PROJECT_ID"],
+  ["userId", "TESTCHIMP_USER_ID"],
+  ["backendUrl", "TESTCHIMP_BACKEND_URL"],
+  ["ingressUrl", "TESTCHIMP_INGRESS_URL"],
+];
+
 function isPlaceholderKey(value: string): boolean {
   return /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(value) || /paste_your|placeholder|your_project|changeme/i.test(value);
 }
@@ -196,17 +215,47 @@ function isPrivateFile(path: string): boolean {
   return typeof process.getuid !== "function" || st.uid === process.getuid();
 }
 
+/** Env from a creds.json whose key is real; null when unreadable, malformed, or the key is missing / a placeholder. */
+function readCredsJson(path: string): { env: Record<string, string>; cliVersion?: string } | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const key = typeof obj.projectApiKey === "string" ? obj.projectApiKey.trim() : "";
+  if (!key || isPlaceholderKey(key)) return null;
+  const env: Record<string, string> = {};
+  for (const [field, envName] of CREDS_JSON_ENV_FIELDS) {
+    const value = obj[field];
+    if (typeof value === "string" && value.trim()) env[envName] = value.trim();
+  }
+  const cliVersion = typeof obj.cliVersion === "string" && obj.cliVersion.trim() ? obj.cliVersion.trim() : undefined;
+  return { env, ...(cliVersion ? { cliVersion } : {}) };
+}
+
 /**
- * Runner env (key, project, backend / ingress) from the nearest `.testchimp/mcp.json` at or above `startDir`
- * whose testchimp entry holds a real key (placeholders like `${TESTCHIMP_API_KEY}` are skipped). Files that
- * are not private to the current user are skipped and reported through `onIgnored`.
+ * Runner env (key, project, user, backend / ingress) from the nearest `.testchimp/creds.json`, else
+ * `.testchimp/mcp.json`, at or above `startDir` whose key is real (placeholders like `${TESTCHIMP_API_KEY}`
+ * are skipped). Files that are not private to the current user are skipped and reported through `onIgnored`.
+ * `cliVersion` is returned beside the env, never exported.
  */
 export function findWorkspaceCredsEnv(
   startDir: string,
   onIgnored?: (path: string) => void,
-): { env: Record<string, string>; path: string } | null {
+): { env: Record<string, string>; path: string; cliVersion?: string } | null {
   let dir = resolve(startDir);
   for (;;) {
+    const credsPath = workspaceCredsJsonPath(dir);
+    if (existsSync(credsPath)) {
+      const creds = readCredsJson(credsPath);
+      if (creds) {
+        if (!isPrivateFile(credsPath)) onIgnored?.(credsPath);
+        else return { env: creds.env, path: credsPath, ...(creds.cliVersion ? { cliVersion: creds.cliVersion } : {}) };
+      }
+    }
     const path = workspaceMcpJsonPath(dir);
     if (existsSync(path)) {
       try {
@@ -238,7 +287,7 @@ export function findWorkspaceCredsEnv(
 
 /**
  * CLI only: when the shell has neither TESTCHIMP_API_KEY nor TESTCHIMP_OAUTH_TOKEN, take the runner env from
- * the nearest `.testchimp/mcp.json`. Exported variables always win. Returns the file used, if any; notes
+ * the nearest `.testchimp/creds.json` (else `.testchimp/mcp.json`). Exported variables always win. Returns the file used, if any; notes
  * (ignored files, an exported backend that differs from the file's) go to `warn`.
  */
 export function applyWorkspaceCredsFallback(

@@ -1881,7 +1881,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "dir 0700, .testchimp/ gitignored) and map the folder in ~/.testchimp/projects.json. Fetches the key with " +
       "the current MCP auth — do not pass the key, and the response never includes it. Local stdio MCP only " +
       "(omitted on hosted mcp.testchimp.io). Hosted / plugin agents: call get-project-credentials and write " +
-      "<repo>/.testchimp/mcp.json with a file-write tool (never put the key in a shell command).",
+      "<repo>/.testchimp/creds.json with a file-write tool (never put the key in a shell command).",
     inputSchema: S.saveWorkspaceCredsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.saveWorkspaceCredsInput>;
@@ -1913,7 +1913,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         if (msg.startsWith("NOT_FOUND:") && currentRequestAuth()?.isolated === true) {
           throw new Error(
             `${msg}. The hosted MCP server cannot write your laptop's repo. Call get-project-credentials, then ` +
-              `write <repo>/.testchimp/mcp.json yourself with a file-write tool (mode 0600, dir 0700; ` +
+              `write <repo>/.testchimp/creds.json yourself with a file-write tool (mode 0600, dir 0700; ` +
               `never put the key in a shell command). projectId=${projectId}.`,
           );
         }

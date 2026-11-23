@@ -561,7 +561,7 @@ export const saveWorkspaceCredsInput = z.object({
     .describe(
       "Repository root on the machine running this MCP server. Writes <folder>/.testchimp/mcp.json (mode 0600, dir 0700) " +
         "and maps the folder in ~/.testchimp/projects.json. Hosted mcp.testchimp.io cannot write your laptop — call " +
-        "get-project-credentials and write <repo>/.testchimp/mcp.json with a file-write tool (mode 0600, dir 0700).",
+        "get-project-credentials and write <repo>/.testchimp/creds.json with a file-write tool (mode 0600, dir 0700).",
     ),
   projectId: z
     .string()
