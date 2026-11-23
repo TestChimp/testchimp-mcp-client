@@ -1851,13 +1851,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_bot_credentials", {}),
   },
   {
+    kebab: "list-projects",
+    description:
+      "OAuth connections: list the TestChimp projects the signed-in user belongs to ({projectId, projectName, " +
+      "repoUrl?}). Used by /testchimp connect-project to bind a repo to a project. Needs no projectId.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_my_projects", {}),
+  },
+  {
     kebab: "get-project-credentials",
     description:
       "Normal (non-bot) OAuth connections: fetch the project key local test runners (Playwright reporter, CLI, " +
       "k6) need. Returns {projectId, projectName, projectApiKey, userId, backendUrl, ingressUrl} for the " +
-      "connection's project (the MCP URL's ?projectId= when set, else the one picked on the consent page). " +
+      "project named by the projectId argument, or by projectApiKey (which also tells you a key-only file's " +
+      "projectId); without either, the connection's default project (the MCP URL's ?projectId= when set, else the " +
+      "one picked on the consent page). " +
       "To persist the runner key without putting it in a shell command: local stdio MCP should call " +
-      "save-workspace-creds; hosted / plugin agents should write <repo>/.testchimp/mcp.json themselves " +
+      "save-workspace-creds; hosted / plugin agents should write <repo>/.testchimp/creds.json themselves " +
       "(mode 0600, dir 0700) from this response and never print projectApiKey. This tool still returns " +
       "projectApiKey for those callers. Not needed with an API key (stdio already has it).",
     inputSchema: S.emptyInput,

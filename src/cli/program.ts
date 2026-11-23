@@ -2052,6 +2052,13 @@ export function buildCliProgram(): Command {
   }
 
   program
+    .command("list-projects")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-projects")!.description)
+    .action(async () => {
+      console.log(await runTool("list-projects", {}, { postMcp }));
+    });
+
+  program
     .command("get-project-credentials")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-project-credentials")!.description)
     .action(async () => {
