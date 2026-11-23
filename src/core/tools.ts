@@ -1326,13 +1326,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Report a mutating agent action under a stable workflow-execution-id (ULID). " +
       "First call for an id creates the workflow_executions row; later calls append Activity " +
       "timeline rows (AGENT_WORKFLOW_ACTIVITY). " +
+      "Preferred first call after minting a ULID: entityType WORKFLOW + actionType WORKFLOW_STARTED " +
+      "(opens RUNNING without completing). Plan-done is upsert-plans-support-file of the .plan.md " +
+      "(parks PLANNED when approval is pending; PlanApproved re-upsert → PLAN_APPROVED). Close with ACTION_COMPLETED / ACTION_FAILED. " +
       "Actions land on the entity's Activity timeline (plans, issues, SmartTest file). " +
       "entityType: USER_STORY | SCENARIO | SMART_TEST | POLICY | ISSUE | TEST_EXECUTION | " +
       "TEST_INVOCATION_BATCH | EXPLORATION | EVENT | WORKFLOW. " +
-      "actionType: CREATED | UPDATED | DELETED | ANALYZED | IMPLEMENTED | ACTION_COMPLETED | ACTION_FAILED. " +
+      "actionType: CREATED | UPDATED | DELETED | ANALYZED | IMPLEMENTED | WORKFLOW_STARTED | " +
+      "ACTION_COMPLETED | ACTION_FAILED. " +
       "Identity: SMART_TEST uses `test` (TestLocator: folderPath/fileName/testSuite/testName); " +
       "other artifact types use `entityIdentity` (ordinal / filename / opaque id). Do not use platform UUIDs. " +
-      "Completion (ACTION_COMPLETED / ACTION_FAILED): entityType WORKFLOW and entityIdentity = catalog workflow_id.",
+      "WORKFLOW lifecycle (WORKFLOW_STARTED / ACTION_COMPLETED / ACTION_FAILED): entityIdentity = catalog workflow_id.",
     inputSchema: S.reportAgentActionInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.reportAgentActionInput>;
@@ -1352,6 +1356,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         actionType = "ACTION_COMPLETED";
       } else if (actionNorm === "FAILED" || actionNorm === "ACTION_FAILED") {
         actionType = "ACTION_FAILED";
+      } else if (actionNorm === "WORKFLOW_STARTED") {
+        actionType = "WORKFLOW_STARTED";
       }
       const { skillVersion, cliVersion } = resolveToolchainVersions({
         skillVersion: a.skillVersion,
@@ -1649,6 +1655,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_project_init_status", {}),
   },
   {
+    kebab: "get-onboarding-status",
+    description:
+      "Return this project's onboarding progress (repo, project-init, agent connected, plans, run QA, first " +
+      "results, verified test, release test run) and `nextStepCommand`: the /testchimp command to suggest next, " +
+      "or empty when the next step happens in the TestChimp UI. Read-only. Call at the end of a workflow and " +
+      "tell the user the next step.",
+    inputSchema: S.getOnboardingStatusInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.getOnboardingStatusInput>;
+      const userId =
+        a.userId?.trim() ||
+        (currentRequestAuth()?.isolated !== true ? process.env.TESTCHIMP_USER_ID?.trim() : undefined);
+      return postMcp("/api/mcp/get_onboarding_status", userId ? { userId } : {});
+    },
+  },
+  {
     kebab: "update-project-init-status",
     description:
       "Merge project-init progress fields for the current project. Pass a `status` object with snake_case keys " +
@@ -1690,8 +1712,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     kebab: "invite-team-members",
     description:
       "Invite teammates (by email) to the TestChimp organization so they can access this project. Each invitee " +
-      "joins as a Viewer and gets a sign-up email. Needs an OAuth user session whose user is an org admin: QA bots " +
-      "call this MCP tool through the connector with their binding arguments (the CLI's --bot key can't invite). " +
+      "joins as a Viewer and gets a sign-up email. The caller must be an org admin: the OAuth user (hosted MCP / QA " +
+      "bot connector), or with a project API key the user in TESTCHIMP_USER_ID (sent as the user-id header). " +
       "Returns a per-email outcome (INVITED, ALREADY_MEMBER, " +
       "ALREADY_INVITED, FAILED with failureReason) and teamSettingsUrl for role changes / seats. Only call with " +
       "emails the user explicitly confirmed.",
@@ -1829,13 +1851,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_bot_credentials", {}),
   },
   {
+    kebab: "list-projects",
+    description:
+      "OAuth connections: list the TestChimp projects the signed-in user belongs to ({projectId, projectName, " +
+      "repoUrl?}). Used by /testchimp connect-project to bind a repo to a project. Needs no projectId.",
+    inputSchema: S.emptyInput,
+    execute: async (_args, { postMcp }) => postMcp("/api/mcp/list_my_projects", {}),
+  },
+  {
     kebab: "get-project-credentials",
     description:
       "Normal (non-bot) OAuth connections: fetch the project key local test runners (Playwright reporter, CLI, " +
       "k6) need. Returns {projectId, projectName, projectApiKey, userId, backendUrl, ingressUrl} for the " +
-      "connection's project (the MCP URL's ?projectId= when set, else the one picked on the consent page). " +
+      "project named by the projectId argument, or by projectApiKey (which also tells you a key-only file's " +
+      "projectId); without either, the connection's default project (the MCP URL's ?projectId= when set, else the " +
+      "one picked on the consent page). " +
       "To persist the runner key without putting it in a shell command: local stdio MCP should call " +
-      "save-workspace-creds; hosted / plugin agents should write <repo>/.testchimp/mcp.json themselves " +
+      "save-workspace-creds; hosted / plugin agents should write <repo>/.testchimp/creds.json themselves " +
       "(mode 0600, dir 0700) from this response and never print projectApiKey. This tool still returns " +
       "projectApiKey for those callers. Not needed with an API key (stdio already has it).",
     inputSchema: S.emptyInput,
@@ -1849,7 +1881,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "dir 0700, .testchimp/ gitignored) and map the folder in ~/.testchimp/projects.json. Fetches the key with " +
       "the current MCP auth — do not pass the key, and the response never includes it. Local stdio MCP only " +
       "(omitted on hosted mcp.testchimp.io). Hosted / plugin agents: call get-project-credentials and write " +
-      "<repo>/.testchimp/mcp.json with a file-write tool (never put the key in a shell command).",
+      "<repo>/.testchimp/creds.json with a file-write tool (never put the key in a shell command).",
     inputSchema: S.saveWorkspaceCredsInput,
     execute: async (args, { postMcp }) => {
       const a = args as z.infer<typeof S.saveWorkspaceCredsInput>;
@@ -1881,7 +1913,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         if (msg.startsWith("NOT_FOUND:") && currentRequestAuth()?.isolated === true) {
           throw new Error(
             `${msg}. The hosted MCP server cannot write your laptop's repo. Call get-project-credentials, then ` +
-              `write <repo>/.testchimp/mcp.json yourself with a file-write tool (mode 0600, dir 0700; ` +
+              `write <repo>/.testchimp/creds.json yourself with a file-write tool (mode 0600, dir 0700; ` +
               `never put the key in a shell command). projectId=${projectId}.`,
           );
         }

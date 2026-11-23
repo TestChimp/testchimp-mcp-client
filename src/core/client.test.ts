@@ -73,6 +73,7 @@ describe("request headers", () => {
   const originalBotId = process.env.TESTCHIMP_BOT_ID;
   const originalOauthToken = process.env.TESTCHIMP_OAUTH_TOKEN;
   const originalIngressUrl = process.env.TESTCHIMP_INGRESS_URL;
+  const originalUserId = process.env.TESTCHIMP_USER_ID;
   const originalConsoleError = console.error;
 
   beforeEach(() => {
@@ -81,6 +82,7 @@ describe("request headers", () => {
     delete process.env.TESTCHIMP_BOT_ID;
     delete process.env.TESTCHIMP_OAUTH_TOKEN;
     delete process.env.TESTCHIMP_INGRESS_URL;
+    delete process.env.TESTCHIMP_USER_ID;
     resetClientWarningsForTests();
   });
 
@@ -89,6 +91,7 @@ describe("request headers", () => {
       ["TESTCHIMP_BOT_ID", originalBotId],
       ["TESTCHIMP_OAUTH_TOKEN", originalOauthToken],
       ["TESTCHIMP_INGRESS_URL", originalIngressUrl],
+      ["TESTCHIMP_USER_ID", originalUserId],
     ] as const) {
       if (value == null) delete process.env[key];
       else process.env[key] = value;
@@ -115,6 +118,43 @@ describe("request headers", () => {
       "TestChimp-Api-Key": "test-key",
     });
     assert.equal(capture.calls[0].init?.body, JSON.stringify({ a: 1 }));
+  });
+
+  it("sends the user-id header with an API key when TESTCHIMP_USER_ID is set", async () => {
+    process.env.TESTCHIMP_API_KEY = "test-key";
+    process.env.TESTCHIMP_USER_ID = " u-123 ";
+    const capture = captureFetch();
+    await postMcp("/api/mcp/example", {});
+    assert.deepEqual(capture.calls[0].init?.headers, {
+      "Content-Type": "application/json",
+      "TestChimp-Api-Key": "test-key",
+      "user-id": "u-123",
+    });
+  });
+
+  it("does not send user-id to ingress", async () => {
+    process.env.TESTCHIMP_API_KEY = "test-key";
+    process.env.TESTCHIMP_USER_ID = "u-123";
+    process.env.TESTCHIMP_INGRESS_URL = "https://ingress.example.com";
+    const capture = captureFetch();
+    await postIngress("/bot/events/ack", {});
+    assert.equal((capture.calls[0].init?.headers as Record<string, string>)["user-id"], undefined);
+  });
+
+  it("does not send user-id with an OAuth token (the token names the user)", async () => {
+    process.env.TESTCHIMP_OAUTH_TOKEN = "tok";
+    process.env.TESTCHIMP_USER_ID = "u-123";
+    const capture = captureFetch();
+    await postMcp("/api/mcp/example", {});
+    assert.equal((capture.calls[0].init?.headers as Record<string, string>)["user-id"], undefined);
+  });
+
+  it("drops a malformed TESTCHIMP_USER_ID", async () => {
+    process.env.TESTCHIMP_API_KEY = "test-key";
+    process.env.TESTCHIMP_USER_ID = "bad id\nx";
+    const capture = captureFetch();
+    await postMcp("/api/mcp/example", {});
+    assert.equal((capture.calls[0].init?.headers as Record<string, string>)["user-id"], undefined);
   });
 
   it("keeps the missing API key error when no credentials are set", async () => {

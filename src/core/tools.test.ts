@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 90 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 90);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 90);
+  it("registers 92 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 92);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 92);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -1255,7 +1255,7 @@ describe("save-workspace-creds", () => {
           },
         ),
       ),
-      /hosted MCP server cannot write[\s\S]*get-project-credentials[\s\S]*\.testchimp\/mcp\.json/,
+      /hosted MCP server cannot write[\s\S]*get-project-credentials[\s\S]*\.testchimp\/creds\.json/,
     );
   });
 
@@ -1267,5 +1267,64 @@ describe("save-workspace-creds", () => {
     );
     assert.equal(creds.projectApiKey, KEY);
     assert.equal(creds.projectId, PROJECT);
+  });
+});
+
+describe("get-onboarding-status", () => {
+  async function capture(args: Record<string, unknown>) {
+    let request: { path: string; body: unknown } | undefined;
+    await runTool("get-onboarding-status", args, {
+      postMcp: async (path, body) => {
+        request = { path, body };
+        return "{}";
+      },
+    });
+    return request;
+  }
+
+  afterEach(() => {
+    delete process.env.TESTCHIMP_USER_ID;
+  });
+
+  it("posts to get_onboarding_status with the given user", async () => {
+    const request = await capture({ userId: " u-1 " });
+    assert.deepEqual(request, { path: "/api/mcp/get_onboarding_status", body: { userId: "u-1" } });
+  });
+
+  it("falls back to TESTCHIMP_USER_ID, else sends an empty body", async () => {
+    process.env.TESTCHIMP_USER_ID = "u-env";
+    assert.deepEqual((await capture({}))?.body, { userId: "u-env" });
+    delete process.env.TESTCHIMP_USER_ID;
+    assert.deepEqual((await capture({}))?.body, {});
+  });
+
+  it("is annotated read-only", () => {
+    assert.equal(annotationsForTool("get-onboarding-status").readOnlyHint, true);
+  });
+});
+
+describe("list-projects", () => {
+  it("posts to /api/mcp/list_my_projects with an empty body and returns the JSON unchanged", async () => {
+    const response = JSON.stringify({
+      projects: [
+        { projectId: "p1", projectName: "Alpha" },
+        { projectId: "p2", projectName: "Beta", repoUrl: "https://github.com/acme/beta" },
+      ],
+    });
+    let request: { path: string; body: unknown } | undefined;
+
+    const result = await runTool(
+      "list-projects",
+      {},
+      {
+        postMcp: async (path, body) => {
+          request = { path, body };
+          return response;
+        },
+      },
+    );
+
+    assert.deepEqual(request, { path: "/api/mcp/list_my_projects", body: {} });
+    assert.deepEqual(JSON.parse(result), JSON.parse(response));
   });
 });

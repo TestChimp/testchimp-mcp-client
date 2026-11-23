@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+## 2.0.6
+
+### Added
+
+- Hosted MCP: every tool takes an optional `projectId` argument, sent as `TestChimp-Project-Id`. One user-scoped connector can now serve many repos; a repo names its project with the `projectId` from its `.testchimp/creds.json`. `projectApiKey` still wins when both are given, and a malformed `projectId` is rejected before any upstream call.
+- `list-projects` (`POST /api/mcp/list_my_projects`, OAuth connections only): the signed-in user's projects as `{projectId, projectName}`. Used by `/testchimp connect-project`. Needs a backend with the endpoint.
+- The CLI reads `<repo>/.testchimp/creds.json` (flat: `projectId`, `projectApiKey`, `userId`, `backendUrl`, `ingressUrl`, optional `cliVersion`) before `.testchimp/mcp.json`, and exports `TESTCHIMP_USER_ID` from it. `mcp.json` (Studio's file) is still read and still written by `save-workspace-creds`, unchanged.
+
+### Changed
+
+- Tool descriptions and errors point hosted / plugin agents at `.testchimp/creds.json`.
+
+## 2.0.5
+
+### Added
+
+- API-key calls to featureservice send `TESTCHIMP_USER_ID` as the `user-id` header (the project key is not per user). Used for per-user agent connectivity and for `invite-team-members` with a project key.
+
+- `get-onboarding-status` — `POST /api/mcp/get_onboarding_status`. Project onboarding progress (the TestChimp setup launchpad steps) plus `nextStepCommand`, the `/testchimp` command to suggest next (empty when the next step is in the TestChimp UI). Optional `userId` (defaults to `TESTCHIMP_USER_ID`). Read-only; needs a backend with the launchpad endpoint.
+
+- `WORKFLOW_STARTED` on `report-agent-action` (preferred first call after minting a ULID).
+
+### Changed
+
+- `report-agent-action` docs: plan re-upsert with `PlanApproved` moves the execution to `PLAN_APPROVED` (after `PLANNED`), so launchpad can show waiting-for-agent instead of awaiting-approval.
+
+`server.json` version is 2.0.5. Do not run `mcp-publisher` from this change.
+
 ## 2.0.4
 
 ### Added
