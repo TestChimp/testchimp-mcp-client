@@ -2092,6 +2092,21 @@ export function buildCliProgram(): Command {
     });
 
   program
+    .command("list-tests-with-verification-issues")
+    .description(TOOL_DEFINITIONS.find((t) => t.kebab === "list-tests-with-verification-issues")!.description)
+    .addOption(jsonInputOption())
+    .option("--user-id <id>", "Team member user id")
+    .option("--limit <n>", "Maximum results", (v) => parseInt(v, 10))
+    .action(async (opts) => {
+      const body: Record<string, unknown> = {};
+      if (opts.userId) body.userId = String(opts.userId);
+      if (opts.limit != null && !Number.isNaN(opts.limit)) body.limit = opts.limit;
+      console.log(
+        await runTool("list-tests-with-verification-issues", mergeBodies(body, opts.jsonInput), { postMcp }),
+      );
+    });
+
+  program
     .command("get-bot-profile")
     .description(TOOL_DEFINITIONS.find((t) => t.kebab === "get-bot-profile")!.description)
     .addOption(jsonInputOption())

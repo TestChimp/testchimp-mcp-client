@@ -1529,6 +1529,11 @@ export const listTestsAwaitingVerificationInput = z.object({
   limit: z.number().int().positive().max(500).optional(),
 });
 
+export const listTestsWithVerificationIssuesInput = z.object({
+  userId: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(500).optional(),
+});
+
 export const approveAgentwatchPairingInput = z.object({
   /** Printed by `testchimp bot connect --pair` on the user's computer: BASE64URL(SHA-256(verifier)). */
   pairingCode: z

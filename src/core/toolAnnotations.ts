@@ -125,6 +125,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotationsHints> = {
   "upload-attachment": mutating("Upload Attachment"),
   "get-my-tasks": readOnly("Get My Tasks"),
   "list-tests-awaiting-verification": readOnly("List Tests Awaiting Verification"),
+  "list-tests-with-verification-issues": readOnly("List Tests With Verification Issues"),
   "get-qa-posture": readOnly("Get QA Posture"),
   "get-bot-compat": readOnly("Get Bot Compat"),
   "get-bot-credentials": readOnly("Get Bot Credentials"),

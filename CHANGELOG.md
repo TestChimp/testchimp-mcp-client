@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.0.7
+
+### Added
+
+- `list-tests-with-verification-issues` — `POST /api/mcp/list_tests_with_verification_issues`. Tests the signed-in user wrote that a human reviewer flagged as not properly covering a scenario, with the reviewer's note saying what is wrong. Optional `userId` and `limit`. Fix the test, then call `mark-tests-for-review` so the flag resets and the test returns to human review. CLI: `testchimp list-tests-with-verification-issues`. Needs a backend with the endpoint.
+- `get-qa-posture` now includes `testsWithVerificationIssuesCount` (distinct tests with a flagged scenario).
+
+`server.json` version is 2.0.7. Do not run `mcp-publisher` from this change.
+
 ## 2.0.6
 
 ### Added

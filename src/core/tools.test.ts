@@ -244,9 +244,9 @@ describe("MCP API 2.0 consolidations", () => {
     return { request, result };
   }
 
-  it("registers 92 MCP 2.0 tools", () => {
-    assert.equal(TOOL_DEFINITIONS.length, 92);
-    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 92);
+  it("registers 93 MCP 2.0 tools", () => {
+    assert.equal(TOOL_DEFINITIONS.length, 93);
+    assert.equal(Object.keys(TOOL_ANNOTATIONS).length, 93);
   });
 
   it("advertises extended get-org-capabilities fields", () => {
@@ -805,6 +805,10 @@ describe("bot tools", () => {
     assert.deepEqual(await capture("get-my-tasks", {}), { path: "/api/mcp/get_my_tasks", body: {} });
     assert.deepEqual(await capture("list-tests-awaiting-verification", { limit: 5 }), {
       path: "/api/mcp/list_tests_awaiting_verification",
+      body: { limit: 5 },
+    });
+    assert.deepEqual(await capture("list-tests-with-verification-issues", { limit: 5 }), {
+      path: "/api/mcp/list_tests_with_verification_issues",
       body: { limit: 5 },
     });
     assert.deepEqual(await capture("get-qa-posture", {}), { path: "/api/mcp/get_qa_posture", body: {} });

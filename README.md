@@ -126,6 +126,7 @@ printf '%s' "$KEY" | testchimp workspace save-creds --folder . --project-id <id>
 ```bash
 testchimp get-my-tasks --user-id <user-id>      # OAuth tokens imply the user
 testchimp list-tests-awaiting-verification --limit 20
+testchimp list-tests-with-verification-issues --limit 20   # reviewer flagged the test; fix it, then mark-tests-for-review
 testchimp get-qa-posture
 testchimp bot get-profile
 testchimp bot register-profile --role QA_ENGINEER --responsibilities "Checkout + payments" \

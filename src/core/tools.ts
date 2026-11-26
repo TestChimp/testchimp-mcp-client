@@ -1817,11 +1817,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    kebab: "list-tests-with-verification-issues",
+    description:
+      "List SmartTests a human reviewer checked and flagged as NOT properly covering a scenario " +
+      "(testId, testName, filePath, scenarioId / scenarioOrdinalId / scenarioTitle, verificationNote with what is " +
+      "wrong, reviewedByUserId, reviewedAtMillis, latestJobId). Optional userId narrows to tests authored for that user " +
+      "(defaults to the OAuth token's user); optional limit. Read the note, fix the test, then call " +
+      "mark-tests-for-review so the flag resets and the test returns to human review.",
+    inputSchema: S.listTestsWithVerificationIssuesInput,
+    execute: async (args, { postMcp }) => {
+      const a = args as z.infer<typeof S.listTestsWithVerificationIssuesInput>;
+      const body: Record<string, unknown> = {};
+      if (a.userId) body.userId = a.userId.trim();
+      if (a.limit != null) body.limit = a.limit;
+      return postMcp("/api/mcp/list_tests_with_verification_issues", body);
+    },
+  },
+  {
     kebab: "get-qa-posture",
     description:
       "Project-wide QA posture snapshot: releases (version, lifecycleStatus, due date, passed / failed / blocked / " +
       "not-attempted counts), issues (active, inProgress, blocked, openBySeverity), activeTestRuns with result " +
-      "counts, and testsAwaitingVerificationCount. Use for weekly " +
+      "counts, testsAwaitingVerificationCount and testsWithVerificationIssuesCount. Use for weekly " +
       "QA digests and release-health questions; summarise for the reader's role rather than dumping raw JSON.",
     inputSchema: S.emptyInput,
     execute: async (_args, { postMcp }) => postMcp("/api/mcp/get_qa_posture", {}),
